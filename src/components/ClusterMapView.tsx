@@ -1,4 +1,4 @@
-import React, { useEffect, useState, Children } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   MapContainer,
   TileLayer,
@@ -17,8 +17,6 @@ import {
   UsersIcon,
   BookOpenIcon,
   HeartIcon,
-  ToggleLeftIcon,
-  ToggleRightIcon,
   MenuIcon,
   TrendingUpIcon,
   MapIcon,
@@ -26,12 +24,8 @@ import {
   HelpCircleIcon,
   NetworkIcon } from
 'lucide-react';
-import { mockNuclei, mockClusters } from '../data/mockData';
-import {
-  isPopulatedMode,
-  toggleDemoMode,
-  getCirclePlacements } from
-'../data/store';
+import { fetchClusters, fetchNuclei, createNucleus } from '../lib/db/clusters';
+import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { Timeline } from './Timeline';
 import { NetworkView } from './NetworkView';
 import 'leaflet/dist/leaflet.css';
@@ -77,30 +71,35 @@ function MapClickHandler({
 }
 export function ClusterMapView() {
   const navigate = useNavigate();
+  const [clusters, setClusters] = useState<ClusterRow[]>([]);
+  const [nuclei, setNuclei] = useState<NucleusRow[]>([]);
+  const [loading, setLoading] = useState(true);
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [selectedNucleus, setSelectedNucleus] = useState<string | null>(null);
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
   const [mapZoom, setMapZoom] = useState(6);
-  // Placing mode state
   const [isPlacing, setIsPlacing] = useState(false);
-  const [newLocation, setNewLocation] = useState<{
-    lat: number;
-    lng: number;
-  } | null>(null);
+  const [newLocation, setNewLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [newName, setNewName] = useState('');
-  const [populated, setPopulated] = useState(isPopulatedMode());
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [showNetwork, setShowNetwork] = useState(false);
-  const filteredNuclei = selectedCluster ?
-  mockNuclei.filter((n) => n.clusterId === selectedCluster) :
-  mockNuclei;
+
+  useEffect(() => {
+    Promise.all([fetchClusters(), fetchNuclei()])
+      .then(([c, n]) => { setClusters(c); setNuclei(n); })
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filteredNuclei = selectedCluster
+    ? nuclei.filter(n => n.clusterId === selectedCluster)
+    : nuclei;
   const handleClusterSelect = (clusterId: string | null) => {
     if (isPlacing) return;
     setSelectedCluster(clusterId);
     setSelectedNucleus(null);
     if (clusterId) {
-      const cluster = mockClusters.find((c) => c.id === clusterId);
+      const cluster = clusters.find(c => c.id === clusterId);
       if (cluster) {
         setMapCenter([cluster.center.lat, cluster.center.lng]);
         setMapZoom(cluster.zoom);
@@ -110,9 +109,10 @@ export function ClusterMapView() {
       setMapZoom(6);
     }
   };
+
   const handleNucleusClick = (nucleusId: string) => {
     if (isPlacing) return;
-    const nucleus = mockNuclei.find((n) => n.id === nucleusId);
+    const nucleus = nuclei.find(n => n.id === nucleusId);
     if (nucleus) {
       setMapCenter([nucleus.location.lat, nucleus.location.lng]);
       setMapZoom(13);
@@ -130,32 +130,35 @@ export function ClusterMapView() {
     setNewLocation(null);
     setNewName('');
   };
-  const handleCreateNucleus = () => {
-    if (!newLocation || !newName.trim()) return;
-    const newNucleus = {
-      id: `nucleus-${Date.now()}`,
-      clusterId: selectedCluster || 'calgary',
+  const handleCreateNucleus = async () => {
+    if (!newLocation || !newName.trim() || !selectedCluster) return;
+    const nucleus = await createNucleus({
+      clusterId: selectedCluster,
       name: newName.trim(),
-      location: newLocation,
-      activities: [],
-      engagementCounts: {
-        coordinating: 0,
-        supporting: 0,
-        participating: 0,
-        aware: 0
-      }
-    };
-    mockNuclei.push(newNucleus);
+      lat: newLocation.lat,
+      lng: newLocation.lng,
+    });
+    setNuclei(prev => [...prev, nucleus]);
     setIsPlacing(false);
     setNewLocation(null);
     setNewName('');
-    setSelectedNucleus(newNucleus.id);
+    setSelectedNucleus(nucleus.id);
     setMapCenter([newLocation.lat, newLocation.lng]);
     setMapZoom(13);
   };
-  const currentClusterName = selectedCluster ?
-  mockClusters.find((c) => c.id === selectedCluster)?.name :
-  null;
+
+  const currentClusterName = selectedCluster
+    ? clusters.find(c => c.id === selectedCluster)?.name
+    : null;
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-700 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen bg-gray-50 font-sans">
       <header className="bg-white border-b border-gray-200 px-4 sm:px-8 py-4 sm:py-5 flex items-center justify-between z-10 relative shadow-sm">
@@ -212,23 +215,6 @@ export function ClusterMapView() {
             <span className="hidden sm:inline">Guide</span>
           </button>
 
-          <button
-            onClick={() => {
-              const result = toggleDemoMode();
-              setPopulated(result);
-              setSelectedNucleus(null);
-            }}
-            className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${populated ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'}`}>
-            
-            {populated ?
-            <ToggleRightIcon className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-600" /> :
-
-            <ToggleLeftIcon className="w-4 h-4 sm:w-5 sm:h-5 text-gray-400" />
-            }
-            <span className="hidden sm:inline">
-              {populated ? 'Sample Data' : 'Blank Mode'}
-            </span>
-          </button>
           {!isPlacing &&
           <button
             onClick={handleStartPlacing}
@@ -287,15 +273,13 @@ export function ClusterMapView() {
                 </div>
                 <span
                   className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === null ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
-                  
-                  {mockNuclei.length}
+
+                  {nuclei.length}
                 </span>
               </button>
 
-              {mockClusters.map((cluster) => {
-                const count = mockNuclei.filter(
-                  (n) => n.clusterId === cluster.id
-                ).length;
+              {clusters.map((cluster) => {
+                const count = nuclei.filter(n => n.clusterId === cluster.id).length;
                 return (
                   <button
                     key={cluster.id}
@@ -566,58 +550,32 @@ export function ClusterMapView() {
                           </div>
 
                           <div className="bg-gray-50 rounded-xl p-3 mb-4 border border-gray-100">
-                            {(() => {
-                        const placements = getCirclePlacements(nucleus.id);
-                        const counts = placements ?
-                        {
-                          coordinating: (
-                          placements.coordinating || []).
-                          length,
-                          supporting: (placements.supporting || []).
-                          length,
-                          participating: (
-                          placements.participating || []).
-                          length,
-                          aware: (placements.aware || []).length
-                        } :
-                        nucleus.engagementCounts;
-                        return (
-                          <div className="space-y-2.5">
-                                  <div className="flex justify-between items-center text-sm">
-                                    <span className="text-gray-500 font-medium">
-                                      Core Team
-                                    </span>
-                                    <span className="font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
-                                      {counts.coordinating}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between items-center text-sm">
-                                    <span className="text-gray-500 font-medium">
-                                      Supporting
-                                    </span>
-                                    <span className="font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">
-                                      {counts.supporting}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between items-center text-sm">
-                                    <span className="text-gray-500 font-medium">
-                                      Participating
-                                    </span>
-                                    <span className="font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
-                                      {counts.participating}
-                                    </span>
-                                  </div>
-                                  <div className="flex justify-between items-center text-sm">
-                                    <span className="text-gray-500 font-medium">
-                                      Aware
-                                    </span>
-                                    <span className="font-bold text-gray-700 bg-gray-200 px-2 py-0.5 rounded-md">
-                                      {counts.aware}
-                                    </span>
-                                  </div>
-                                </div>);
-
-                      })()}
+                            <div className="space-y-2.5">
+                              <div className="flex justify-between items-center text-sm">
+                                <span className="text-gray-500 font-medium">Core Team</span>
+                                <span className="font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
+                                  {nucleus.engagementCounts.coordinating}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center text-sm">
+                                <span className="text-gray-500 font-medium">Supporting</span>
+                                <span className="font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-md">
+                                  {nucleus.engagementCounts.supporting}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center text-sm">
+                                <span className="text-gray-500 font-medium">Participating</span>
+                                <span className="font-bold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                  {nucleus.engagementCounts.participating}
+                                </span>
+                              </div>
+                              <div className="flex justify-between items-center text-sm">
+                                <span className="text-gray-500 font-medium">Aware</span>
+                                <span className="font-bold text-gray-700 bg-gray-200 px-2 py-0.5 rounded-md">
+                                  {nucleus.engagementCounts.aware}
+                                </span>
+                              </div>
+                            </div>
                           </div>
                           <button
                       onClick={() => navigate(`/nucleus/${nucleus.id}`)}
