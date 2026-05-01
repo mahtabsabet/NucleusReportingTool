@@ -7,12 +7,15 @@ import {
   UserIcon,
   ClockIcon,
   FileTextIcon,
+  Trash2Icon,
 } from 'lucide-react';
 import {
   fetchActivityDetail,
   addPersonToActivity,
   removeActivityParticipant,
   updateActivityDetails,
+  canDeleteActivity,
+  deleteActivity,
 } from '../lib/db/nucleus';
 import { markPersonUnplaced } from '../lib/unplacedTracker';
 import { Activity } from '../types';
@@ -52,6 +55,9 @@ export function ActivityDetail() {
   const [saved, setSaved] = useState(false);
   const [schedule, setSchedule] = useState('');
   const [notes, setNotes] = useState('');
+  const [canDelete, setCanDelete] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!activityId) return;
@@ -73,6 +79,7 @@ export function ActivityDetail() {
       }
       setLoading(false);
     });
+    canDeleteActivity(activityId).then(setCanDelete);
   }, [activityId]);
 
   if (loading) {
@@ -133,6 +140,18 @@ export function ActivityDetail() {
     setPersonNames(prev => ({ ...prev, [personId]: name }));
   };
 
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await deleteActivity(activityId!);
+      navigate(`/nucleus/${nucleusId}`);
+    } catch (err) {
+      console.error('Failed to delete activity:', err);
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   const handleSave = async () => {
     try {
       await updateActivityDetails(activityId!, {
@@ -161,9 +180,20 @@ export function ActivityDetail() {
             <ChevronLeftIcon className="w-4 h-4" />
             Back to {nucleusName}
           </button>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-            {activity.name}
-          </h1>
+          <div className="flex items-center justify-between gap-4">
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+              {activity.name}
+            </h1>
+            {canDelete && (
+              <button
+                onClick={() => setShowDeleteConfirm(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+              >
+                <Trash2Icon className="w-4 h-4" />
+                Delete
+              </button>
+            )}
+          </div>
           {activity.currentBook && (
             <p className="text-sm font-medium text-blue-600 mt-1.5 bg-blue-50 inline-block px-2.5 py-1 rounded-md">
               Current: {activity.currentBook}
@@ -177,6 +207,33 @@ export function ActivityDetail() {
           )}
         </div>
       </header>
+
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4">
+            <h2 className="text-lg font-bold text-gray-900">Delete activity?</h2>
+            <p className="text-sm text-gray-600">
+              <span className="font-semibold">"{activity.name}"</span> and all its participant records will be permanently removed. This cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="px-4 py-2 text-sm font-semibold text-gray-700 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {deleting ? 'Deleting…' : 'Delete activity'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-5xl mx-auto p-4 sm:p-8 space-y-6">
         {/* Schedule & Notes */}
