@@ -28,6 +28,43 @@ Add PWA support to the existing Vite app so users can install it to their home s
 
 ---
 
+## Unit Tests
+
+Add a unit test suite covering pure logic and DB helper functions.
+
+**Details:**
+- Framework: Vitest (already part of the Vite ecosystem, zero config)
+- Priority targets: type-mapping utilities (`DB_TO_APP_TYPE`, `APP_TO_DB_TYPE`, `ROLE_DISPLAY`), `syncCourseEnrollments` diffing logic, date formatting helpers in Timeline
+- DB modules should be tested with a mocked Supabase client (swap `supabase` import in tests)
+- Run on every PR via GitHub Actions
+
+---
+
+## Integration Tests
+
+Spin up a dev/staging Supabase instance and drive the full UI through real workflows.
+
+**Details:**
+- Framework: Playwright (browser automation)
+- Test scenarios: create a nucleus → add an activity → add a person to the activity → verify they appear in ConcentricCircles and the person's profile; change engagement level → verify it persists on refresh; run GrowthReport and verify counts match seeded event_log data
+- Permissions smoke tests: log in as each role (Viewer, Activity Lead, Nucleus Collaborator, Cluster Coordinator, Admin) and assert that forbidden actions are blocked in the UI and at the DB layer (RLS)
+- Maintain a seed script that resets the dev DB to a known state before each run
+
+---
+
+## Person Search When Adding to an Activity
+
+When adding a person to an activity, search existing people in the DB rather than creating a new record each time.
+
+**Details:**
+- Replace the current free-text name field with a search-as-you-type combobox
+- Query `persons` table by name as the user types (debounced, case-insensitive)
+- Show matching results as a dropdown; selecting one re-uses that person's existing record
+- If no match, offer "Create new person: [typed name]" as the last option
+- Prevents duplicate person records and ensures cross-nucleus linking works correctly
+
+---
+
 ## Push Notifications / Email Reminders
 
 Send reminders to activity leads or participants when an upcoming session is scheduled.
