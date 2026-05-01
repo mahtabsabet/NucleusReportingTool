@@ -32,3 +32,8 @@ Thumbs.db
 
 # Vite
 *.local
+
+# Playwright
+playwright-report/
+test-results/
+e2e/.auth/
