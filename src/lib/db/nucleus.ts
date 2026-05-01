@@ -110,6 +110,115 @@ export async function updateNucleusNotes(nucleusId: string, notes: string): Prom
   if (error) throw error;
 }
 
+export interface ActivityDetailResult {
+  activity: Activity;
+  nucleusName: string;
+  personNames: Record<string, string>;
+}
+
+export async function fetchActivityDetail(activityId: string): Promise<ActivityDetailResult | null> {
+  const { data, error } = await supabase
+    .from('activities')
+    .select('id, nucleus_id, name, type, schedule_notes, notes, current_course_id, nuclei(name), activity_participants(person_id, role, deleted_at)')
+    .eq('id', activityId)
+    .is('deleted_at', null)
+    .single();
+  if (error) return null;
+
+  const a = data as any;
+  const activeParticipants = (a.activity_participants ?? []).filter((p: any) => !p.deleted_at);
+
+  const participants: Record<string, string[]> = {};
+  activeParticipants.forEach((p: any) => {
+    if (!participants[p.role]) participants[p.role] = [];
+    participants[p.role].push(p.person_id);
+  });
+
+  const personNames: Record<string, string> = {};
+  const allPersonIds = activeParticipants.map((p: any) => p.person_id);
+  if (allPersonIds.length > 0) {
+    const { data: persons } = await supabase
+      .from('persons')
+      .select('id, name')
+      .in('id', allPersonIds);
+    ((persons ?? []) as any[]).forEach((p: any) => { personNames[p.id] = p.name; });
+  }
+
+  let currentBook: string | undefined;
+  if (a.current_course_id) {
+    const { data: course } = await supabase
+      .from('courses')
+      .select('name')
+      .eq('id', a.current_course_id)
+      .single();
+    currentBook = (course as any)?.name;
+  }
+
+  const activity: Activity = {
+    id: a.id,
+    nucleusId: a.nucleus_id,
+    name: a.name,
+    type: (DB_TO_APP_TYPE[a.type] ?? 'other') as Activity['type'],
+    participants,
+    schedule: a.schedule_notes ?? undefined,
+    notes: a.notes ?? undefined,
+    currentBook,
+  };
+
+  return { activity, nucleusName: (a.nuclei as any)?.name ?? '', personNames };
+}
+
+export async function addPersonToActivity(params: {
+  name: string;
+  nucleusId: string;
+  activityId: string;
+  role: string;
+}): Promise<{ personId: string; name: string }> {
+  const { data: person, error } = await supabase
+    .from('persons')
+    .insert({ name: params.name, is_minor: false })
+    .select('id, name')
+    .single();
+  if (error) throw error;
+
+  const p = person as any;
+  await supabase
+    .from('nucleus_enrollments')
+    .insert({ person_id: p.id, nucleus_id: params.nucleusId, engagement_level: 'aware' });
+
+  await supabase
+    .from('activity_participants')
+    .insert({ activity_id: params.activityId, person_id: p.id, role: params.role as any });
+
+  return { personId: p.id, name: p.name };
+}
+
+export async function removeActivityParticipant(
+  activityId: string,
+  personId: string,
+  role: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('activity_participants')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('activity_id', activityId)
+    .eq('person_id', personId)
+    .eq('role', role as any)
+    .is('deleted_at', null);
+  if (error) throw error;
+}
+
+export async function updateActivityDetails(
+  activityId: string,
+  params: { scheduleNotes?: string; notes?: string }
+): Promise<void> {
+  const update: Record<string, any> = {};
+  if (params.scheduleNotes !== undefined) update.schedule_notes = params.scheduleNotes || null;
+  if (params.notes !== undefined) update.notes = params.notes || null;
+  const { error } = await supabase.from('activities').update(update).eq('id', activityId);
+  if (error) throw error;
+}
+
 export async function fetchPersonsForNucleus(nucleusId: string): Promise<PersonProfile[]> {
   const { data: enrollments, error: enrollError } = await supabase
     .from('nucleus_enrollments')
