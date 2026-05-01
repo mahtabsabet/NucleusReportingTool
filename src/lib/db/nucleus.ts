@@ -351,6 +351,75 @@ export async function removeActivityParticipant(
   if (error) throw error;
 }
 
+export async function canDeleteActivity(activityId: string): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('is_admin')
+    .eq('id', user.id)
+    .single();
+  if ((profile as any)?.is_admin) return true;
+
+  const { data: activity } = await supabase
+    .from('activities')
+    .select('nucleus_id, nuclei(cluster_id)')
+    .eq('id', activityId)
+    .single();
+  if (!activity) return false;
+
+  const nucleusId = (activity as any).nucleus_id;
+  const clusterId = (activity as any).nuclei?.cluster_id;
+
+  const { data: perm } = await supabase
+    .from('user_permissions')
+    .select('id')
+    .eq('user_id', user.id)
+    .or(`nucleus_id.eq.${nucleusId},cluster_id.eq.${clusterId}`)
+    .in('role', ['nucleus_collaborator', 'cluster_coordinator'])
+    .limit(1)
+    .maybeSingle();
+
+  return perm !== null;
+}
+
+export async function deleteActivity(activityId: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { data: activity } = await supabase
+    .from('activities')
+    .select('name, nucleus_id, nuclei(cluster_id)')
+    .eq('id', activityId)
+    .single();
+  if (!activity) throw new Error('Activity not found');
+
+  const now = new Date().toISOString();
+
+  await supabase
+    .from('activity_participants')
+    .update({ deleted_at: now })
+    .eq('activity_id', activityId)
+    .is('deleted_at', null);
+
+  const { error } = await supabase
+    .from('activities')
+    .update({ deleted_at: now })
+    .eq('id', activityId);
+  if (error) throw error;
+
+  await supabase.from('event_log').insert({
+    type: 'activity_deleted',
+    activity_id: activityId,
+    nucleus_id: (activity as any).nucleus_id,
+    cluster_id: (activity as any).nuclei?.cluster_id,
+    user_id: user.id,
+    description: `Deleted activity "${(activity as any).name}"`,
+    details: { activityName: (activity as any).name },
+  });
+}
+
 export async function updateActivityDetails(
   activityId: string,
   params: { scheduleNotes?: string; notes?: string }
