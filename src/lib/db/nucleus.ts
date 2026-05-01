@@ -148,6 +148,94 @@ export async function canRenameNucleus(nucleusId: string): Promise<boolean> {
   return perm !== null;
 }
 
+export async function canDeleteNucleus(nucleusId: string): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('is_admin')
+    .eq('id', user.id)
+    .single();
+  if ((profile as any)?.is_admin) return true;
+
+  const { data: nucleus } = await supabase
+    .from('nuclei')
+    .select('cluster_id')
+    .eq('id', nucleusId)
+    .single();
+  if (!nucleus) return false;
+
+  const { data: perm } = await supabase
+    .from('user_permissions')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('cluster_id', (nucleus as any).cluster_id)
+    .eq('role', 'cluster_coordinator')
+    .limit(1)
+    .maybeSingle();
+
+  return perm !== null;
+}
+
+export async function deleteNucleus(nucleusId: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { data: nucleus } = await supabase
+    .from('nuclei')
+    .select('cluster_id, name')
+    .eq('id', nucleusId)
+    .single();
+  if (!nucleus) throw new Error('Nucleus not found');
+
+  const now = new Date().toISOString();
+
+  const { data: activities } = await supabase
+    .from('activities')
+    .select('id')
+    .eq('nucleus_id', nucleusId)
+    .is('deleted_at', null);
+
+  if (activities && activities.length > 0) {
+    const activityIds = activities.map((a: any) => a.id);
+    await supabase
+      .from('activity_participants')
+      .update({ deleted_at: now })
+      .in('activity_id', activityIds)
+      .is('deleted_at', null);
+
+    const { error: actErr } = await supabase
+      .from('activities')
+      .update({ deleted_at: now })
+      .in('id', activityIds)
+      .is('deleted_at', null);
+    if (actErr) throw actErr;
+  }
+
+  const { error: enrollErr } = await supabase
+    .from('nucleus_enrollments')
+    .update({ deleted_at: now })
+    .eq('nucleus_id', nucleusId)
+    .is('deleted_at', null);
+  if (enrollErr) throw enrollErr;
+
+  const { error: nucleusErr } = await supabase
+    .from('nuclei')
+    .update({ deleted_at: now })
+    .eq('id', nucleusId);
+  if (nucleusErr) throw nucleusErr;
+
+  await supabase.from('event_log').insert({
+    type: 'nucleus_deleted',
+    nucleus_id: nucleusId,
+    cluster_id: (nucleus as any).cluster_id,
+    user_id: user.id,
+    description: `Deleted nucleus "${(nucleus as any).name}"`,
+    details: { nucleusName: (nucleus as any).name },
+  });
+}
+
 export interface ActivityDetailResult {
   activity: Activity;
   nucleusName: string;

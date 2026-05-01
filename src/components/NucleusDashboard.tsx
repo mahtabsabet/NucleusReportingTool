@@ -14,6 +14,7 @@ import {
   TrendingUpIcon,
   PencilIcon,
   XIcon,
+  Trash2Icon,
 } from 'lucide-react';
 import { ConcentricCircles } from './ConcentricCircles';
 import { Activity } from '../types';
@@ -25,6 +26,8 @@ import {
   updateNucleusNotes,
   renameNucleus,
   canRenameNucleus,
+  canDeleteNucleus,
+  deleteNucleus,
   type NucleusDetail,
   type PersonProfile,
   type CourseRow,
@@ -63,6 +66,12 @@ export function NucleusDashboard() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [canRename, setCanRename] = useState(false);
 
+  const [canDelete, setCanDelete] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!id) return;
     setLoading(true);
@@ -72,12 +81,14 @@ export function NucleusDashboard() {
       fetchPersonsForNucleus(id),
       fetchCourses(),
       canRenameNucleus(id),
-    ]).then(([n, acts, persons, courseList, renameAllowed]) => {
+      canDeleteNucleus(id),
+    ]).then(([n, acts, persons, courseList, renameAllowed, deleteAllowed]) => {
       setNucleus(n);
       setActivities(acts);
       setPeople(persons);
       setCourses(courseList);
       setCanRename(renameAllowed as boolean);
+      setCanDelete(deleteAllowed as boolean);
       if (n) {
         setNotes(n.notes);
         setBannerImageState(n.bannerImageUrl);
@@ -127,6 +138,19 @@ export function NucleusDashboard() {
   const handleCancelRename = () => {
     setEditingName(false);
     setNameError(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (deleteConfirmInput !== nucleus!.name) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteNucleus(id!);
+      navigate('/');
+    } catch (err) {
+      setDeleteError('Failed to delete nucleus. Please try again.');
+      setDeleting(false);
+    }
   };
 
   if (loading) {
@@ -220,6 +244,16 @@ export function NucleusDashboard() {
                   className="hidden"
                 />
               </label>
+              {canDelete && (
+                <button
+                  onClick={() => { setDeleteConfirmInput(''); setDeleteError(null); setShowDeleteConfirm(true); }}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-red-50/80 hover:bg-red-100 text-sm font-medium text-red-600 rounded-lg border border-red-200 shadow-sm transition-all backdrop-blur-sm"
+                  title="Delete nucleus"
+                >
+                  <Trash2Icon className="w-4 h-4" />
+                  <span className="hidden sm:inline">Delete</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -555,6 +589,53 @@ export function NucleusDashboard() {
           </div>
         </div>
       </div>
+
+      {/* Delete Nucleus Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <Trash2Icon className="w-5 h-5 text-red-600" />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">Delete Nucleus</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-2">
+              This will permanently archive <strong>{nucleus!.name}</strong> and all its activities and enrollments. This action cannot be undone.
+            </p>
+            <p className="text-sm text-gray-600 mb-4">
+              Type <strong>{nucleus!.name}</strong> to confirm:
+            </p>
+            <input
+              type="text"
+              value={deleteConfirmInput}
+              onChange={e => setDeleteConfirmInput(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm mb-4"
+              placeholder={nucleus!.name}
+              autoFocus
+            />
+            {deleteError && (
+              <p className="text-sm text-red-600 mb-3">{deleteError}</p>
+            )}
+            <div className="flex gap-3 pt-2 border-t border-gray-100">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                disabled={deleteConfirmInput !== nucleus!.name || deleting}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white font-medium rounded-xl hover:bg-red-700 shadow-sm hover:shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleting ? 'Deleting…' : 'Delete Nucleus'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Activity Modal */}
       {showAddActivity && (
