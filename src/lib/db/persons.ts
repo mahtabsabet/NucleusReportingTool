@@ -122,6 +122,20 @@ export function computeEnrollmentDiff(
   return { idsToDelete, toInsert, toUpdate };
 }
 
+export async function searchPersonsByName(
+  query: string
+): Promise<Array<{ id: string; name: string }>> {
+  if (!query.trim()) return [];
+  const { data } = await supabase
+    .from('persons')
+    .select('id, name')
+    .ilike('name', `%${query.trim()}%`)
+    .is('deleted_at', null)
+    .order('name')
+    .limit(8);
+  return (data ?? []) as Array<{ id: string; name: string }>;
+}
+
 export async function syncCourseEnrollments(
   personId: string,
   desired: Array<{ courseId: string; status: 'in_progress' | 'completed' }>

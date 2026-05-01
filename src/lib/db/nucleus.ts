@@ -299,24 +299,41 @@ export async function addPersonToActivity(params: {
   nucleusId: string;
   activityId: string;
   role: string;
+  existingPersonId?: string;
 }): Promise<{ personId: string; name: string }> {
-  const { data: person, error } = await supabase
-    .from('persons')
-    .insert({ name: params.name, is_minor: false })
-    .select('id, name')
-    .single();
-  if (error) throw error;
+  let personId: string;
+  let personName: string;
 
-  const p = person as any;
+  if (params.existingPersonId) {
+    personId = params.existingPersonId;
+    personName = params.name;
+  } else {
+    const { data: person, error } = await supabase
+      .from('persons')
+      .insert({ name: params.name, is_minor: false })
+      .select('id, name')
+      .single();
+    if (error) throw error;
+    const p = person as any;
+    personId = p.id;
+    personName = p.name;
+  }
+
   await supabase
     .from('nucleus_enrollments')
-    .insert({ person_id: p.id, nucleus_id: params.nucleusId, engagement_level: 'aware' });
+    .upsert(
+      { person_id: personId, nucleus_id: params.nucleusId, engagement_level: 'aware' },
+      { onConflict: 'person_id,nucleus_id', ignoreDuplicates: true }
+    );
 
   await supabase
     .from('activity_participants')
-    .insert({ activity_id: params.activityId, person_id: p.id, role: params.role as any });
+    .upsert(
+      { activity_id: params.activityId, person_id: personId, role: params.role as any },
+      { onConflict: 'activity_id,person_id', ignoreDuplicates: true }
+    );
 
-  return { personId: p.id, name: p.name };
+  return { personId, name: personName };
 }
 
 export async function removeActivityParticipant(

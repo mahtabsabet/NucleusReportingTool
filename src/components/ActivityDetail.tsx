@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeftIcon,
   XIcon,
-  PlusIcon,
   CheckIcon,
   UserIcon,
   ClockIcon,
@@ -16,6 +15,7 @@ import {
   updateActivityDetails,
 } from '../lib/db/nucleus';
 import { Activity } from '../types';
+import { PersonNameCombobox } from './PersonNameCombobox';
 
 // DB role enum keys for each activity type
 const ROLES_FOR_TYPE: Record<string, string[]> = {
@@ -48,7 +48,6 @@ export function ActivityDetail() {
   const [personNames, setPersonNames] = useState<Record<string, string>>({});
   const [participants, setParticipants] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
-  const [newNameInputs, setNewNameInputs] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
   const [schedule, setSchedule] = useState('');
   const [notes, setNotes] = useState('');
@@ -114,25 +113,22 @@ export function ActivityDetail() {
     }
   };
 
-  const addParticipantToRole = async (role: string) => {
-    const newName = newNameInputs[role]?.trim();
-    if (!newName) return;
-    try {
-      const { personId, name } = await addPersonToActivity({
-        name: newName,
-        nucleusId: nucleusId!,
-        activityId: activityId!,
-        role,
-      });
-      setParticipants(prev => ({
-        ...prev,
-        [role]: [...(prev[role] ?? []), personId],
-      }));
-      setPersonNames(prev => ({ ...prev, [personId]: name }));
-      setNewNameInputs(prev => ({ ...prev, [role]: '' }));
-    } catch (err) {
-      console.error('Failed to add participant:', err);
-    }
+  const addParticipantToRole = async (
+    role: string,
+    params: { name: string; existingPersonId?: string }
+  ) => {
+    const { personId, name } = await addPersonToActivity({
+      name: params.name,
+      nucleusId: nucleusId!,
+      activityId: activityId!,
+      role,
+      existingPersonId: params.existingPersonId,
+    });
+    setParticipants(prev => ({
+      ...prev,
+      [role]: [...(prev[role] ?? []), personId],
+    }));
+    setPersonNames(prev => ({ ...prev, [personId]: name }));
   };
 
   const handleSave = async () => {
@@ -249,24 +245,10 @@ export function ActivityDetail() {
                     );
                   })}
                 </div>
-                <div className="flex gap-2 pt-2">
-                  <input
-                    type="text"
-                    value={newNameInputs[role] ?? ''}
-                    onChange={e =>
-                      setNewNameInputs(prev => ({ ...prev, [role]: e.target.value }))
-                    }
-                    onKeyDown={e => e.key === 'Enter' && addParticipantToRole(role)}
-                    placeholder="Add new name..."
-                    className="flex-1 px-3.5 py-2.5 text-sm font-medium border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
-                  />
-                  <button
-                    onClick={() => addParticipantToRole(role)}
-                    className="px-3.5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm hover:shadow"
-                  >
-                    <PlusIcon className="w-4 h-4" />
-                  </button>
-                </div>
+                <PersonNameCombobox
+                  placeholder="Add name..."
+                  onAdd={params => addParticipantToRole(role, params)}
+                />
               </div>
             ))}
           </div>
