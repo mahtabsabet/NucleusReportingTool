@@ -235,16 +235,19 @@ create index on event_log (timestamp);
 -- ============================================================
 
 create or replace function handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
 begin
-  insert into profiles (id, name)
+  insert into public.profiles (id, name)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1))
   );
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 create trigger on_auth_user_created
   after insert on auth.users
