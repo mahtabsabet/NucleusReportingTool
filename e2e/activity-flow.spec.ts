@@ -6,14 +6,15 @@ test.describe('Activity flow', () => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
 
     await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible();
-    await expect(page.getByText("Test Children's Class")).toBeVisible();
-    await expect(page.getByText('Alice Test')).toBeVisible();
-    await expect(page.getByText('Bob Test')).toBeVisible();
+    await expect(page.getByText("Test Children's Class")).toBeVisible({ timeout: 15000 });
+    // ConcentricCircles fires its own fetch after the nucleus loads
+    await expect(page.getByText('Alice Test')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Bob Test')).toBeVisible({ timeout: 15000 });
   });
 
   test('can add a person to an activity', async ({ page }) => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
-    await expect(page.getByRole('heading', { name: "Test Children's Class" })).toBeVisible();
+    await expect(page.getByRole('heading', { name: "Test Children's Class" })).toBeVisible({ timeout: 15000 });
 
     // Add a teacher using the first "Add new name..." input (Teachers section)
     const nameInput = page.getByPlaceholder('Add new name...').first();
@@ -27,6 +28,6 @@ test.describe('Activity flow', () => {
   test('person added to activity appears in nucleus enrollment', async ({ page }) => {
     // Charlie was added in the previous test; they should now be enrolled in the nucleus
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
-    await expect(page.getByText('Charlie Test')).toBeVisible();
+    await expect(page.getByText('Charlie Test')).toBeVisible({ timeout: 15000 });
   });
 });

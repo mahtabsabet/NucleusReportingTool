@@ -77,18 +77,19 @@ export async function seed() {
     name: 'Test Nucleus',
     lat: 43.65,
     lng: -79.38,
+    deleted_at: null,
   }, { onConflict: 'id' });
   if (nucleusErr) throw new Error(`Seed nucleus: ${nucleusErr.message}`);
 
   const { error: personsErr } = await supabase.from('persons').upsert([
-    { id: TEST_IDS.personAwareId, name: 'Alice Test', is_minor: false },
-    { id: TEST_IDS.personParticipatingId, name: 'Bob Test', is_minor: false },
+    { id: TEST_IDS.personAwareId, name: 'Alice Test', is_minor: false, deleted_at: null },
+    { id: TEST_IDS.personParticipatingId, name: 'Bob Test', is_minor: false, deleted_at: null },
   ], { onConflict: 'id' });
   if (personsErr) throw new Error(`Seed persons: ${personsErr.message}`);
 
   const { error: enrollErr } = await supabase.from('nucleus_enrollments').upsert([
-    { person_id: TEST_IDS.personAwareId, nucleus_id: TEST_IDS.nucleusId, engagement_level: 'aware' },
-    { person_id: TEST_IDS.personParticipatingId, nucleus_id: TEST_IDS.nucleusId, engagement_level: 'participating' },
+    { person_id: TEST_IDS.personAwareId, nucleus_id: TEST_IDS.nucleusId, engagement_level: 'aware', deleted_at: null },
+    { person_id: TEST_IDS.personParticipatingId, nucleus_id: TEST_IDS.nucleusId, engagement_level: 'participating', deleted_at: null },
   ], { onConflict: 'person_id,nucleus_id' });
   if (enrollErr) throw new Error(`Seed enrollments: ${enrollErr.message}`);
 
@@ -98,8 +99,20 @@ export async function seed() {
     name: "Test Children's Class",
     type: 'children_class',
     is_active: true,
+    deleted_at: null,
   }, { onConflict: 'id' });
   if (activityErr) throw new Error(`Seed activity: ${activityErr.message}`);
 
-  console.log('✓ Dev DB seeded with test data');
+  // Verify seed by reading back counts with service role (bypasses RLS)
+  const [{ count: actCount }, { count: personCount }, { count: enrollCount }] = await Promise.all([
+    supabase.from('activities').select('*', { count: 'exact', head: true }).eq('nucleus_id', TEST_IDS.nucleusId).is('deleted_at', null),
+    supabase.from('persons').select('*', { count: 'exact', head: true }).in('id', testPersonIds),
+    supabase.from('nucleus_enrollments').select('*', { count: 'exact', head: true }).eq('nucleus_id', TEST_IDS.nucleusId).is('deleted_at', null),
+  ]);
+
+  const { data: permData } = await supabase.from('user_permissions').select('user_id,role').eq('cluster_id', TEST_IDS.clusterId);
+  const { data: profileData } = await supabase.from('profiles').select('is_admin').eq('id', testUser.id);
+
+  console.log(`✓ Dev DB seeded — activities:${actCount} persons:${personCount} enrollments:${enrollCount} perms:${permData?.length} is_admin:${profileData?.[0]?.is_admin}`);
+  if (!actCount || !personCount || !enrollCount) throw new Error('Seed verification failed: missing data');
 }
