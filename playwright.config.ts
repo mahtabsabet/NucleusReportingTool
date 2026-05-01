@@ -14,6 +14,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
+    actionTimeout: 15000,
   },
   projects: [
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
