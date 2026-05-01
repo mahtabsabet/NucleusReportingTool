@@ -308,7 +308,7 @@ export function NucleusDashboard() {
                 Drag and drop names between circles to update engagement levels.
               </p>
             </div>
-            <ConcentricCircles nucleusId={id!} activities={activities} />
+            <ConcentricCircles nucleusId={id!} />
           </div>
         </div>
 

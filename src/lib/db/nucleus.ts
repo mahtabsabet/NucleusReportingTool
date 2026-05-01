@@ -219,6 +219,40 @@ export async function updateActivityDetails(
   if (error) throw error;
 }
 
+export interface NucleusEnrollmentEntry {
+  personId: string;
+  name: string;
+  engagementLevel: 'aware' | 'participating' | 'supporting' | 'coordinating';
+}
+
+export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promise<NucleusEnrollmentEntry[]> {
+  const { data, error } = await supabase
+    .from('nucleus_enrollments')
+    .select('person_id, engagement_level, persons(name)')
+    .eq('nucleus_id', nucleusId)
+    .is('deleted_at', null);
+  if (error) throw error;
+  return ((data ?? []) as any[]).map(e => ({
+    personId: e.person_id,
+    name: (e.persons as any)?.name ?? e.person_id,
+    engagementLevel: e.engagement_level as NucleusEnrollmentEntry['engagementLevel'],
+  }));
+}
+
+export async function updateEngagementLevel(
+  personId: string,
+  nucleusId: string,
+  level: NucleusEnrollmentEntry['engagementLevel']
+): Promise<void> {
+  const { error } = await supabase
+    .from('nucleus_enrollments')
+    .update({ engagement_level: level })
+    .eq('person_id', personId)
+    .eq('nucleus_id', nucleusId)
+    .is('deleted_at', null);
+  if (error) throw error;
+}
+
 export async function fetchPersonsForNucleus(nucleusId: string): Promise<PersonProfile[]> {
   const { data: enrollments, error: enrollError } = await supabase
     .from('nucleus_enrollments')

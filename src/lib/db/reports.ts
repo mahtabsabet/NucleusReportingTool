@@ -199,6 +199,39 @@ export async function fetchEventSummary(params: {
   };
 }
 
+export interface CrossNucleusPerson {
+  id: string;
+  name: string;
+  nucleiIds: string[];
+}
+
+export async function fetchCrossNucleusPersons(nucleusIds: string[]): Promise<CrossNucleusPerson[]> {
+  if (nucleusIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('nucleus_enrollments')
+    .select('person_id, nucleus_id, persons(id, name)')
+    .in('nucleus_id', nucleusIds)
+    .is('deleted_at', null);
+  if (error) throw error;
+
+  const byPerson = new Map<string, { name: string; nucleiIds: string[] }>();
+  ((data ?? []) as any[]).forEach(e => {
+    const existing = byPerson.get(e.person_id);
+    if (existing) {
+      existing.nucleiIds.push(e.nucleus_id);
+    } else {
+      byPerson.set(e.person_id, {
+        name: (e.persons as any)?.name ?? e.person_id,
+        nucleiIds: [e.nucleus_id],
+      });
+    }
+  });
+
+  return [...byPerson.entries()]
+    .filter(([, v]) => v.nucleiIds.length > 1)
+    .map(([id, v]) => ({ id, name: v.name, nucleiIds: v.nucleiIds }));
+}
+
 export async function fetchClusterName(clusterId: string): Promise<string | null> {
   const { data } = await supabase
     .from('clusters').select('name').eq('id', clusterId).single();
