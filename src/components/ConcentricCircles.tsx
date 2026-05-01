@@ -33,10 +33,12 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
     participating: [],
     aware: [],
   });
+  const [unplaced, setUnplaced] = useState<NameEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [dragOverLevel, setDragOverLevel] = useState<string | null>(null);
-  const [selectedPerson, setSelectedPerson] = useState<{ id: string; sourceLevel: Level } | null>(null);
+  const [dragOverUnplaced, setDragOverUnplaced] = useState(false);
+  const [selectedPerson, setSelectedPerson] = useState<{ id: string; sourceLevel: Level | 'unplaced' } | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -45,10 +47,16 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
         const result: Record<Level, NameEntry[]> = {
           coordinating: [], supporting: [], participating: [], aware: [],
         };
+        const newUnplaced: NameEntry[] = [];
         enrollments.forEach(e => {
-          result[e.engagementLevel].push({ id: e.personId, name: e.name });
+          if (e.engagementLevel === null) {
+            newUnplaced.push({ id: e.personId, name: e.name });
+          } else {
+            result[e.engagementLevel].push({ id: e.personId, name: e.name });
+          }
         });
         setCircles(result);
+        setUnplaced(newUnplaced);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -70,7 +78,7 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
     }
   };
 
-  const handleTapSelect = (id: string, sourceLevel: Level) => {
+  const handleTapSelect = (id: string, sourceLevel: Level | 'unplaced') => {
     if (selectedPerson?.id === id) {
       setSelectedPerson(null);
     } else {
@@ -82,19 +90,27 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
     if (!selectedPerson) return;
     const { id: participantId, sourceLevel } = selectedPerson;
     if (sourceLevel === targetLevel) { setSelectedPerson(null); return; }
-    setCircles(prev => {
-      const entry = prev[sourceLevel].find(p => p.id === participantId);
-      if (!entry) return prev;
-      return {
-        ...prev,
-        [sourceLevel]: prev[sourceLevel].filter(p => p.id !== participantId),
-        [targetLevel]: [...prev[targetLevel], entry],
-      };
-    });
+
+    if (sourceLevel === 'unplaced') {
+      const entry = unplaced.find(p => p.id === participantId);
+      if (!entry) { setSelectedPerson(null); return; }
+      setUnplaced(prev => prev.filter(p => p.id !== participantId));
+      setCircles(prev => ({ ...prev, [targetLevel]: [...prev[targetLevel], entry] }));
+    } else {
+      setCircles(prev => {
+        const entry = prev[sourceLevel].find(p => p.id === participantId);
+        if (!entry) return prev;
+        return {
+          ...prev,
+          [sourceLevel]: prev[sourceLevel].filter(p => p.id !== participantId),
+          [targetLevel]: [...prev[targetLevel], entry],
+        };
+      });
+    }
     setSelectedPerson(null);
   };
 
-  const handleDragStart = (e: React.DragEvent, id: string, sourceLevel: Level) => {
+  const handleDragStart = (e: React.DragEvent, id: string, sourceLevel: Level | 'unplaced') => {
     e.dataTransfer.setData('participantId', id);
     e.dataTransfer.setData('sourceLevel', sourceLevel);
     e.dataTransfer.effectAllowed = 'move';
@@ -119,20 +135,28 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
     e.stopPropagation();
     setDragOverLevel(null);
     const participantId = e.dataTransfer.getData('participantId');
-    const sourceLevel = e.dataTransfer.getData('sourceLevel') as Level;
+    const sourceLevel = e.dataTransfer.getData('sourceLevel') as Level | 'unplaced';
     if (sourceLevel === targetLevel) return;
-    setCircles(prev => {
-      const entry = prev[sourceLevel].find(p => p.id === participantId);
-      if (!entry) return prev;
-      return {
-        ...prev,
-        [sourceLevel]: prev[sourceLevel].filter(p => p.id !== participantId),
-        [targetLevel]: [...prev[targetLevel], entry],
-      };
-    });
+
+    if (sourceLevel === 'unplaced') {
+      const entry = unplaced.find(p => p.id === participantId);
+      if (!entry) return;
+      setUnplaced(prev => prev.filter(p => p.id !== participantId));
+      setCircles(prev => ({ ...prev, [targetLevel]: [...prev[targetLevel], entry] }));
+    } else {
+      setCircles(prev => {
+        const entry = prev[sourceLevel].find(p => p.id === participantId);
+        if (!entry) return prev;
+        return {
+          ...prev,
+          [sourceLevel]: prev[sourceLevel].filter(p => p.id !== participantId),
+          [targetLevel]: [...prev[targetLevel], entry],
+        };
+      });
+    }
   };
 
-  const renderNameChip = (entry: NameEntry, level: Level) => {
+  const renderNameChip = (entry: NameEntry, level: Level | 'unplaced') => {
     const isSelected = selectedPerson?.id === entry.id;
     return (
       <div key={entry.id} className="flex items-center gap-0.5 group">
@@ -184,7 +208,11 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
       {selectedPerson && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3 lg:hidden">
           <p className="text-sm font-medium text-blue-800">
-            Tap a circle to place <strong>{circles[selectedPerson.sourceLevel].find(p => p.id === selectedPerson.id)?.name}</strong>
+            Tap a circle to place <strong>
+              {selectedPerson.sourceLevel === 'unplaced'
+                ? unplaced.find(p => p.id === selectedPerson.id)?.name
+                : circles[selectedPerson.sourceLevel].find(p => p.id === selectedPerson.id)?.name}
+            </strong>
           </p>
           <button onClick={() => setSelectedPerson(null)} className="text-blue-600 hover:text-blue-800 p-1">✕</button>
         </div>
@@ -262,6 +290,46 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
               )}
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Unplaced staging area — shown below circles, always visible so names can be dragged in */}
+      <div
+        className={`rounded-2xl border-2 border-dashed px-6 py-5 transition-all duration-200 ${
+          dragOverUnplaced
+            ? 'border-blue-400 bg-blue-50'
+            : 'border-gray-200 bg-gray-50'
+        }`}
+        onDragOver={e => { e.preventDefault(); setDragOverUnplaced(true); }}
+        onDragLeave={e => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+            setDragOverUnplaced(false);
+          }
+        }}
+        onDrop={e => {
+          e.preventDefault();
+          setDragOverUnplaced(false);
+          const participantId = e.dataTransfer.getData('participantId');
+          const sourceLevel = e.dataTransfer.getData('sourceLevel') as Level | 'unplaced';
+          if (sourceLevel === 'unplaced') return;
+          setCircles(prev => {
+            const entry = prev[sourceLevel].find(p => p.id === participantId);
+            if (!entry) return prev;
+            setUnplaced(u => [...u, entry]);
+            return { ...prev, [sourceLevel]: prev[sourceLevel].filter(p => p.id !== participantId) };
+          });
+        }}
+      >
+        <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
+          New participants — drag into a circle to assign engagement level
+        </p>
+        <div className="flex flex-wrap gap-2 min-h-[2.5rem]">
+          {unplaced.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">No unplaced participants</p>
+          ) : (
+            unplaced.map(p => renderNameChip(p, 'unplaced'))
+          )}
         </div>
       </div>
 

@@ -322,7 +322,7 @@ export async function addPersonToActivity(params: {
   await supabase
     .from('nucleus_enrollments')
     .upsert(
-      { person_id: personId, nucleus_id: params.nucleusId, engagement_level: 'aware' },
+      { person_id: personId, nucleus_id: params.nucleusId },
       { onConflict: 'person_id,nucleus_id', ignoreDuplicates: true }
     );
 
@@ -365,7 +365,7 @@ export async function updateActivityDetails(
 export interface NucleusEnrollmentEntry {
   personId: string;
   name: string;
-  engagementLevel: 'aware' | 'participating' | 'supporting' | 'coordinating';
+  engagementLevel: 'aware' | 'participating' | 'supporting' | 'coordinating' | null;
 }
 
 export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promise<NucleusEnrollmentEntry[]> {
@@ -378,7 +378,7 @@ export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promi
   return ((data ?? []) as any[]).map(e => ({
     personId: e.person_id,
     name: (e.persons as any)?.name ?? e.person_id,
-    engagementLevel: e.engagement_level as NucleusEnrollmentEntry['engagementLevel'],
+    engagementLevel: (e.engagement_level ?? null) as NucleusEnrollmentEntry['engagementLevel'],
   }));
 }
 
