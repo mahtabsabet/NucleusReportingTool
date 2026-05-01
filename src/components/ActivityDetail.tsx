@@ -57,6 +57,8 @@ export function ActivityDetail() {
   const [notes, setNotes] = useState('');
   const [canDelete, setCanDelete] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
@@ -141,14 +143,16 @@ export function ActivityDetail() {
   };
 
   const handleDelete = async () => {
+    if (deleteConfirmInput !== activity.name) return;
     setDeleting(true);
+    setDeleteError(null);
     try {
       await deleteActivity(activityId!);
       navigate(`/nucleus/${nucleusId}`);
     } catch (err) {
       console.error('Failed to delete activity:', err);
+      setDeleteError('Failed to delete activity. Please try again.');
       setDeleting(false);
-      setShowDeleteConfirm(false);
     }
   };
 
@@ -186,7 +190,7 @@ export function ActivityDetail() {
             </h1>
             {canDelete && (
               <button
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() => { setDeleteConfirmInput(''); setDeleteError(null); setShowDeleteConfirm(true); }}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
               >
                 <Trash2Icon className="w-4 h-4" />
@@ -209,26 +213,45 @@ export function ActivityDetail() {
       </header>
 
       {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-6 space-y-4">
-            <h2 className="text-lg font-bold text-gray-900">Delete activity?</h2>
-            <p className="text-sm text-gray-600">
-              <span className="font-semibold">"{activity.name}"</span> and all its participant records will be permanently removed. This cannot be undone.
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <Trash2Icon className="w-5 h-5 text-red-600" />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">Delete Activity</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-2">
+              This will permanently archive <strong>{activity.name}</strong> and all its participant records. This action cannot be undone.
             </p>
-            <div className="flex gap-3 justify-end">
+            <p className="text-sm text-gray-600 mb-4">
+              Type <strong>{activity.name}</strong> to confirm:
+            </p>
+            <input
+              type="text"
+              value={deleteConfirmInput}
+              onChange={e => setDeleteConfirmInput(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm mb-4"
+              placeholder={activity.name}
+              autoFocus
+            />
+            {deleteError && (
+              <p className="text-sm text-red-600 mb-3">{deleteError}</p>
+            )}
+            <div className="flex gap-3 pt-2 border-t border-gray-100">
               <button
                 onClick={() => setShowDeleteConfirm(false)}
                 disabled={deleting}
-                className="px-4 py-2 text-sm font-semibold text-gray-700 border border-gray-300 rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleDelete}
-                disabled={deleting}
-                className="px-4 py-2 text-sm font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50"
+                disabled={deleteConfirmInput !== activity.name || deleting}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white font-medium rounded-xl hover:bg-red-700 shadow-sm hover:shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {deleting ? 'Deleting…' : 'Delete activity'}
+                {deleting ? 'Deleting…' : 'Delete Activity'}
               </button>
             </div>
           </div>
