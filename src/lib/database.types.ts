@@ -66,7 +66,7 @@ export interface Database {
           id: string;
           person_id: string;
           nucleus_id: string;
-          engagement_level: EngagementLevel;
+          engagement_level: EngagementLevel | null;
           deleted_at: string | null;
         };
         Insert: Omit<Database['public']['Tables']['nucleus_enrollments']['Row'], 'id'> & { id?: string };

@@ -92,7 +92,7 @@ create table nucleus_enrollments (
   id               uuid primary key default gen_random_uuid(),
   person_id        uuid not null references persons(id),
   nucleus_id       uuid not null references nuclei(id),
-  engagement_level engagement_level_enum not null default 'aware',
+  engagement_level engagement_level_enum,
   deleted_at       timestamptz,
   unique (person_id, nucleus_id)
 );
