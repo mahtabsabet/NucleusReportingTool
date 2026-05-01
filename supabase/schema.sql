@@ -34,7 +34,7 @@ create type course_status_enum as enum (
 create type event_log_type_enum as enum (
   'activity_created', 'participant_added', 'participant_removed',
   'circle_movement', 'course_completed', 'course_started',
-  'person_created', 'nucleus_created', 'session_logged', 'profile_updated'
+  'person_created', 'nucleus_created', 'nucleus_deleted', 'session_logged', 'profile_updated'
 );
 
 
@@ -359,6 +359,16 @@ create policy "Cluster coordinators manage nuclei" on nuclei
       where user_id = auth.uid()
         and role = 'cluster_coordinator'
         and cluster_id = nuclei.cluster_id
+    )
+  );
+
+create policy "Nucleus collaborators rename their nucleus" on nuclei
+  for update using (
+    exists (
+      select 1 from user_permissions
+      where user_id = auth.uid()
+        and role = 'nucleus_collaborator'
+        and nucleus_id = nuclei.id
     )
   );
 
