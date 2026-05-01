@@ -110,6 +110,44 @@ export async function updateNucleusNotes(nucleusId: string, notes: string): Prom
   if (error) throw error;
 }
 
+export async function renameNucleus(nucleusId: string, name: string): Promise<void> {
+  const { error } = await supabase
+    .from('nuclei')
+    .update({ name })
+    .eq('id', nucleusId);
+  if (error) throw error;
+}
+
+export async function canRenameNucleus(nucleusId: string): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('is_admin')
+    .eq('id', user.id)
+    .single();
+  if ((profile as any)?.is_admin) return true;
+
+  const { data: nucleus } = await supabase
+    .from('nuclei')
+    .select('cluster_id')
+    .eq('id', nucleusId)
+    .single();
+  if (!nucleus) return false;
+
+  const { data: perm } = await supabase
+    .from('user_permissions')
+    .select('id')
+    .eq('user_id', user.id)
+    .or(`nucleus_id.eq.${nucleusId},cluster_id.eq.${(nucleus as any).cluster_id}`)
+    .in('role', ['nucleus_collaborator', 'cluster_coordinator'])
+    .limit(1)
+    .maybeSingle();
+
+  return perm !== null;
+}
+
 export interface ActivityDetailResult {
   activity: Activity;
   nucleusName: string;

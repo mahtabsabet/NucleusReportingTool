@@ -362,6 +362,16 @@ create policy "Cluster coordinators manage nuclei" on nuclei
     )
   );
 
+create policy "Nucleus collaborators rename their nucleus" on nuclei
+  for update using (
+    exists (
+      select 1 from user_permissions
+      where user_id = auth.uid()
+        and role = 'nucleus_collaborator'
+        and nucleus_id = nuclei.id
+    )
+  );
+
 -- persons
 create policy "Read persons in scope" on persons
   for select using (

@@ -12,6 +12,8 @@ import {
   CircleIcon,
   ImageIcon,
   TrendingUpIcon,
+  PencilIcon,
+  XIcon,
 } from 'lucide-react';
 import { ConcentricCircles } from './ConcentricCircles';
 import { Activity } from '../types';
@@ -21,6 +23,8 @@ import {
   fetchPersonsForNucleus,
   createActivity,
   updateNucleusNotes,
+  renameNucleus,
+  canRenameNucleus,
   type NucleusDetail,
   type PersonProfile,
   type CourseRow,
@@ -53,6 +57,12 @@ export function NucleusDashboard() {
   const [notes, setNotes] = useState('');
   const [notesSaved, setNotesSaved] = useState(false);
 
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState('');
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+  const [canRename, setCanRename] = useState(false);
+
   useEffect(() => {
     if (!id) return;
     setLoading(true);
@@ -61,11 +71,13 @@ export function NucleusDashboard() {
       fetchActivitiesForNucleus(id),
       fetchPersonsForNucleus(id),
       fetchCourses(),
-    ]).then(([n, acts, persons, courseList]) => {
+      canRenameNucleus(id),
+    ]).then(([n, acts, persons, courseList, renameAllowed]) => {
       setNucleus(n);
       setActivities(acts);
       setPeople(persons);
       setCourses(courseList);
+      setCanRename(renameAllowed as boolean);
       if (n) {
         setNotes(n.notes);
         setBannerImageState(n.bannerImageUrl);
@@ -85,6 +97,36 @@ export function NucleusDashboard() {
     } catch (err) {
       console.error('Failed to save notes:', err);
     }
+  };
+
+  const startRenamingNucleus = () => {
+    setNameInput(nucleus!.name);
+    setNameError(null);
+    setEditingName(true);
+  };
+
+  const handleSaveRename = async () => {
+    const trimmed = nameInput.trim();
+    if (!trimmed) {
+      setNameError('Name cannot be empty.');
+      return;
+    }
+    setNameSaving(true);
+    setNameError(null);
+    try {
+      await renameNucleus(id!, trimmed);
+      setNucleus(prev => prev ? { ...prev, name: trimmed } : prev);
+      setEditingName(false);
+    } catch (err) {
+      setNameError('Failed to rename. You may not have permission.');
+    } finally {
+      setNameSaving(false);
+    }
+  };
+
+  const handleCancelRename = () => {
+    setEditingName(false);
+    setNameError(null);
   };
 
   if (loading) {
@@ -186,9 +228,49 @@ export function NucleusDashboard() {
               <CircleIcon className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
-                {nucleus.name}
-              </h1>
+              {editingName ? (
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={nameInput}
+                      onChange={e => setNameInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSaveRename(); else if (e.key === 'Escape') handleCancelRename(); }}
+                      className="text-2xl font-bold text-gray-900 tracking-tight border-b-2 border-blue-500 bg-transparent focus:outline-none w-64"
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleSaveRename}
+                      disabled={nameSaving}
+                      className="px-3 py-1 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    >
+                      {nameSaving ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={handleCancelRename}
+                      className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                    >
+                      <XIcon className="w-4 h-4" />
+                    </button>
+                  </div>
+                  {nameError && <p className="text-xs text-red-600">{nameError}</p>}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
+                    {nucleus.name}
+                  </h1>
+                  {canRename && (
+                    <button
+                      onClick={startRenamingNucleus}
+                      title="Rename nucleus"
+                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
+                    >
+                      <PencilIcon className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              )}
               <p className="text-sm font-medium text-gray-600 mt-1">
                 Nucleus Reporting Form
               </p>
