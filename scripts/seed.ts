@@ -60,7 +60,8 @@ export async function seed() {
   // Ensure the test user is an admin so RLS grants broad access
   const { error: profileErr } = await supabase
     .from('profiles')
-    .upsert({ id: testUser.id, is_admin: true }, { onConflict: 'id' });
+    .update({ is_admin: true })
+    .eq('id', testUser.id);
   if (profileErr) throw new Error(`Seed profile: ${profileErr.message}`);
 
   const { error: permErr } = await supabase.from('user_permissions').insert({
