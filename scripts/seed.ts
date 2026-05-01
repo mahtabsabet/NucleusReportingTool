@@ -48,13 +48,13 @@ export async function seed() {
   await supabase.from('nuclei').delete().eq('id', TEST_IDS.nucleusId);
   await supabase.from('clusters').delete().eq('id', TEST_IDS.clusterId);
 
-  const { error: clusterErr } = await supabase.from('clusters').insert({
+  const { error: clusterErr } = await supabase.from('clusters').upsert({
     id: TEST_IDS.clusterId,
     name: 'Test Cluster',
     center_lat: 43.65,
     center_lng: -79.38,
     zoom: 11,
-  });
+  }, { onConflict: 'id' });
   if (clusterErr) throw new Error(`Seed cluster: ${clusterErr.message}`);
 
   // Ensure the test user is an admin so RLS grants broad access
@@ -71,34 +71,34 @@ export async function seed() {
   });
   if (permErr) throw new Error(`Seed user_permissions: ${permErr.message}`);
 
-  const { error: nucleusErr } = await supabase.from('nuclei').insert({
+  const { error: nucleusErr } = await supabase.from('nuclei').upsert({
     id: TEST_IDS.nucleusId,
     cluster_id: TEST_IDS.clusterId,
     name: 'Test Nucleus',
     lat: 43.65,
     lng: -79.38,
-  });
+  }, { onConflict: 'id' });
   if (nucleusErr) throw new Error(`Seed nucleus: ${nucleusErr.message}`);
 
-  const { error: personsErr } = await supabase.from('persons').insert([
+  const { error: personsErr } = await supabase.from('persons').upsert([
     { id: TEST_IDS.personAwareId, name: 'Alice Test', is_minor: false },
     { id: TEST_IDS.personParticipatingId, name: 'Bob Test', is_minor: false },
-  ]);
+  ], { onConflict: 'id' });
   if (personsErr) throw new Error(`Seed persons: ${personsErr.message}`);
 
-  const { error: enrollErr } = await supabase.from('nucleus_enrollments').insert([
+  const { error: enrollErr } = await supabase.from('nucleus_enrollments').upsert([
     { person_id: TEST_IDS.personAwareId, nucleus_id: TEST_IDS.nucleusId, engagement_level: 'aware' },
     { person_id: TEST_IDS.personParticipatingId, nucleus_id: TEST_IDS.nucleusId, engagement_level: 'participating' },
-  ]);
+  ], { onConflict: 'person_id,nucleus_id' });
   if (enrollErr) throw new Error(`Seed enrollments: ${enrollErr.message}`);
 
-  const { error: activityErr } = await supabase.from('activities').insert({
+  const { error: activityErr } = await supabase.from('activities').upsert({
     id: TEST_IDS.activityId,
     nucleus_id: TEST_IDS.nucleusId,
     name: "Test Children's Class",
     type: 'children_class',
     is_active: true,
-  });
+  }, { onConflict: 'id' });
   if (activityErr) throw new Error(`Seed activity: ${activityErr.message}`);
 
   console.log('✓ Dev DB seeded with test data');
