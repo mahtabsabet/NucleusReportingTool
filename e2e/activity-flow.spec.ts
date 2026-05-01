@@ -4,6 +4,8 @@ import { TEST_IDS } from '../scripts/seed';
 test.describe('Activity flow', () => {
   test('nucleus dashboard loads with seeded data', async ({ page }) => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await page.waitForLoadState('networkidle');
+    await page.screenshot({ path: 'test-results/debug-after-goto.png', fullPage: true });
 
     await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible();
     await expect(page.getByText("Test Children's Class")).toBeVisible();

@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 
-dotenv.config({ path: path.resolve(__dirname, '.env.local') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
 export default defineConfig({
   testDir: './e2e',
@@ -14,6 +14,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
+    actionTimeout: 15000,
   },
   projects: [
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
