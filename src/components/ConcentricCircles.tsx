@@ -5,6 +5,7 @@ import {
   fetchNucleusEnrollmentsWithNames,
   updateEngagementLevel,
 } from '../lib/db/nucleus';
+import { getUnplacedPersonIds, clearPersonUnplaced } from '../lib/unplacedTracker';
 
 interface ConcentricCirclesProps {
   nucleusId: string;
@@ -48,8 +49,9 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
           coordinating: [], supporting: [], participating: [], aware: [],
         };
         const newUnplaced: NameEntry[] = [];
+        const unplacedIds = new Set(getUnplacedPersonIds(nucleusId));
         enrollments.forEach(e => {
-          if (e.engagementLevel === null) {
+          if (e.engagementLevel === null || unplacedIds.has(e.personId)) {
             newUnplaced.push({ id: e.personId, name: e.name });
           } else {
             result[e.engagementLevel].push({ id: e.personId, name: e.name });
@@ -94,6 +96,7 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
     if (sourceLevel === 'unplaced') {
       const entry = unplaced.find(p => p.id === participantId);
       if (!entry) { setSelectedPerson(null); return; }
+      clearPersonUnplaced(nucleusId, participantId);
       setUnplaced(prev => prev.filter(p => p.id !== participantId));
       setCircles(prev => ({ ...prev, [targetLevel]: [...prev[targetLevel], entry] }));
     } else {
@@ -141,6 +144,7 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
     if (sourceLevel === 'unplaced') {
       const entry = unplaced.find(p => p.id === participantId);
       if (!entry) return;
+      clearPersonUnplaced(nucleusId, participantId);
       setUnplaced(prev => prev.filter(p => p.id !== participantId));
       setCircles(prev => ({ ...prev, [targetLevel]: [...prev[targetLevel], entry] }));
     } else {

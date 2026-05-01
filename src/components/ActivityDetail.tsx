@@ -14,6 +14,7 @@ import {
   removeActivityParticipant,
   updateActivityDetails,
 } from '../lib/db/nucleus';
+import { markPersonUnplaced } from '../lib/unplacedTracker';
 import { Activity } from '../types';
 import { PersonNameCombobox } from './PersonNameCombobox';
 
@@ -124,6 +125,7 @@ export function ActivityDetail() {
       role,
       existingPersonId: params.existingPersonId,
     });
+    markPersonUnplaced(nucleusId!, personId);
     setParticipants(prev => ({
       ...prev,
       [role]: [...(prev[role] ?? []), personId],
