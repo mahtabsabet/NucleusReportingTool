@@ -39,6 +39,19 @@ export async function seed() {
 
   const testPersonIds = [TEST_IDS.personAwareId, TEST_IDS.personParticipatingId];
 
+  // Clean up any persons dynamically created by tests (e.g. "Charlie Test" added by test 2)
+  const { data: testCreatedPersons } = await supabase
+    .from('persons')
+    .select('id')
+    .ilike('name', '% Test')
+    .not('id', 'in', `(${testPersonIds.join(',')})`);
+  if (testCreatedPersons && testCreatedPersons.length > 0) {
+    const ids = testCreatedPersons.map(p => p.id);
+    await supabase.from('activity_participants').delete().in('person_id', ids);
+    await supabase.from('nucleus_enrollments').delete().in('person_id', ids);
+    await supabase.from('persons').delete().in('id', ids);
+  }
+
   // Clear existing test data in FK-safe order
   await supabase.from('user_permissions').delete().eq('cluster_id', TEST_IDS.clusterId);
   await supabase.from('activity_participants').delete().eq('activity_id', TEST_IDS.activityId);

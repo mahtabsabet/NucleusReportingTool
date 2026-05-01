@@ -28,6 +28,6 @@ test.describe('Activity flow', () => {
   test('person added to activity appears in nucleus enrollment', async ({ page }) => {
     // Charlie was added in the previous test; they should now be enrolled in the nucleus
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
-    await expect(page.getByText('Charlie Test')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Charlie Test').first()).toBeVisible({ timeout: 15000 });
   });
 });
