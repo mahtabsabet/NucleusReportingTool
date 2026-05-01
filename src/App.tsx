@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth';
 import { LoginPage } from './components/LoginPage';
 import { ClusterMapView } from './components/ClusterMapView';
+import { SplashScreen } from './components/SplashScreen';
 import { NucleusDashboard } from './components/NucleusDashboard';
 import { ActivityDetail } from './components/ActivityDetail';
 import { IndividualProfile } from './components/IndividualProfile';
@@ -40,11 +41,16 @@ function AppRoutes() {
 }
 
 export function App() {
+  const [splashDone, setSplashDone] = useState(false);
+
   return (
-    <AuthProvider>
-      <BrowserRouter>
-        <AppRoutes />
-      </BrowserRouter>
-    </AuthProvider>
+    <>
+      {!splashDone && <SplashScreen onDone={() => setSplashDone(true)} />}
+      <AuthProvider>
+        <BrowserRouter>
+          <AppRoutes />
+        </BrowserRouter>
+      </AuthProvider>
+    </>
   );
 }
