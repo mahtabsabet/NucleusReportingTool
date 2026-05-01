@@ -166,8 +166,8 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
 
   const ringConfig: { level: Level; inset: string }[] = [
     { level: 'aware', inset: '0%' },
-    { level: 'supporting', inset: '12.5%' },
-    { level: 'participating', inset: '25%' },
+    { level: 'participating', inset: '12.5%' },
+    { level: 'supporting', inset: '25%' },
     { level: 'coordinating', inset: '37.5%' },
   ];
 
@@ -192,7 +192,7 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
 
       <div className="w-full relative mx-auto" style={{ maxWidth: '500px', aspectRatio: '1/1' }}>
         <svg viewBox="0 0 400 400" className="w-full h-full absolute inset-0 z-0 pointer-events-none drop-shadow-sm">
-          {(['aware', 'supporting', 'participating', 'coordinating'] as Level[]).map((level, i) => {
+          {(['aware', 'participating', 'supporting', 'coordinating'] as Level[]).map((level, i) => {
             const radii = [195, 150, 105, 65];
             return (
               <circle
