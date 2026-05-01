@@ -52,6 +52,7 @@ export interface Database {
           email: string | null;
           phone: string | null;
           is_minor: boolean;
+          capacities: string[];
           notes: string | null;
           profile_image_url: string | null;
           created_at: string;

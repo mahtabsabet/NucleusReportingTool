@@ -78,6 +78,7 @@ create table persons (
   email               text,
   phone               text,
   is_minor            boolean not null default false,
+  capacities          text[] not null default '{}',
   notes               text,
   profile_image_url   text,
   created_at          timestamptz not null default now(),
