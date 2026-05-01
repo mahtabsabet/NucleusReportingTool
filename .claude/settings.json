@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -f .env.local ] || cp .env.dev .env.local 2>/dev/null || true",
+            "statusMessage": "Setting up dev environment..."
+          }
+        ]
+      }
+    ]
+  }
+}

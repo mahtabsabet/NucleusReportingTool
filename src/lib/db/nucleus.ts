@@ -4,7 +4,7 @@ import type { PersonProfile, CourseRow } from './clusterProfile';
 
 export type { PersonProfile, CourseRow };
 
-const DB_TO_APP_TYPE: Record<string, Activity['type']> = {
+export const DB_TO_APP_TYPE: Record<string, Activity['type']> = {
   children_class: 'children-class',
   junior_youth: 'junior-youth',
   study_circle: 'study-circle',
@@ -13,7 +13,7 @@ const DB_TO_APP_TYPE: Record<string, Activity['type']> = {
   other: 'other',
 };
 
-const APP_TO_DB_TYPE: Record<Activity['type'], string> = {
+export const APP_TO_DB_TYPE: Record<Activity['type'], string> = {
   'children-class': 'children_class',
   'junior-youth': 'junior_youth',
   'study-circle': 'study_circle',
