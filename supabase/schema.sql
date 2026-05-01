@@ -34,7 +34,7 @@ create type course_status_enum as enum (
 create type event_log_type_enum as enum (
   'activity_created', 'participant_added', 'participant_removed',
   'circle_movement', 'course_completed', 'course_started',
-  'person_created', 'nucleus_created', 'nucleus_deleted', 'session_logged', 'profile_updated'
+  'person_created', 'nucleus_created', 'nucleus_deleted', 'activity_deleted', 'session_logged', 'profile_updated'
 );
 
 
