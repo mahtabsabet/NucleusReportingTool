@@ -22,10 +22,12 @@ import {
   MapIcon,
   CalendarIcon,
   HelpCircleIcon,
-  NetworkIcon } from
+  NetworkIcon,
+  UserPlusIcon } from
 'lucide-react';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
+import { getCallerContext, canCreateUsers } from '../lib/db/users';
 import { Timeline } from './Timeline';
 import { NetworkView } from './NetworkView';
 import 'leaflet/dist/leaflet.css';
@@ -85,10 +87,15 @@ export function ClusterMapView() {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [showNetwork, setShowNetwork] = useState(false);
   const [canCreate, setCanCreate] = useState(false);
+  const [canManageUsers, setCanManageUsers] = useState(false);
 
   useEffect(() => {
-    Promise.all([fetchClusters(), fetchNuclei()])
-      .then(([c, n]) => { setClusters(c); setNuclei(n); })
+    Promise.all([fetchClusters(), fetchNuclei(), getCallerContext()])
+      .then(([c, n, ctx]) => {
+        setClusters(c);
+        setNuclei(n);
+        if (ctx) setCanManageUsers(canCreateUsers(ctx));
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -410,6 +417,21 @@ export function ClusterMapView() {
               </button>
             </div>
           </div>
+
+          {canManageUsers && (
+            <div className="p-6 border-b border-gray-100">
+              <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">
+                Administration
+              </h2>
+              <button
+                onClick={() => navigate('/users')}
+                disabled={isPlacing}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 text-left hover:bg-indigo-50 text-gray-700 hover:text-indigo-900 ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <UserPlusIcon className="w-5 h-5 text-indigo-500" />
+                <span className="font-semibold">Manage Users</span>
+              </button>
+            </div>
+          )}
 
           <div className="p-6">
             <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1.5">

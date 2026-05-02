@@ -602,6 +602,78 @@ create policy "Authenticated users append to event log" on event_log
 
 
 -- ============================================================
+-- User Management: Extended RLS for Coordinators
+-- ============================================================
+
+-- Security-definer helpers that bypass RLS to get the caller's scoped role IDs.
+-- Using security definer avoids recursive policy evaluation on user_permissions.
+
+create or replace function coordinator_cluster_ids()
+returns setof uuid
+language sql security definer stable as $$
+  select cluster_id from user_permissions
+  where user_id = auth.uid()
+    and role = 'cluster_coordinator'
+    and cluster_id is not null
+$$;
+
+create or replace function nucleus_collaborator_nucleus_ids()
+returns setof uuid
+language sql security definer stable as $$
+  select nucleus_id from user_permissions
+  where user_id = auth.uid()
+    and role = 'nucleus_collaborator'
+    and nucleus_id is not null
+$$;
+
+-- Cluster coordinators and nucleus collaborators can see profiles of users they manage
+create policy "Coordinators see managed user profiles" on profiles
+  for select using (
+    exists (
+      select 1 from user_permissions up
+      where up.user_id = profiles.id
+        and (
+          -- user has a cluster-scoped permission in one of our coordinated clusters
+          up.cluster_id = any(select coordinator_cluster_ids())
+          -- user has a nucleus-scoped permission in a nucleus within our clusters
+          or up.nucleus_id in (
+            select id from nuclei where cluster_id = any(select coordinator_cluster_ids())
+          )
+          -- user has an activity-scoped permission within our clusters
+          or up.activity_id in (
+            select a.id from activities a
+            join nuclei n on n.id = a.nucleus_id
+            where n.cluster_id = any(select coordinator_cluster_ids())
+          )
+          -- nucleus collaborators see activity leads assigned to their nuclei
+          or (up.role = 'activity_lead' and up.activity_id in (
+            select id from activities
+            where nucleus_id = any(select nucleus_collaborator_nucleus_ids())
+          ))
+        )
+    )
+  );
+
+-- Cluster coordinators and nucleus collaborators can see permissions they manage
+create policy "Coordinators see managed user permissions" on user_permissions
+  for select using (
+    cluster_id = any(select coordinator_cluster_ids())
+    or nucleus_id in (
+      select id from nuclei where cluster_id = any(select coordinator_cluster_ids())
+    )
+    or activity_id in (
+      select a.id from activities a
+      join nuclei n on n.id = a.nucleus_id
+      where n.cluster_id = any(select coordinator_cluster_ids())
+    )
+    or (role = 'activity_lead' and activity_id in (
+      select id from activities
+      where nucleus_id = any(select nucleus_collaborator_nucleus_ids())
+    ))
+  );
+
+
+-- ============================================================
 -- Seed: Courses catalog
 -- ============================================================
 
