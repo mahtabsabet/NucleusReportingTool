@@ -24,6 +24,7 @@ import {
   InfoIcon,
 } from 'lucide-react';
 import { ConcentricCircles } from './ConcentricCircles';
+import { InNucleusNetworkView } from './InNucleusNetworkView';
 import { Activity } from '../types';
 import {
   fetchNucleus,
@@ -435,13 +436,7 @@ export function NucleusDashboard() {
                     <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Network View</h2>
                     <p className="text-sm text-gray-500">Visual overview of connections within this nucleus.</p>
                   </div>
-                  <div className="flex flex-col items-center justify-center h-80 gap-4 rounded-2xl bg-gray-50 border border-dashed border-gray-200">
-                    <NetworkIcon className="w-16 h-16 text-gray-200" />
-                    <p className="text-base font-medium text-gray-400">Network visualization coming soon</p>
-                    <p className="text-sm text-gray-400 text-center max-w-sm px-4">
-                      This view will show connections and relationships between participants and activities in this nucleus.
-                    </p>
-                  </div>
+                  <InNucleusNetworkView nucleusId={id!} />
                   {backToDashboard}
                 </div>
               )}
@@ -729,12 +724,12 @@ export function NucleusDashboard() {
 
               {/* Network card */}
               <div className={cardBase} onClick={() => setFocusedModule('network')}>
-                {cardHeader('Network Overview', 'Visual overview of connections within this nucleus.')}
-                <div className="flex flex-col items-center justify-center flex-1 py-6 gap-3 rounded-xl bg-gray-50">
-                  <NetworkIcon className="w-10 h-10 text-gray-200" />
-                  <p className="text-sm font-medium text-gray-400">Coming soon</p>
-                  <p className="text-xs text-gray-300 text-center px-4">
-                    Network visualization will show connections between participants.
+                {cardHeader('Network Overview', 'Connections between participants in this nucleus.')}
+                <div className="flex flex-col items-center justify-center flex-1 py-4 gap-2 rounded-xl bg-gray-50">
+                  <NetworkIcon className="w-8 h-8 text-blue-300" />
+                  <p className="text-sm font-medium text-gray-600">Force-directed network</p>
+                  <p className="text-xs text-gray-400 text-center px-4">
+                    Shows primary contact relationships between {people.length} participant{people.length !== 1 ? 's' : ''}.
                   </p>
                 </div>
               </div>

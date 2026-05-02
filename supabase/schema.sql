@@ -89,11 +89,12 @@ alter table profiles add constraint profiles_person_id_fkey
   foreign key (person_id) references persons(id) on delete set null;
 
 create table nucleus_enrollments (
-  id               uuid primary key default gen_random_uuid(),
-  person_id        uuid not null references persons(id),
-  nucleus_id       uuid not null references nuclei(id),
-  engagement_level engagement_level_enum,
-  deleted_at       timestamptz,
+  id                  uuid primary key default gen_random_uuid(),
+  person_id           uuid not null references persons(id),
+  nucleus_id          uuid not null references nuclei(id),
+  engagement_level    engagement_level_enum,
+  primary_contact_id  uuid references persons(id),
+  deleted_at          timestamptz,
   unique (person_id, nucleus_id)
 );
 

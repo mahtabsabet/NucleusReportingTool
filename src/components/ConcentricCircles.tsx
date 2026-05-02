@@ -9,10 +9,12 @@ import {
   UsersIcon,
   HeartIcon,
   StarIcon,
+  ChevronDownIcon,
 } from 'lucide-react';
 import {
   fetchNucleusEnrollmentsWithNames,
   updateEngagementLevel,
+  updatePrimaryContact,
 } from '../lib/db/nucleus';
 import { getUnplacedPersonIds, clearPersonUnplaced } from '../lib/unplacedTracker';
 import { supabase } from '../lib/supabase';
@@ -39,9 +41,18 @@ const LEVEL_BADGE: Record<Level | 'unplaced', { bg: string; text: string; label:
   unplaced:     { bg: '#f3f4f6', text: '#374151', label: 'Unplaced' },
 };
 
+// Engagement level hierarchy: higher = closer to core
+const LEVEL_RANK: Record<Level, number> = {
+  coordinating: 4,
+  supporting:   3,
+  participating:2,
+  aware:        1,
+};
+
 interface NameEntry {
   id: string;
   name: string;
+  primaryContactId: string | null;
 }
 
 interface PanelActivity {
@@ -167,6 +178,30 @@ async function fetchPanelActivities(personId: string): Promise<PanelActivity[]> 
     }));
 }
 
+// Returns a flat list of all placed persons with their levels (for contact dropdown filtering)
+function getAllPlaced(circles: Record<Level, NameEntry[]>): { id: string; name: string; level: Level }[] {
+  const result: { id: string; name: string; level: Level }[] = [];
+  for (const level of Object.keys(circles) as Level[]) {
+    for (const entry of circles[level]) {
+      result.push({ id: entry.id, name: entry.name, level });
+    }
+  }
+  return result;
+}
+
+// Valid primary contact candidates: same or higher level than the person
+function validContacts(
+  allPlaced: { id: string; name: string; level: Level }[],
+  personId: string,
+  personLevel: Level | null
+): { id: string; name: string }[] {
+  return allPlaced.filter(p => {
+    if (p.id === personId) return false;
+    if (personLevel === null) return true;
+    return LEVEL_RANK[p.level] >= LEVEL_RANK[personLevel];
+  });
+}
+
 export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps) {
   const navigate = useNavigate();
 
@@ -182,6 +217,15 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
   const [panel, setPanel] = useState<{ entry: NameEntry; level: Level | 'unplaced' } | null>(null);
   const [panelActivities, setPanelActivities] = useState<PanelActivity[]>([]);
   const [panelLoading, setPanelLoading] = useState(false);
+  const [panelContactId, setPanelContactId] = useState<string | null>(null);
+  const [panelContactSaving, setPanelContactSaving] = useState(false);
+
+  // State for the "assign primary contact" prompt shown after dropping from unplaced
+  const [contactPrompt, setContactPrompt] = useState<{
+    entry: NameEntry;
+    targetLevel: Level;
+    selectedId: string;
+  } | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -193,10 +237,11 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
         const newUnplaced: NameEntry[] = [];
         const unplacedIds = new Set(getUnplacedPersonIds(nucleusId));
         enrollments.forEach(e => {
+          const entry: NameEntry = { id: e.personId, name: e.name, primaryContactId: e.primaryContactId };
           if (e.engagementLevel === null || unplacedIds.has(e.personId)) {
-            newUnplaced.push({ id: e.personId, name: e.name });
+            newUnplaced.push(entry);
           } else {
-            result[e.engagementLevel].push({ id: e.personId, name: e.name });
+            result[e.engagementLevel].push(entry);
           }
         });
         setCircles(result);
@@ -224,6 +269,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
 
   const openPanel = (entry: NameEntry, level: Level | 'unplaced') => {
     setPanel({ entry, level });
+    setPanelContactId(entry.primaryContactId ?? null);
     setPanelLoading(true);
     setPanelActivities([]);
     fetchPanelActivities(entry.id)
@@ -232,6 +278,31 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
   };
 
   const closePanel = () => setPanel(null);
+
+  const handlePanelContactSave = async (newContactId: string | null) => {
+    if (!panel) return;
+    setPanelContactSaving(true);
+    try {
+      await updatePrimaryContact(panel.entry.id, nucleusId, newContactId);
+      setPanelContactId(newContactId);
+      // Update local state
+      const updateEntry = (entry: NameEntry) =>
+        entry.id === panel.entry.id ? { ...entry, primaryContactId: newContactId } : entry;
+      setCircles(prev => {
+        const next = { ...prev };
+        for (const level of Object.keys(next) as Level[]) {
+          next[level] = next[level].map(updateEntry);
+        }
+        return next;
+      });
+      setUnplaced(prev => prev.map(updateEntry));
+      setPanel(prev => prev ? { ...prev, entry: { ...prev.entry, primaryContactId: newContactId } } : null);
+    } catch (err) {
+      console.error('Failed to update primary contact:', err);
+    } finally {
+      setPanelContactSaving(false);
+    }
+  };
 
   const handleDragStart = (e: React.DragEvent, id: string, sourceLevel: Level | 'unplaced') => {
     e.dataTransfer.setData('participantId', id);
@@ -267,6 +338,8 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
       clearPersonUnplaced(nucleusId, participantId);
       setUnplaced(prev => prev.filter(p => p.id !== participantId));
       setCircles(prev => ({ ...prev, [targetLevel]: [...prev[targetLevel], entry] }));
+      // Prompt to assign primary contact
+      setContactPrompt({ entry, targetLevel, selectedId: '' });
     } else {
       setCircles(prev => {
         const entry = prev[sourceLevel].find(p => p.id === participantId);
@@ -284,6 +357,28 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     }
   };
 
+  const handleContactPromptAssign = async () => {
+    if (!contactPrompt) return;
+    const contactId = contactPrompt.selectedId || null;
+    if (contactId) {
+      try {
+        await updatePrimaryContact(contactPrompt.entry.id, nucleusId, contactId);
+        const updateEntry = (entry: NameEntry) =>
+          entry.id === contactPrompt.entry.id ? { ...entry, primaryContactId: contactId } : entry;
+        setCircles(prev => {
+          const next = { ...prev };
+          for (const level of Object.keys(next) as Level[]) {
+            next[level] = next[level].map(updateEntry);
+          }
+          return next;
+        });
+      } catch (err) {
+        console.error('Failed to save primary contact:', err);
+      }
+    }
+    setContactPrompt(null);
+  };
+
   // Compute node positions for each level
   const nodePositions = useMemo(() => {
     const result: Record<Level, { x: number; y: number }[]> = {
@@ -296,15 +391,16 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     return result;
   }, [circles]);
 
+  const allPlaced = useMemo(() => getAllPlaced(circles), [circles]);
+
   const renderNode = (entry: NameEntry, level: Level | 'unplaced', x: number, y: number) => {
     const isHovered = hoveredId === entry.id;
     const avatarColor = level !== 'unplaced' ? LEVEL_COLORS[level].avatar : '#9ca3af';
     const scale = isHovered ? 1.2 : 1;
     const initials = getInitials(entry.name);
-    // Position as percentage of the 400-unit viewBox
     const leftPct = (x / 400) * 100;
     const topPct = (y / 400) * 100;
-    const sizePct = (NODE_R * 2 / 400) * 100; // diameter as %
+    const sizePct = (NODE_R * 2 / 400) * 100;
 
     return (
       <div
@@ -346,7 +442,6 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
             {initials}
           </span>
         </div>
-        {/* Hover tooltip */}
         {isHovered && (
           <div
             style={{
@@ -384,7 +479,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     );
   };
 
-  // ── Compact mode (unchanged) ──────────────────────────────────────────────
+  // ── Compact mode ──────────────────────────────────────────────────────────
   if (compact) {
     if (loading) {
       return (
@@ -437,16 +532,19 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     const badge = LEVEL_BADGE[level];
     const initials = getInitials(entry.name);
     const avatarColor = level !== 'unplaced' ? LEVEL_COLORS[level as Level].avatar : '#9ca3af';
+    const personLevel = level !== 'unplaced' ? (level as Level) : null;
+    const contacts = validContacts(allPlaced, entry.id, personLevel);
+    const currentContactName = panelContactId
+      ? allPlaced.find(p => p.id === panelContactId)?.name ?? null
+      : null;
 
     return (
       <>
-        {/* backdrop */}
         <div
           className="fixed inset-0 z-40"
           style={{ background: 'rgba(0,0,0,0.08)' }}
           onClick={closePanel}
         />
-        {/* panel */}
         <div
           className="fixed top-0 right-0 h-full z-50 flex flex-col bg-white shadow-2xl overflow-y-auto"
           style={{ width: '360px', maxWidth: '100vw', animation: 'slideInRight 0.25s ease' }}
@@ -477,6 +575,48 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
             >
               <XIcon className="w-5 h-5" />
             </button>
+          </div>
+
+          {/* primary contact */}
+          <div className="px-6 pt-5 pb-4 border-b border-gray-100">
+            <h3 className="text-base font-semibold text-gray-800 mb-1">Primary contact</h3>
+            {contacts.length === 0 ? (
+              <p className="text-sm text-gray-400 italic">
+                {personLevel === 'coordinating'
+                  ? 'Core members can be anyone\'s primary contact.'
+                  : 'No eligible contacts at this level or higher.'}
+              </p>
+            ) : (
+              <>
+                <div className="relative">
+                  <select
+                    value={panelContactId ?? ''}
+                    onChange={e => handlePanelContactSave(e.target.value || null)}
+                    disabled={panelContactSaving}
+                    className="w-full appearance-none pl-10 pr-8 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                  >
+                    <option value="">— No primary contact —</option>
+                    {contacts.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                  <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                    <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center">
+                      <UserIcon className="w-3 h-3 text-gray-500" />
+                    </div>
+                  </div>
+                  <ChevronDownIcon className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                </div>
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Primary contact must be at the same level or higher.
+                </p>
+                {currentContactName && (
+                  <p className="text-xs text-blue-600 mt-0.5 font-medium">
+                    Currently: {currentContactName}
+                  </p>
+                )}
+              </>
+            )}
           </div>
 
           {/* activities */}
@@ -543,6 +683,75 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     );
   };
 
+  // ── Primary contact assignment prompt (after drop from unplaced) ───────────
+  const renderContactPrompt = () => {
+    if (!contactPrompt) return null;
+    const { entry, targetLevel, selectedId } = contactPrompt;
+    const candidates = validContacts(allPlaced, entry.id, targetLevel);
+
+    return (
+      <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+              style={{ backgroundColor: LEVEL_COLORS[targetLevel].avatar }}
+            >
+              {getInitials(entry.name)}
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-gray-900">{entry.name}</h2>
+              <p className="text-xs text-gray-500">
+                Placed in{' '}
+                <span className="font-semibold">{LEVEL_DISPLAY[targetLevel]}</span>
+              </p>
+            </div>
+          </div>
+
+          <h3 className="text-sm font-semibold text-gray-700 mb-1">Assign a primary contact</h3>
+          <p className="text-xs text-gray-500 mb-3">
+            Who is {entry.name.split(' ')[0]}'s primary connection in this nucleus? This is optional but encouraged.
+          </p>
+
+          {candidates.length === 0 ? (
+            <p className="text-sm text-gray-400 italic mb-4">
+              No eligible contacts yet. You can assign one later from the person's profile panel.
+            </p>
+          ) : (
+            <div className="relative mb-4">
+              <select
+                value={selectedId}
+                onChange={e => setContactPrompt(prev => prev ? { ...prev, selectedId: e.target.value } : null)}
+                className="w-full appearance-none pl-3 pr-8 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">— Skip for now —</option>
+                {candidates.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <ChevronDownIcon className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => setContactPrompt(null)}
+              className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-600 font-medium rounded-xl hover:bg-gray-50 transition-colors text-sm"
+            >
+              Skip
+            </button>
+            <button
+              onClick={handleContactPromptAssign}
+              className="flex-1 px-4 py-2.5 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-all text-sm shadow-sm"
+            >
+              {selectedId ? 'Assign' : 'Done'}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ── Main visualization ────────────────────────────────────────────────────
   return (
     <>
@@ -564,7 +773,6 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
 
           {/* SVG: background circles + labels */}
           <svg viewBox="0 0 400 400" className="absolute inset-0 w-full h-full z-0 pointer-events-none drop-shadow-sm">
-            {/* Circle fills */}
             {(['aware', 'participating', 'supporting', 'coordinating'] as Level[]).map((level, i) => {
               const radii = [195, 150, 105, 65];
               return (
@@ -578,8 +786,6 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
                 />
               );
             })}
-
-            {/* No fill here — band highlight handled by HTML overlay below */}
 
             {/* Ring labels */}
             {LABEL_CONFIG.map(({ level, y, color }) => (
@@ -599,7 +805,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
             ))}
           </svg>
 
-          {/* Drop zones + band highlight (transparent overlays per band, for drag-and-drop) */}
+          {/* Drop zones */}
           <div className="absolute inset-0 z-10">
             {RING_CONFIG.map(({ level, inset }) => (
               <div
@@ -619,7 +825,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
             ))}
           </div>
 
-          {/* Node layer: person avatar nodes */}
+          {/* Node layer */}
           <div className="absolute inset-0 z-20" style={{ pointerEvents: 'none' }}>
             {(Object.keys(BANDS) as Level[]).map(level =>
               circles[level].map((entry, i) => {
@@ -717,6 +923,9 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
 
       {/* Side panel (fixed overlay) */}
       {renderPanel()}
+
+      {/* Primary contact assignment prompt */}
+      {renderContactPrompt()}
     </>
   );
 }

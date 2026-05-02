@@ -435,12 +435,13 @@ export interface NucleusEnrollmentEntry {
   personId: string;
   name: string;
   engagementLevel: 'aware' | 'participating' | 'supporting' | 'coordinating' | null;
+  primaryContactId: string | null;
 }
 
 export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promise<NucleusEnrollmentEntry[]> {
   const { data, error } = await supabase
     .from('nucleus_enrollments')
-    .select('person_id, engagement_level, persons(name)')
+    .select('person_id, engagement_level, primary_contact_id, persons(name)')
     .eq('nucleus_id', nucleusId)
     .is('deleted_at', null);
   if (error) throw error;
@@ -448,7 +449,22 @@ export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promi
     personId: e.person_id,
     name: (e.persons as any)?.name ?? e.person_id,
     engagementLevel: (e.engagement_level ?? null) as NucleusEnrollmentEntry['engagementLevel'],
+    primaryContactId: (e.primary_contact_id ?? null) as string | null,
   }));
+}
+
+export async function updatePrimaryContact(
+  personId: string,
+  nucleusId: string,
+  primaryContactId: string | null
+): Promise<void> {
+  const { error } = await supabase
+    .from('nucleus_enrollments')
+    .update({ primary_contact_id: primaryContactId } as any)
+    .eq('person_id', personId)
+    .eq('nucleus_id', nucleusId)
+    .is('deleted_at', null);
+  if (error) throw error;
 }
 
 export async function updateEngagementLevel(
