@@ -16,8 +16,8 @@ test.describe('Activity flow', () => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
     await expect(page.getByRole('heading', { name: "Test Children's Class" })).toBeVisible({ timeout: 15000 });
 
-    // Add a teacher using the first "Add new name..." input (Teachers section)
-    const nameInput = page.getByPlaceholder('Add new name...').first();
+    // Add a teacher using the first "Add name..." input (Teachers section)
+    const nameInput = page.getByPlaceholder('Add name...').first();
     await nameInput.fill('Charlie Test');
     await nameInput.press('Enter');
 
