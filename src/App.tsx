@@ -11,6 +11,7 @@ import { ActivityTypeReport } from './components/ActivityTypeReport';
 import { ClusterProfile } from './components/ClusterProfile';
 import { GrowthReport } from './components/GrowthReport';
 import { UserGuide } from './components/UserGuide';
+import { UserManagement } from './components/UserManagement';
 
 function AppRoutes() {
   const { user, loading } = useAuth();
@@ -36,6 +37,7 @@ function AppRoutes() {
       <Route path="/cluster-profile" element={<ClusterProfile />} />
       <Route path="/growth-report" element={<GrowthReport />} />
       <Route path="/nucleus/:nucleusId/growth-report" element={<GrowthReport />} />
+      <Route path="/users" element={<UserManagement />} />
     </Routes>
   );
 }
