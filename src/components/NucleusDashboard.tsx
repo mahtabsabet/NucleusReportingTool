@@ -15,6 +15,13 @@ import {
   PencilIcon,
   XIcon,
   Trash2Icon,
+  LayoutDashboardIcon,
+  TargetIcon,
+  NetworkIcon,
+  ListIcon,
+  BarChart3Icon,
+  FileTextIcon,
+  InfoIcon,
 } from 'lucide-react';
 import { ConcentricCircles } from './ConcentricCircles';
 import { Activity } from '../types';
@@ -42,6 +49,16 @@ const activityTypeLabels: Record<string, string> = {
   other: 'Other',
 };
 
+type FocusedModule = 'circles' | 'network' | 'activities' | 'capacities' | 'notes';
+
+const MODULES: { id: FocusedModule; label: string; Icon: React.FC<{ className?: string }> }[] = [
+  { id: 'circles', label: 'Circles', Icon: TargetIcon },
+  { id: 'network', label: 'Network', Icon: NetworkIcon },
+  { id: 'activities', label: 'Activities', Icon: ListIcon },
+  { id: 'capacities', label: 'Capacities', Icon: BarChart3Icon },
+  { id: 'notes', label: 'Notes', Icon: FileTextIcon },
+];
+
 export function NucleusDashboard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -51,6 +68,7 @@ export function NucleusDashboard() {
   const [people, setPeople] = useState<PersonProfile[]>([]);
   const [courses, setCourses] = useState<CourseRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [focusedModule, setFocusedModule] = useState<FocusedModule | null>(null);
 
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [newActivityType, setNewActivityType] = useState<string>('children-class');
@@ -200,8 +218,53 @@ export function NucleusDashboard() {
 
   const allCapacities = Array.from(new Set(people.flatMap(p => p.capacities)));
 
+  const topCapacities = allCapacities
+    .map(cap => ({ name: cap, count: people.filter(p => p.capacities.includes(cap)).length }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  const topRuhiBooks = courses
+    .map(course => ({
+      name: course.shortName || course.name,
+      completed: people.filter(p =>
+        p.courseEnrollments.some(ce => ce.courseId === course.id && ce.status === 'completed')
+      ).length,
+    }))
+    .filter(b => b.completed > 0)
+    .sort((a, b) => b.completed - a.completed)
+    .slice(0, 4);
+
+  const cardBase =
+    'bg-white/95 backdrop-blur-sm border border-gray-200/80 rounded-2xl p-5 shadow-sm hover:shadow-md hover:border-blue-200 hover:-translate-y-0.5 transition-all duration-200 cursor-pointer group flex flex-col gap-3';
+
+  const cardHeader = (title: string, subtitle: string) => (
+    <div className="flex justify-between items-start">
+      <div>
+        <h2 className="text-base font-bold text-gray-900 tracking-tight">{title}</h2>
+        <p className="text-xs text-gray-400 mt-0.5">{subtitle}</p>
+      </div>
+      <ChevronRightIcon className="w-4 h-4 text-gray-300 group-hover:text-blue-400 transition-colors flex-shrink-0 mt-0.5" />
+    </div>
+  );
+
+  const panelBase =
+    'bg-white/95 backdrop-blur-sm border border-gray-200/80 rounded-2xl p-7 shadow-sm';
+
+  const backToDashboard = (
+    <div className="flex justify-end mt-6 pt-4 border-t border-gray-100">
+      <button
+        onClick={() => setFocusedModule(null)}
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
+      >
+        <LayoutDashboardIcon className="w-4 h-4" />
+        Back to dashboard view
+      </button>
+    </div>
+  );
+
   return (
     <div className="min-h-screen bg-nucleus-pattern font-sans">
+      {/* Header */}
       <header
         className="relative bg-white/90 backdrop-blur-md border-b border-gray-200/80 px-4 sm:px-8 py-5 sm:py-8 shadow-sm overflow-hidden"
         style={
@@ -313,287 +376,442 @@ export function NucleusDashboard() {
         </div>
       </header>
 
-      <div className="max-w-[1600px] mx-auto p-4 sm:p-8 space-y-6 sm:space-y-8">
-        {/* Top Row: Activities & Concentric Circles */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-          {/* Activities Panel */}
-          <div className="bg-white/95 backdrop-blur-sm border border-gray-200/80 rounded-2xl p-7 shadow-sm hover:shadow-md transition-shadow duration-300">
-            <div className="mb-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">
-                Core and Other Activities
-              </h2>
-              <p className="text-sm text-gray-500">
-                List of core and other activities that have been in the{' '}
-                <em className="text-gray-600">nucleus</em>.
-              </p>
+      {/* Main content */}
+      <div className="max-w-[1600px] mx-auto p-4 sm:p-8">
+
+        {/* ── FOCUS STATE: icon rail + expanded module ─────────────────────── */}
+        {focusedModule !== null && (
+          <div className="module-fade-in flex gap-4 items-start">
+
+            {/* Vertical icon rail */}
+            <div className="sticky top-4 w-[72px] flex-shrink-0 bg-white/95 backdrop-blur-sm border border-gray-200/80 rounded-2xl py-3 flex flex-col items-center gap-1 shadow-sm">
+              <button
+                onClick={() => setFocusedModule(null)}
+                className="w-full flex flex-col items-center gap-1 py-3 px-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all duration-200 rounded-xl"
+                title="Back to Dashboard"
+              >
+                <LayoutDashboardIcon className="w-5 h-5" />
+                <span className="text-[9px] font-medium text-center leading-tight">Dashboard</span>
+              </button>
+
+              <div className="w-10 border-t border-gray-100 my-1" />
+
+              {MODULES.map(m => (
+                <button
+                  key={m.id}
+                  onClick={() => setFocusedModule(m.id)}
+                  className={`w-full flex flex-col items-center gap-1 py-3 px-1 rounded-xl transition-all duration-200 ${
+                    focusedModule === m.id
+                      ? 'bg-blue-50 text-blue-600'
+                      : 'text-gray-400 hover:bg-gray-100 hover:text-gray-600'
+                  }`}
+                  title={m.label}
+                >
+                  <m.Icon className="w-5 h-5" />
+                  <span className="text-[9px] font-medium text-center leading-tight">{m.label}</span>
+                </button>
+              ))}
             </div>
 
-            <div className="border border-gray-200/80 rounded-xl overflow-hidden mb-5 bg-white shadow-sm">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="bg-gray-50/80 border-b border-gray-200/80">
-                    <th className="py-3 sm:py-3.5 px-3 sm:px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      Activity
-                    </th>
-                    <th className="py-3 sm:py-3.5 px-3 sm:px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell border-l border-gray-200/80">
-                      Participants
-                    </th>
-                    <th className="py-3 sm:py-3.5 px-3 sm:px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
-                      <span className="hidden sm:inline">
-                        <MoreHorizontalIcon className="w-5 h-5 inline-block text-gray-400" />
-                      </span>
-                      <span className="sm:hidden text-gray-400">Action</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activities.map((activity, index) => (
-                    <tr
-                      key={activity.id}
-                      onClick={() => navigate(`/nucleus/${id}/activity/${activity.id}`)}
-                      className={`border-b border-gray-200/80 last:border-b-0 hover:bg-blue-50/50 transition-colors duration-200 cursor-pointer sm:cursor-default ${index % 2 === 1 ? 'bg-gray-50/30' : ''}`}
-                    >
-                      <td className="py-3 sm:py-4 px-3 sm:px-5 text-sm font-medium text-gray-900">
-                        <div>{activity.name}</div>
-                        {activity.schedule && (
-                          <div className="text-xs text-gray-500 mt-0.5">
-                            {activity.schedule}
-                          </div>
-                        )}
-                        <div className="sm:hidden text-xs text-gray-500 mt-0.5">
-                          {getActivityParticipantCount(activity)} participants
-                        </div>
-                      </td>
-                      <td className="py-3 sm:py-4 px-3 sm:px-5 text-sm text-gray-600 hidden sm:table-cell border-l border-gray-200/80">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 text-gray-700 font-medium">
-                          <UserIcon className="w-3.5 h-3.5 opacity-70" />
-                          {getActivityParticipantCount(activity)}
-                        </span>
-                      </td>
-                      <td
-                        className="py-3 sm:py-4 px-3 sm:px-5 text-right"
-                        onClick={e => e.stopPropagation()}
-                      >
-                        <div className="flex items-center justify-end gap-2 sm:gap-3">
-                          <button
+            {/* Expanded module — key triggers fade-in on every module switch */}
+            <div key={focusedModule} className="module-fade-in flex-1 min-w-0">
+
+              {/* ── CIRCLES focused ── */}
+              {focusedModule === 'circles' && (
+                <div className={panelBase}>
+                  <div className="mb-6">
+                    <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Overall Participation</h2>
+                    <p className="text-sm text-gray-500">Drag and drop names between circles to update engagement levels.</p>
+                  </div>
+                  <ConcentricCircles nucleusId={id!} />
+                  {backToDashboard}
+                </div>
+              )}
+
+              {/* ── NETWORK focused ── */}
+              {focusedModule === 'network' && (
+                <div className={panelBase}>
+                  <div className="mb-6">
+                    <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Network View</h2>
+                    <p className="text-sm text-gray-500">Visual overview of connections within this nucleus.</p>
+                  </div>
+                  <div className="flex flex-col items-center justify-center h-80 gap-4 rounded-2xl bg-gray-50 border border-dashed border-gray-200">
+                    <NetworkIcon className="w-16 h-16 text-gray-200" />
+                    <p className="text-base font-medium text-gray-400">Network visualization coming soon</p>
+                    <p className="text-sm text-gray-400 text-center max-w-sm px-4">
+                      This view will show connections and relationships between participants and activities in this nucleus.
+                    </p>
+                  </div>
+                  {backToDashboard}
+                </div>
+              )}
+
+              {/* ── ACTIVITIES focused ── */}
+              {focusedModule === 'activities' && (
+                <div className={panelBase}>
+                  <div className="mb-6">
+                    <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Core and Other Activities</h2>
+                    <p className="text-sm text-gray-500">
+                      List of core and other activities that have been in the{' '}
+                      <em className="text-gray-600">nucleus</em>.
+                    </p>
+                  </div>
+
+                  <div className="border border-gray-200/80 rounded-xl overflow-hidden mb-5 bg-white shadow-sm">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-gray-50/80 border-b border-gray-200/80">
+                          <th className="py-3 sm:py-3.5 px-3 sm:px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Activity</th>
+                          <th className="py-3 sm:py-3.5 px-3 sm:px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell border-l border-gray-200/80">Participants</th>
+                          <th className="py-3 sm:py-3.5 px-3 sm:px-5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">
+                            <MoreHorizontalIcon className="w-5 h-5 inline-block text-gray-400" />
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activities.map((activity, index) => (
+                          <tr
+                            key={activity.id}
                             onClick={() => navigate(`/nucleus/${id}/activity/${activity.id}`)}
-                            className="text-blue-600 hover:text-blue-800 text-xs sm:text-sm font-semibold transition-colors"
+                            className={`border-b border-gray-200/80 last:border-b-0 hover:bg-blue-50/50 transition-colors duration-200 cursor-pointer ${index % 2 === 1 ? 'bg-gray-50/30' : ''}`}
                           >
-                            Manage
-                          </button>
-                          <button
-                            onClick={() => navigate(`/nucleus/${id}/activity/${activity.id}`)}
-                            className="w-7 h-7 bg-blue-50 text-blue-600 rounded-lg items-center justify-center hover:bg-blue-600 hover:text-white transition-all duration-200 shadow-sm hidden sm:flex"
-                          >
-                            <ChevronRightIcon className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {activities.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={3}
-                        className="py-10 text-center text-gray-400 italic text-sm"
-                      >
-                        No activities yet. Add one below.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <button
-              onClick={() => setShowAddActivity(true)}
-              className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-2 text-sm font-semibold"
-            >
-              <PlusIcon className="w-4 h-4" />
-              Add New Activity
-            </button>
-          </div>
-
-          {/* Concentric Circles Panel */}
-          <div className="bg-white/95 backdrop-blur-sm border border-gray-200/80 rounded-2xl p-7 shadow-sm hover:shadow-md transition-shadow duration-300">
-            <div className="mb-6">
-              <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">
-                Overall Participation
-              </h2>
-              <p className="text-sm text-gray-500">
-                Drag and drop names between circles to update engagement levels.
-              </p>
-            </div>
-            <ConcentricCircles nucleusId={id!} />
-          </div>
-        </div>
-
-        {/* Nucleus Notes */}
-        <div className="bg-white/95 backdrop-blur-sm border border-gray-200/80 rounded-2xl p-5 sm:p-7 shadow-sm hover:shadow-md transition-shadow duration-300">
-          <div className="mb-4">
-            <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">
-              Nucleus Notes
-            </h2>
-            <p className="text-sm text-gray-500">
-              General notes, reflections, and observations about this nucleus.
-            </p>
-          </div>
-          <textarea
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            placeholder="Write any notes about this nucleus here..."
-            className="w-full min-h-[120px] px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y shadow-sm"
-          />
-          <div className="flex items-center gap-3 mt-3">
-            <button
-              onClick={handleSaveNotes}
-              className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
-            >
-              Save Notes
-            </button>
-            {notesSaved && (
-              <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
-                <CheckCircleIcon className="w-4 h-4" />
-                Saved!
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* Community Profile */}
-        <div className="bg-white/95 backdrop-blur-sm border border-gray-200/80 rounded-2xl p-7 shadow-sm hover:shadow-md transition-shadow duration-300">
-          <div className="mb-8">
-            <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">
-              Community Profile
-            </h2>
-            <p className="text-sm text-gray-500">
-              Educational progress and capacities of individuals in this nucleus.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-            {/* Ruhi Books */}
-            <div>
-              <h3 className="text-xs font-bold text-gray-500 mb-5 flex items-center gap-2 uppercase tracking-widest">
-                <BookOpenIcon className="w-4 h-4 text-blue-500" />
-                Ruhi Institute Progress
-              </h3>
-              <div className="space-y-4">
-                {courses.map(course => {
-                  const completed = people.filter(p =>
-                    p.courseEnrollments.some(
-                      ce => ce.courseId === course.id && ce.status === 'completed'
-                    )
-                  );
-                  const inProgress = people.filter(p =>
-                    p.courseEnrollments.some(
-                      ce => ce.courseId === course.id && ce.status === 'in_progress'
-                    )
-                  );
-                  if (completed.length === 0 && inProgress.length === 0) return null;
-                  return (
-                    <div
-                      key={course.id}
-                      className="bg-white border border-gray-200/80 rounded-xl p-5 shadow-sm hover:border-blue-200 transition-colors duration-200"
-                    >
-                      <h4 className="font-semibold text-gray-900 text-sm mb-4">
-                        {course.name}
-                      </h4>
-                      <div className="space-y-3">
-                        {completed.length > 0 && (
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 bg-green-100 p-1 rounded-full">
-                              <CheckCircleIcon className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              {completed.map(p => (
+                            <td className="py-3 sm:py-4 px-3 sm:px-5 text-sm font-medium text-gray-900">
+                              <div>{activity.name}</div>
+                              {activity.schedule && (
+                                <div className="text-xs text-gray-500 mt-0.5">{activity.schedule}</div>
+                              )}
+                            </td>
+                            <td className="py-3 sm:py-4 px-3 sm:px-5 text-sm text-gray-600 hidden sm:table-cell border-l border-gray-200/80">
+                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-gray-100 text-gray-700 font-medium">
+                                <UserIcon className="w-3.5 h-3.5 opacity-70" />
+                                {getActivityParticipantCount(activity)}
+                              </span>
+                            </td>
+                            <td className="py-3 sm:py-4 px-3 sm:px-5 text-right" onClick={e => e.stopPropagation()}>
+                              <div className="flex items-center justify-end gap-2 sm:gap-3">
                                 <button
-                                  key={p.id}
-                                  onClick={() => navigate(`/individual/${p.id}`)}
-                                  className="px-2.5 py-1 bg-green-50 text-green-700 border border-green-200/60 text-xs font-semibold rounded-md hover:bg-green-100 hover:border-green-300 transition-all duration-200"
+                                  onClick={() => navigate(`/nucleus/${id}/activity/${activity.id}`)}
+                                  className="text-blue-600 hover:text-blue-800 text-xs sm:text-sm font-semibold transition-colors"
                                 >
-                                  {p.name}
+                                  Manage
                                 </button>
-                              ))}
-                            </div>
-                          </div>
+                                <button
+                                  onClick={() => navigate(`/nucleus/${id}/activity/${activity.id}`)}
+                                  className="w-7 h-7 bg-blue-50 text-blue-600 rounded-lg items-center justify-center hover:bg-blue-600 hover:text-white transition-all duration-200 shadow-sm hidden sm:flex"
+                                >
+                                  <ChevronRightIcon className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {activities.length === 0 && (
+                          <tr>
+                            <td colSpan={3} className="py-10 text-center text-gray-400 italic text-sm">
+                              No activities yet. Add one below.
+                            </td>
+                          </tr>
                         )}
-                        {inProgress.length > 0 && (
-                          <div className="flex items-start gap-3">
-                            <div className="mt-0.5 bg-blue-100 p-1 rounded-full">
-                              <CircleIcon className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <button
+                    onClick={() => setShowAddActivity(true)}
+                    className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-2 text-sm font-semibold"
+                  >
+                    <PlusIcon className="w-4 h-4" />
+                    Add New Activity
+                  </button>
+                  {backToDashboard}
+                </div>
+              )}
+
+              {/* ── CAPACITIES focused ── */}
+              {focusedModule === 'capacities' && (
+                <div className={panelBase}>
+                  <div className="mb-8">
+                    <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Community Profile</h2>
+                    <p className="text-sm text-gray-500">
+                      Educational progress and capacities of individuals in this nucleus.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                    {/* Ruhi Books */}
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-500 mb-5 flex items-center gap-2 uppercase tracking-widest">
+                        <BookOpenIcon className="w-4 h-4 text-blue-500" />
+                        Ruhi Institute Progress
+                      </h3>
+                      <div className="space-y-4">
+                        {courses.map(course => {
+                          const completed = people.filter(p =>
+                            p.courseEnrollments.some(ce => ce.courseId === course.id && ce.status === 'completed')
+                          );
+                          const inProgress = people.filter(p =>
+                            p.courseEnrollments.some(ce => ce.courseId === course.id && ce.status === 'in_progress')
+                          );
+                          if (completed.length === 0 && inProgress.length === 0) return null;
+                          return (
+                            <div key={course.id} className="bg-white border border-gray-200/80 rounded-xl p-5 shadow-sm hover:border-blue-200 transition-colors duration-200">
+                              <h4 className="font-semibold text-gray-900 text-sm mb-4">{course.name}</h4>
+                              <div className="space-y-3">
+                                {completed.length > 0 && (
+                                  <div className="flex items-start gap-3">
+                                    <div className="mt-0.5 bg-green-100 p-1 rounded-full">
+                                      <CheckCircleIcon className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {completed.map(p => (
+                                        <button
+                                          key={p.id}
+                                          onClick={() => navigate(`/individual/${p.id}`)}
+                                          className="px-2.5 py-1 bg-green-50 text-green-700 border border-green-200/60 text-xs font-semibold rounded-md hover:bg-green-100 hover:border-green-300 transition-all duration-200"
+                                        >
+                                          {p.name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                {inProgress.length > 0 && (
+                                  <div className="flex items-start gap-3">
+                                    <div className="mt-0.5 bg-blue-100 p-1 rounded-full">
+                                      <CircleIcon className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                      {inProgress.map(p => (
+                                        <button
+                                          key={p.id}
+                                          onClick={() => navigate(`/individual/${p.id}`)}
+                                          className="px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200/60 text-xs font-semibold rounded-md hover:bg-blue-100 hover:border-blue-300 transition-all duration-200"
+                                        >
+                                          {p.name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                              {inProgress.map(p => (
-                                <button
-                                  key={p.id}
-                                  onClick={() => navigate(`/individual/${p.id}`)}
-                                  className="px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200/60 text-xs font-semibold rounded-md hover:bg-blue-100 hover:border-blue-300 transition-all duration-200"
-                                >
-                                  {p.name}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
+                          );
+                        })}
+                        {people.every(p => p.courseEnrollments.length === 0) && (
+                          <p className="text-sm text-gray-500 italic">No course progress recorded yet.</p>
                         )}
                       </div>
                     </div>
-                  );
-                })}
-                {people.every(p => p.courseEnrollments.length === 0) && (
-                  <p className="text-sm text-gray-500 italic">
-                    No course progress recorded yet.
-                  </p>
+
+                    {/* Capacities */}
+                    <div>
+                      <h3 className="text-xs font-bold text-gray-500 mb-5 flex items-center gap-2 uppercase tracking-widest">
+                        <AwardIcon className="w-4 h-4 text-amber-500" />
+                        Capacities
+                      </h3>
+                      <div className="space-y-4">
+                        {allCapacities.map(capacity => {
+                          const capablePeople = people.filter(p => p.capacities.includes(capacity));
+                          return (
+                            <div key={capacity} className="bg-white border border-gray-200/80 rounded-xl p-5 shadow-sm hover:border-amber-200 transition-colors duration-200">
+                              <h4 className="font-semibold text-gray-900 text-sm mb-4">{capacity}</h4>
+                              <div className="flex flex-wrap gap-2">
+                                {capablePeople.map(p => (
+                                  <button
+                                    key={p.id}
+                                    onClick={() => navigate(`/individual/${p.id}`)}
+                                    className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200/60 text-xs font-semibold rounded-md hover:bg-amber-100 hover:border-amber-300 transition-all duration-200"
+                                  >
+                                    {p.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {allCapacities.length === 0 && (
+                          <p className="text-sm text-gray-500 italic">No capacities recorded yet.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  {backToDashboard}
+                </div>
+              )}
+
+              {/* ── NOTES focused ── */}
+              {focusedModule === 'notes' && (
+                <div className={panelBase}>
+                  <div className="mb-4">
+                    <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Nucleus Notes</h2>
+                    <p className="text-sm text-gray-500">
+                      General notes, reflections, and observations about this nucleus.
+                    </p>
+                  </div>
+                  <textarea
+                    value={notes}
+                    onChange={e => setNotes(e.target.value)}
+                    placeholder="Write any notes about this nucleus here..."
+                    className="w-full min-h-[240px] px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y shadow-sm"
+                  />
+                  <div className="flex items-center gap-3 mt-3">
+                    <button
+                      onClick={handleSaveNotes}
+                      className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
+                    >
+                      Save Notes
+                    </button>
+                    {notesSaved && (
+                      <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
+                        <CheckCircleIcon className="w-4 h-4" />
+                        Saved!
+                      </span>
+                    )}
+                  </div>
+                  {backToDashboard}
+                </div>
+              )}
+
+            </div>
+          </div>
+        )}
+
+        {/* ── DASHBOARD STATE: grid of compact cards ───────────────────────── */}
+        {focusedModule === null && (
+          <div className="module-fade-in space-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+
+              {/* Activities card */}
+              <div className={cardBase} onClick={() => setFocusedModule('activities')}>
+                {cardHeader('Core and Other Activities', 'Manage activities and participation.')}
+                <div className="border border-gray-100 rounded-xl overflow-hidden bg-white flex-1">
+                  <table className="w-full text-left border-collapse">
+                    <tbody>
+                      {activities.slice(0, 4).map((activity, index) => (
+                        <tr
+                          key={activity.id}
+                          className={`border-b border-gray-100 last:border-0 ${index % 2 === 1 ? 'bg-gray-50/50' : ''}`}
+                        >
+                          <td className="py-2.5 px-4 text-sm font-medium text-gray-900">
+                            <div>{activity.name}</div>
+                            {activity.schedule && (
+                              <div className="text-xs text-gray-400">{activity.schedule}</div>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-4 text-right">
+                            <span className="inline-flex items-center gap-1 text-xs text-gray-400">
+                              <UserIcon className="w-3 h-3" />
+                              {getActivityParticipantCount(activity)}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                      {activities.length === 0 && (
+                        <tr>
+                          <td colSpan={2} className="py-6 text-center text-gray-400 italic text-sm">
+                            No activities yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {activities.length > 4 && (
+                  <p className="text-xs text-gray-400 text-right">+{activities.length - 4} more</p>
                 )}
               </div>
-            </div>
 
-            {/* Capacities */}
-            <div>
-              <h3 className="text-xs font-bold text-gray-500 mb-5 flex items-center gap-2 uppercase tracking-widest">
-                <AwardIcon className="w-4 h-4 text-amber-500" />
-                Capacities
-              </h3>
-              <div className="space-y-4">
-                {allCapacities.map(capacity => {
-                  const capablePeople = people.filter(p => p.capacities.includes(capacity));
-                  return (
-                    <div
-                      key={capacity}
-                      className="bg-white border border-gray-200/80 rounded-xl p-5 shadow-sm hover:border-amber-200 transition-colors duration-200"
-                    >
-                      <h4 className="font-semibold text-gray-900 text-sm mb-4">
-                        {capacity}
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                        {capablePeople.map(p => (
-                          <button
-                            key={p.id}
-                            onClick={() => navigate(`/individual/${p.id}`)}
-                            className="px-2.5 py-1 bg-amber-50 text-amber-800 border border-amber-200/60 text-xs font-semibold rounded-md hover:bg-amber-100 hover:border-amber-300 transition-all duration-200"
-                          >
-                            {p.name}
-                          </button>
+              {/* Circles card */}
+              <div className={cardBase} onClick={() => setFocusedModule('circles')}>
+                {cardHeader('Overall Participation', 'Drag and drop names between circles to update engagement levels.')}
+                <ConcentricCircles nucleusId={id!} compact />
+              </div>
+
+              {/* Network card */}
+              <div className={cardBase} onClick={() => setFocusedModule('network')}>
+                {cardHeader('Network Overview', 'Visual overview of connections within this nucleus.')}
+                <div className="flex flex-col items-center justify-center flex-1 py-6 gap-3 rounded-xl bg-gray-50">
+                  <NetworkIcon className="w-10 h-10 text-gray-200" />
+                  <p className="text-sm font-medium text-gray-400">Coming soon</p>
+                  <p className="text-xs text-gray-300 text-center px-4">
+                    Network visualization will show connections between participants.
+                  </p>
+                </div>
+              </div>
+
+              {/* Capacities & Books card */}
+              <div className={cardBase} onClick={() => setFocusedModule('capacities')}>
+                {cardHeader('Capacities & Books', 'Educational progress and capacities.')}
+                <div className="grid grid-cols-2 gap-4 flex-1">
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                      Ruhi Progress
+                    </h3>
+                    {topRuhiBooks.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {topRuhiBooks.map(b => (
+                          <div key={b.name} className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-gray-600 truncate">{b.name}</span>
+                            <span className="text-xs font-bold text-blue-600 flex-shrink-0">{b.completed}</span>
+                          </div>
                         ))}
                       </div>
-                    </div>
-                  );
-                })}
-                {allCapacities.length === 0 && (
-                  <p className="text-sm text-gray-500 italic">
-                    No capacities recorded yet.
-                  </p>
-                )}
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">No progress yet</p>
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">
+                      Top Capacities
+                    </h3>
+                    {topCapacities.length > 0 ? (
+                      <div className="space-y-1.5">
+                        {topCapacities.slice(0, 4).map(c => (
+                          <div key={c.name} className="flex items-center justify-between gap-2">
+                            <span className="text-xs text-gray-600 truncate">{c.name}</span>
+                            <span className="text-xs font-bold text-amber-600 flex-shrink-0">{c.count}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic">No capacities yet</p>
+                    )}
+                  </div>
+                </div>
               </div>
+
+              {/* Notes card */}
+              <div className={cardBase} onClick={() => setFocusedModule('notes')}>
+                {cardHeader('Nucleus Notes', 'General notes and reflections.')}
+                <div className="flex-1">
+                  {notes ? (
+                    <p className="text-sm text-gray-600 leading-relaxed line-clamp-5">{notes}</p>
+                  ) : (
+                    <p className="text-sm text-gray-400 italic">
+                      No notes yet. Click to add notes about this nucleus.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Dashboard hint */}
+            <div className="flex items-start gap-2.5 text-sm text-gray-500 bg-blue-50/50 border border-blue-100 rounded-xl px-5 py-3.5">
+              <InfoIcon className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+              <span>
+                This dashboard is designed so you can always see all parts of your nucleus at a glance.
+                Click any module to focus on it. Others shrink to the side for context and quick navigation.
+              </span>
             </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Delete Nucleus Modal */}
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7 animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
                 <Trash2Icon className="w-5 h-5 text-red-600" />
@@ -640,10 +858,8 @@ export function NucleusDashboard() {
       {/* Add Activity Modal */}
       {showAddActivity && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7 animate-in fade-in zoom-in-95 duration-200">
-            <h2 className="text-xl font-bold text-gray-900 mb-5">
-              Add New Activity
-            </h2>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+            <h2 className="text-xl font-bold text-gray-900 mb-5">Add New Activity</h2>
             <div className="space-y-5">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">

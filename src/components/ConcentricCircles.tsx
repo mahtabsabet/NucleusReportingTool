@@ -9,6 +9,7 @@ import { getUnplacedPersonIds, clearPersonUnplaced } from '../lib/unplacedTracke
 
 interface ConcentricCirclesProps {
   nucleusId: string;
+  compact?: boolean;
 }
 
 type Level = 'coordinating' | 'participating' | 'supporting' | 'aware';
@@ -25,7 +26,7 @@ interface NameEntry {
   name: string;
 }
 
-export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
+export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps) {
   const navigate = useNavigate();
 
   const [circles, setCircles] = useState<Record<Level, NameEntry[]>>({
@@ -198,6 +199,52 @@ export function ConcentricCircles({ nucleusId }: ConcentricCirclesProps) {
     { level: 'supporting', inset: '25%' },
     { level: 'coordinating', inset: '37.5%' },
   ];
+
+  if (compact) {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center h-32">
+          <div className="w-5 h-5 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+      );
+    }
+    const counts = {
+      aware: circles.aware.length,
+      participating: circles.participating.length,
+      supporting: circles.supporting.length,
+      coordinating: circles.coordinating.length,
+    };
+    return (
+      <div className="flex items-center gap-6 py-2">
+        <div className="flex-shrink-0" style={{ width: 110, height: 110 }}>
+          <svg viewBox="0 0 200 200" className="w-full h-full drop-shadow-sm">
+            <circle cx="100" cy="100" r="98" fill={LEVEL_COLORS.aware.bg} />
+            <circle cx="100" cy="100" r="75" fill={LEVEL_COLORS.participating.bg} />
+            <circle cx="100" cy="100" r="52" fill={LEVEL_COLORS.supporting.bg} />
+            <circle cx="100" cy="100" r="29" fill={LEVEL_COLORS.coordinating.bg} />
+          </svg>
+        </div>
+        <div className="flex flex-col gap-2.5">
+          {([
+            { label: 'AWARE', count: counts.aware, textColor: 'text-gray-500' },
+            { label: 'PARTICIPATING', count: counts.participating, textColor: 'text-emerald-600' },
+            { label: 'SUPPORTING', count: counts.supporting, textColor: 'text-amber-600' },
+            { label: 'CORE', count: counts.coordinating, textColor: 'text-blue-600' },
+          ] as const).map(({ label, count, textColor }) => (
+            <div key={label} className="flex items-center gap-4">
+              <span
+                className={`text-xs font-semibold uppercase tracking-wide ${textColor}`}
+                style={{ minWidth: '90px' }}
+              >
+                {label}
+              </span>
+              <span className="text-xl font-bold text-gray-900">{count}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

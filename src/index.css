@@ -11,6 +11,22 @@
 
 /* END TAILWIND IMPORTS — ALL OTHER CSS MUST GO BELOW THIS LINE */
 
+/* Dashboard module transition animation */
+@keyframes moduleFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.module-fade-in {
+  animation: moduleFadeIn 250ms ease-out both;
+}
+
 /* Fix Leaflet marker icon paths */
 .leaflet-default-icon-path {
   background-image: url('https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png');
