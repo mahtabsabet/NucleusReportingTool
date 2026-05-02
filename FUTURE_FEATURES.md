@@ -65,6 +65,29 @@ When adding a person to an activity, search existing people in the DB rather tha
 
 ---
 
+## Integration Tests for User Permissions
+
+Add dedicated integration tests covering permission enforcement for each user role.
+
+**Details:**
+- Extend the existing integration test suite (Playwright + dev Supabase instance)
+- Test each role (Viewer, Activity Lead, Nucleus Collaborator, Cluster Coordinator, Admin) against every permission boundary
+- Assert both that permitted actions succeed and that forbidden actions are blocked in the UI and at the DB layer (RLS)
+- Should complement the general integration test smoke tests already planned
+
+---
+
+## Fix Activity Lead Permissions
+
+Activity leads should not be able to see the option to create a new activity or move people in the concentric circles.
+
+**Details:**
+- Hide the "Create Activity" button/option from the UI when the logged-in user's role is Activity Lead
+- Hide the drag/move controls in the ConcentricCircles component for Activity Lead users
+- Enforce the same restrictions at the DB layer (RLS) to ensure UI-only gating is not the sole protection
+
+---
+
 ## Push Notifications / Email Reminders
 
 Send reminders to activity leads or participants when an upcoming session is scheduled.
