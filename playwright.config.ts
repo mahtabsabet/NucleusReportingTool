@@ -18,13 +18,14 @@ export default defineConfig({
   },
   projects: [
     { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    { name: 'permissions-setup', testMatch: /permissions\.setup\.ts/ },
     {
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
         storageState: 'e2e/.auth/user.json',
       },
-      dependencies: ['setup'],
+      dependencies: ['setup', 'permissions-setup'],
     },
   ],
   webServer: {
