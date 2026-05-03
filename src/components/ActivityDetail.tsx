@@ -135,10 +135,14 @@ export function ActivityDetail() {
       existingPersonId: params.existingPersonId,
     });
     markPersonUnplaced(nucleusId!, personId);
-    setParticipants(prev => ({
-      ...prev,
-      [role]: [...(prev[role] ?? []), personId],
-    }));
+    setParticipants(prev => {
+      const allIds = Object.values(prev).flat();
+      if (allIds.includes(personId)) return prev;
+      return {
+        ...prev,
+        [role]: [...(prev[role] ?? []), personId],
+      };
+    });
     setPersonNames(prev => ({ ...prev, [personId]: name }));
   };
 
