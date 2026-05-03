@@ -443,7 +443,7 @@ export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promi
   // after the ALTER TABLE, fall back to the query without it.
   const withContact = await supabase
     .from('nucleus_enrollments')
-    .select('person_id, engagement_level, primary_contact_id, persons(name)')
+    .select('person_id, engagement_level, primary_contact_id, persons!nucleus_enrollments_person_id_fkey(name)')
     .eq('nucleus_id', nucleusId)
     .is('deleted_at', null);
 
@@ -459,7 +459,7 @@ export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promi
   // Fallback: column not yet visible to PostgREST
   const { data, error } = await supabase
     .from('nucleus_enrollments')
-    .select('person_id, engagement_level, persons(name)')
+    .select('person_id, engagement_level, persons!nucleus_enrollments_person_id_fkey(name)')
     .eq('nucleus_id', nucleusId)
     .is('deleted_at', null);
   if (error) throw error;
