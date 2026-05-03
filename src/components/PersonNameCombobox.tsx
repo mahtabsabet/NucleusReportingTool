@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { PlusIcon, UserIcon, UserPlusIcon } from 'lucide-react';
+import { CheckIcon, PlusIcon, UserIcon, UserPlusIcon } from 'lucide-react';
 import { searchPersonsByName } from '../lib/db/persons';
 
 interface Suggestion {
@@ -21,13 +21,17 @@ export function PersonNameCombobox({
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [isAdding, setIsAdding] = useState(false);
+  const [showNewProfileInput, setShowNewProfileInput] = useState(false);
+  const [newProfileName, setNewProfileName] = useState('');
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const newProfileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setIsOpen(false);
+        setShowNewProfileInput(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -52,14 +56,18 @@ export function PersonNameCombobox({
     };
   }, [inputValue]);
 
-  // All dropdown options: existing matches + "create new" at the end
-  const allOptions: Array<Suggestion & { isNew?: boolean }> = [
-    ...suggestions,
-    ...(inputValue.trim() ? [{ id: '__new__', name: inputValue.trim(), isNew: true }] : []),
-  ];
+  const hasSuggestions = suggestions.length > 0;
+  const trimmed = inputValue.trim();
+
+  // When matches exist, only navigate through existing persons; create option is a secondary link.
+  // When no matches, include the create option as a navigable item.
+  const allOptions: Array<Suggestion & { isNew?: boolean }> = hasSuggestions
+    ? suggestions
+    : [...suggestions, ...(trimmed ? [{ id: '__new__', name: trimmed, isNew: true }] : [])];
 
   const handleSelect = async (option: Suggestion & { isNew?: boolean }) => {
     setIsOpen(false);
+    setShowNewProfileInput(false);
     setIsAdding(true);
     try {
       if (option.isNew) {
@@ -74,14 +82,32 @@ export function PersonNameCombobox({
     }
   };
 
+  const openNewProfileInput = () => {
+    setIsOpen(false);
+    setNewProfileName(inputValue.trim());
+    setShowNewProfileInput(true);
+    setTimeout(() => newProfileInputRef.current?.focus(), 0);
+  };
+
+  const handleConfirmNewProfile = async () => {
+    const name = newProfileName.trim();
+    if (!name) return;
+    setShowNewProfileInput(false);
+    await handleSelect({ id: '__new__', name, isNew: true });
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       setIsOpen(false);
       return;
     }
     if (!isOpen) {
-      if (e.key === 'Enter' && inputValue.trim()) {
-        handleSelect({ id: '__new__', name: inputValue.trim(), isNew: true });
+      if (e.key === 'Enter' && trimmed) {
+        if (hasSuggestions) {
+          openNewProfileInput();
+        } else {
+          handleSelect({ id: '__new__', name: trimmed, isNew: true });
+        }
       }
       return;
     }
@@ -95,82 +121,127 @@ export function PersonNameCombobox({
       e.preventDefault();
       if (highlightedIndex >= 0 && highlightedIndex < allOptions.length) {
         handleSelect(allOptions[highlightedIndex]);
-      } else if (inputValue.trim()) {
-        handleSelect({ id: '__new__', name: inputValue.trim(), isNew: true });
+      } else if (trimmed) {
+        if (hasSuggestions) {
+          openNewProfileInput();
+        } else {
+          handleSelect({ id: '__new__', name: trimmed, isNew: true });
+        }
       }
     }
   };
 
-  const trimmed = inputValue.trim();
-  const hasExactMatch = suggestions.some(
-    s => s.name.toLowerCase() === trimmed.toLowerCase()
-  );
-
   return (
-    <div ref={containerRef} className="relative flex gap-2 pt-2">
-      <input
-        type="text"
-        value={inputValue}
-        onChange={e => setInputValue(e.target.value)}
-        onFocus={() => {
-          if (trimmed && suggestions.length > 0) setIsOpen(true);
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        disabled={isAdding}
-        className="flex-1 px-3.5 py-2.5 text-sm font-medium border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm disabled:opacity-50"
-        autoComplete="off"
-      />
-      <button
-        onClick={() => trimmed && handleSelect({ id: '__new__', name: trimmed, isNew: true })}
-        disabled={!trimmed || isAdding}
-        className="px-3.5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm hover:shadow disabled:opacity-40 disabled:cursor-not-allowed"
-      >
-        <PlusIcon className="w-4 h-4" />
-      </button>
-
-      {isOpen && allOptions.length > 0 && (
-        <div className="absolute z-30 bottom-full mb-1 left-0 right-10 bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden">
-          {suggestions.map((s, i) => (
-            <button
-              key={s.id}
-              onMouseDown={e => {
+    <div ref={containerRef} className="relative pt-2">
+      {showNewProfileInput ? (
+        <div className="flex gap-2">
+          <input
+            ref={newProfileInputRef}
+            type="text"
+            value={newProfileName}
+            onChange={e => setNewProfileName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
                 e.preventDefault();
-                handleSelect(s);
-              }}
-              onMouseEnter={() => setHighlightedIndex(i)}
-              className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 transition-colors ${
-                highlightedIndex === i
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-gray-700 hover:bg-gray-50'
-              }`}
-            >
-              <UserIcon className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />
-              <span>{s.name}</span>
-            </button>
-          ))}
-          {trimmed && (
-            <button
-              onMouseDown={e => {
-                e.preventDefault();
+                handleConfirmNewProfile();
+              } else if (e.key === 'Escape') {
+                setShowNewProfileInput(false);
+              }
+            }}
+            placeholder="Enter name for new profile..."
+            disabled={isAdding}
+            className="flex-1 px-3.5 py-2.5 text-sm font-medium border border-blue-400 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm disabled:opacity-50"
+            autoComplete="off"
+          />
+          <button
+            onClick={handleConfirmNewProfile}
+            disabled={!newProfileName.trim() || isAdding}
+            className="px-3.5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors shadow-sm hover:shadow disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <CheckIcon className="w-4 h-4" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={inputValue}
+            onChange={e => setInputValue(e.target.value)}
+            onFocus={() => {
+              if (trimmed && suggestions.length > 0) setIsOpen(true);
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={placeholder}
+            disabled={isAdding}
+            className="flex-1 px-3.5 py-2.5 text-sm font-medium border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm disabled:opacity-50"
+            autoComplete="off"
+          />
+          <button
+            onClick={() => {
+              if (!trimmed) return;
+              if (hasSuggestions) {
+                openNewProfileInput();
+              } else {
                 handleSelect({ id: '__new__', name: trimmed, isNew: true });
-              }}
-              onMouseEnter={() => setHighlightedIndex(suggestions.length)}
-              className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 border-t border-gray-100 transition-colors ${
-                highlightedIndex === suggestions.length
-                  ? 'bg-green-50 text-green-700'
-                  : 'text-gray-500 hover:bg-gray-50'
-              }`}
-            >
-              <UserPlusIcon className="w-3.5 h-3.5 flex-shrink-0 text-green-500" />
-              <span>
-                {hasExactMatch ? (
-                  <>Add as new record: <strong>{trimmed}</strong></>
-                ) : (
-                  <>Create "<strong>{trimmed}</strong>"</>
-                )}
-              </span>
-            </button>
+              }
+            }}
+            disabled={!trimmed || isAdding}
+            className="px-3.5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm hover:shadow disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <PlusIcon className="w-4 h-4" />
+          </button>
+
+          {isOpen && allOptions.length > 0 && (
+            <div className="absolute z-30 bottom-full mb-1 left-0 right-10 bg-white rounded-xl border border-gray-200 shadow-xl overflow-hidden">
+              {suggestions.map((s, i) => (
+                <button
+                  key={s.id}
+                  onMouseDown={e => {
+                    e.preventDefault();
+                    handleSelect(s);
+                  }}
+                  onMouseEnter={() => setHighlightedIndex(i)}
+                  className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 transition-colors ${
+                    highlightedIndex === i
+                      ? 'bg-blue-50 text-blue-700'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  }`}
+                >
+                  <UserIcon className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />
+                  <span>{s.name}</span>
+                </button>
+              ))}
+              {!hasSuggestions && trimmed && (
+                <button
+                  onMouseDown={e => {
+                    e.preventDefault();
+                    handleSelect({ id: '__new__', name: trimmed, isNew: true });
+                  }}
+                  onMouseEnter={() => setHighlightedIndex(suggestions.length)}
+                  className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2 border-t border-gray-100 transition-colors ${
+                    highlightedIndex === suggestions.length
+                      ? 'bg-green-50 text-green-700'
+                      : 'text-gray-500 hover:bg-gray-50'
+                  }`}
+                >
+                  <UserPlusIcon className="w-3.5 h-3.5 flex-shrink-0 text-green-500" />
+                  <span>Create "<strong>{trimmed}</strong>"</span>
+                </button>
+              )}
+              {hasSuggestions && trimmed && (
+                <div className="border-t border-gray-100 px-4 py-2.5">
+                  <button
+                    onMouseDown={e => {
+                      e.preventDefault();
+                      openNewProfileInput();
+                    }}
+                    className="text-xs text-blue-500 hover:text-blue-700 hover:underline"
+                  >
+                    Can't find the right person? Create a new profile
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
