@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { CheckIcon, PlusIcon, UserIcon, UserPlusIcon } from 'lucide-react';
+import { PlusIcon, UserIcon, UserPlusIcon } from 'lucide-react';
 import { searchPersonsByName } from '../lib/db/persons';
 
 interface Suggestion {
@@ -178,9 +178,9 @@ export function PersonNameCombobox({
             <button
               onClick={handleConfirmNewProfile}
               disabled={!newProfileName.trim() || isAdding}
-              className="px-3.5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors shadow-sm hover:shadow disabled:opacity-40 disabled:cursor-not-allowed"
+              className="px-3.5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors shadow-sm hover:shadow disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <CheckIcon className="w-4 h-4" />
+              <PlusIcon className="w-4 h-4" />
             </button>
           </div>
           {newProfileError && (
