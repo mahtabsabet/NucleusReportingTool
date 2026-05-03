@@ -23,6 +23,8 @@ export function PersonNameCombobox({
   const [isAdding, setIsAdding] = useState(false);
   const [showNewProfileInput, setShowNewProfileInput] = useState(false);
   const [newProfileName, setNewProfileName] = useState('');
+  const [newProfileError, setNewProfileError] = useState<string | null>(null);
+  const [isShaking, setIsShaking] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const newProfileInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +94,22 @@ export function PersonNameCombobox({
   const handleConfirmNewProfile = async () => {
     const name = newProfileName.trim();
     if (!name) return;
+
+    const matches = await searchPersonsByName(name);
+    const matchExists = matches.some(s => s.name.toLowerCase() === name.toLowerCase());
+
+    if (matchExists) {
+      setNewProfileError(
+        'Someone with this name already exists in the system. If you are sure that this is NOT that person, please add a distinguisher to the name (e.g. "John Smith2")'
+      );
+      setIsShaking(false);
+      setTimeout(() => {
+        setIsShaking(true);
+        setTimeout(() => setIsShaking(false), 400);
+      }, 10);
+      return;
+    }
+
     setShowNewProfileInput(false);
     await handleSelect({ id: '__new__', name, isNew: true });
   };
@@ -134,33 +152,41 @@ export function PersonNameCombobox({
   return (
     <div ref={containerRef} className="relative pt-2">
       {showNewProfileInput ? (
-        <div className="flex gap-2">
-          <input
-            ref={newProfileInputRef}
-            type="text"
-            value={newProfileName}
-            onChange={e => setNewProfileName(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleConfirmNewProfile();
-              } else if (e.key === 'Escape') {
-                setShowNewProfileInput(false);
-              }
-            }}
-            placeholder="Enter name for new profile..."
-            disabled={isAdding}
-            className="flex-1 px-3.5 py-2.5 text-sm font-medium border border-blue-400 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm disabled:opacity-50"
-            autoComplete="off"
-          />
-          <button
-            onClick={handleConfirmNewProfile}
-            disabled={!newProfileName.trim() || isAdding}
-            className="px-3.5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors shadow-sm hover:shadow disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <CheckIcon className="w-4 h-4" />
-          </button>
-        </div>
+        <>
+          <div className="flex gap-2">
+            <input
+              ref={newProfileInputRef}
+              type="text"
+              value={newProfileName}
+              onChange={e => {
+                setNewProfileName(e.target.value);
+                setNewProfileError(null);
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleConfirmNewProfile();
+                } else if (e.key === 'Escape') {
+                  setShowNewProfileInput(false);
+                }
+              }}
+              placeholder="Enter name for new profile..."
+              disabled={isAdding}
+              className={`flex-1 px-3.5 py-2.5 text-sm font-medium border rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm disabled:opacity-50 ${newProfileError ? 'border-red-400' : 'border-blue-400'} ${isShaking ? 'shake' : ''}`}
+              autoComplete="off"
+            />
+            <button
+              onClick={handleConfirmNewProfile}
+              disabled={!newProfileName.trim() || isAdding}
+              className="px-3.5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors shadow-sm hover:shadow disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <CheckIcon className="w-4 h-4" />
+            </button>
+          </div>
+          {newProfileError && (
+            <p className="mt-1.5 text-xs text-red-600 leading-snug">{newProfileError}</p>
+          )}
+        </>
       ) : (
         <div className="flex gap-2">
           <input
