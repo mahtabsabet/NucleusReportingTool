@@ -439,9 +439,27 @@ export interface NucleusEnrollmentEntry {
 }
 
 export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promise<NucleusEnrollmentEntry[]> {
-  const { data, error } = await supabase
+  // Try with primary_contact_id; if PostgREST schema cache hasn't refreshed yet
+  // after the ALTER TABLE, fall back to the query without it.
+  const withContact = await supabase
     .from('nucleus_enrollments')
     .select('person_id, engagement_level, primary_contact_id, persons(name)')
+    .eq('nucleus_id', nucleusId)
+    .is('deleted_at', null);
+
+  if (!withContact.error) {
+    return ((withContact.data ?? []) as any[]).map(e => ({
+      personId: e.person_id,
+      name: (e.persons as any)?.name ?? e.person_id,
+      engagementLevel: (e.engagement_level ?? null) as NucleusEnrollmentEntry['engagementLevel'],
+      primaryContactId: (e.primary_contact_id ?? null) as string | null,
+    }));
+  }
+
+  // Fallback: column not yet visible to PostgREST
+  const { data, error } = await supabase
+    .from('nucleus_enrollments')
+    .select('person_id, engagement_level, persons(name)')
     .eq('nucleus_id', nucleusId)
     .is('deleted_at', null);
   if (error) throw error;
@@ -449,7 +467,7 @@ export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promi
     personId: e.person_id,
     name: (e.persons as any)?.name ?? e.person_id,
     engagementLevel: (e.engagement_level ?? null) as NucleusEnrollmentEntry['engagementLevel'],
-    primaryContactId: (e.primary_contact_id ?? null) as string | null,
+    primaryContactId: null,
   }));
 }
 
