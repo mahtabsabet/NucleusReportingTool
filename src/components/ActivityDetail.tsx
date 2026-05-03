@@ -127,14 +127,16 @@ export function ActivityDetail() {
     role: string,
     params: { name: string; existingPersonId?: string }
   ) => {
-    const { personId, name } = await addPersonToActivity({
+    const { personId, name, alreadyPlaced } = await addPersonToActivity({
       name: params.name,
       nucleusId: nucleusId!,
       activityId: activityId!,
       role,
       existingPersonId: params.existingPersonId,
     });
-    markPersonUnplaced(nucleusId!, personId);
+    if (!alreadyPlaced) {
+      markPersonUnplaced(nucleusId!, personId);
+    }
     setParticipants(prev => ({
       ...prev,
       [role]: [...(prev[role] ?? []), personId],

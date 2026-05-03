@@ -300,7 +300,7 @@ export async function addPersonToActivity(params: {
   activityId: string;
   role: string;
   existingPersonId?: string;
-}): Promise<{ personId: string; name: string }> {
+}): Promise<{ personId: string; name: string; alreadyPlaced: boolean }> {
   let personId: string;
   let personName: string;
 
@@ -319,6 +319,16 @@ export async function addPersonToActivity(params: {
     personName = p.name;
   }
 
+  const { data: existingEnrollment } = await supabase
+    .from('nucleus_enrollments')
+    .select('engagement_level')
+    .eq('person_id', personId)
+    .eq('nucleus_id', params.nucleusId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  const alreadyPlaced = !!(existingEnrollment as any)?.engagement_level;
+
   await supabase
     .from('nucleus_enrollments')
     .upsert(
@@ -333,7 +343,7 @@ export async function addPersonToActivity(params: {
       { onConflict: 'activity_id,person_id', ignoreDuplicates: true }
     );
 
-  return { personId, name: personName };
+  return { personId, name: personName, alreadyPlaced };
 }
 
 export async function removeActivityParticipant(
