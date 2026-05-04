@@ -22,7 +22,7 @@ test.describe('Activity flow', () => {
     await nameInput.press('Enter');
 
     // Person should appear in the participant list
-    await expect(page.getByText('Charlie Test')).toBeVisible();
+    await expect(page.getByText('Charlie Test').first()).toBeVisible();
   });
 
   test('person added to activity appears in nucleus enrollment', async ({ page }) => {

@@ -439,35 +439,38 @@ export interface NucleusEnrollmentEntry {
 }
 
 export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promise<NucleusEnrollmentEntry[]> {
-  // Try with primary_contact_id; if PostgREST schema cache hasn't refreshed yet
-  // after the ALTER TABLE, fall back to the query without it.
-  const withContact = await supabase
+  // Fetch enrollments first; try with primary_contact_id, fall back without it
+  const { data: withContact, error: e1 } = await supabase
     .from('nucleus_enrollments')
-    .select('person_id, engagement_level, primary_contact_id, persons!nucleus_enrollments_person_id_fkey(name)')
+    .select('person_id, engagement_level, primary_contact_id')
     .eq('nucleus_id', nucleusId)
     .is('deleted_at', null);
 
-  if (!withContact.error) {
-    return ((withContact.data ?? []) as any[]).map(e => ({
-      personId: e.person_id,
-      name: (e.persons as any)?.name ?? e.person_id,
-      engagementLevel: (e.engagement_level ?? null) as NucleusEnrollmentEntry['engagementLevel'],
-      primaryContactId: (e.primary_contact_id ?? null) as string | null,
-    }));
+  let rows: any[];
+  if (!e1) {
+    rows = withContact ?? [];
+  } else {
+    const { data, error: e2 } = await supabase
+      .from('nucleus_enrollments')
+      .select('person_id, engagement_level')
+      .eq('nucleus_id', nucleusId)
+      .is('deleted_at', null);
+    if (e2) throw e2;
+    rows = data ?? [];
   }
 
-  // Fallback: column not yet visible to PostgREST
-  const { data, error } = await supabase
-    .from('nucleus_enrollments')
-    .select('person_id, engagement_level, persons!nucleus_enrollments_person_id_fkey(name)')
-    .eq('nucleus_id', nucleusId)
-    .is('deleted_at', null);
-  if (error) throw error;
-  return ((data ?? []) as any[]).map(e => ({
+  if (rows.length === 0) return [];
+
+  // Fetch person names in a separate query — avoids PostgREST FK-join ambiguity
+  const personIds = rows.map((e: any) => e.person_id);
+  const { data: persons } = await supabase.from('persons').select('id, name').in('id', personIds);
+  const nameMap = Object.fromEntries(((persons ?? []) as any[]).map(p => [p.id, p.name]));
+
+  return rows.map((e: any) => ({
     personId: e.person_id,
-    name: (e.persons as any)?.name ?? e.person_id,
+    name: nameMap[e.person_id] ?? e.person_id,
     engagementLevel: (e.engagement_level ?? null) as NucleusEnrollmentEntry['engagementLevel'],
-    primaryContactId: null,
+    primaryContactId: (e.primary_contact_id ?? null) as string | null,
   }));
 }
 
