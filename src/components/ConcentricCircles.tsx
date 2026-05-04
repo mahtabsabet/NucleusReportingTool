@@ -405,6 +405,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     return (
       <div
         key={entry.id}
+        aria-label={entry.name}
         draggable
         onDragStart={e => handleDragStart(e, entry.id, level)}
         onClick={() => openPanel(entry, level)}
@@ -880,6 +881,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
                 return (
                   <div
                     key={entry.id}
+                    aria-label={entry.name}
                     draggable
                     onDragStart={e => handleDragStart(e, entry.id, 'unplaced')}
                     onClick={() => openPanel(entry, 'unplaced')}

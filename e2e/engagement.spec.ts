@@ -7,8 +7,8 @@ test.describe('Engagement levels', () => {
 
     await expect(page.getByText('Overall Participation')).toBeVisible();
     // ConcentricCircles has its own fetch after the nucleus loads — give it extra time
-    await expect(page.getByText('Alice Test')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText('Bob Test')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[aria-label="Alice Test"]')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[aria-label="Bob Test"]')).toBeVisible({ timeout: 15000 });
   });
 
   test('engagement level persists after page reload', async ({ page }) => {
@@ -16,7 +16,7 @@ test.describe('Engagement levels', () => {
 
     // Alice is seeded at 'aware' — she should still be there after a hard reload
     await page.reload();
-    await expect(page.getByText('Alice Test')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText('Bob Test')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[aria-label="Alice Test"]')).toBeVisible({ timeout: 15000 });
+    await expect(page.locator('[aria-label="Bob Test"]')).toBeVisible({ timeout: 15000 });
   });
 });
