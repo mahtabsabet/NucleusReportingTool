@@ -91,6 +91,14 @@ export function IndividualProfile() {
       await deletePerson(id!);
       navigate('/');
     } catch (err) {
+      // The delete may have succeeded even if deletePerson threw (e.g. Supabase
+      // returns a non-null error when RLS hides a row after it is soft-deleted).
+      // Only show the error if the person still exists.
+      const stillExists = await fetchPersonDetail(id!);
+      if (!stillExists) {
+        navigate('/');
+        return;
+      }
       console.error('Failed to delete person:', err);
       setDeleteError('Failed to delete person. Please try again.');
       setDeleting(false);
