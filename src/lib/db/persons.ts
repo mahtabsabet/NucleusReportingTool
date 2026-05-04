@@ -136,6 +136,75 @@ export async function searchPersonsByName(
   return (data ?? []) as Array<{ id: string; name: string }>;
 }
 
+export async function canDeletePerson(): Promise<boolean> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return false;
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('is_admin')
+    .eq('id', user.id)
+    .single();
+  return (profile as any)?.is_admin === true;
+}
+
+export async function deletePerson(personId: string): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error('Not authenticated');
+
+  const { data: person } = await supabase
+    .from('persons')
+    .select('name')
+    .eq('id', personId)
+    .single();
+  if (!person) throw new Error('Person not found');
+
+  const now = new Date().toISOString();
+
+  // Remove from all activities
+  await supabase
+    .from('activity_participants')
+    .update({ deleted_at: now })
+    .eq('person_id', personId)
+    .is('deleted_at', null);
+
+  // Clear primary_contact_id references where this person is someone else's contact
+  await supabase
+    .from('nucleus_enrollments')
+    .update({ primary_contact_id: null } as any)
+    .eq('primary_contact_id', personId)
+    .is('deleted_at', null);
+
+  // Remove nucleus enrollments (engagement level placement)
+  const { error: enrollErr } = await supabase
+    .from('nucleus_enrollments')
+    .update({ deleted_at: now })
+    .eq('person_id', personId)
+    .is('deleted_at', null);
+  if (enrollErr) throw enrollErr;
+
+  // Remove course enrollments (no deleted_at column — hard delete)
+  await supabase
+    .from('course_enrollments')
+    .delete()
+    .eq('person_id', personId);
+
+  // Soft-delete the person record
+  const { error: personErr } = await supabase
+    .from('persons')
+    .update({ deleted_at: now })
+    .eq('id', personId);
+  if (personErr) throw personErr;
+
+  // best-effort audit log (requires person_deleted enum value in event_log_type_enum)
+  await supabase.from('event_log').insert({
+    type: 'person_deleted' as any,
+    person_id: personId,
+    user_id: user.id,
+    description: `Deleted person "${(person as any).name}"`,
+    details: { personName: (person as any).name },
+  });
+}
+
 export async function syncCourseEnrollments(
   personId: string,
   desired: Array<{ courseId: string; status: 'in_progress' | 'completed' }>

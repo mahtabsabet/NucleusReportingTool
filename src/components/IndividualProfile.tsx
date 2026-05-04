@@ -10,12 +10,15 @@ import {
   CheckIcon,
   SaveIcon,
   ImageIcon,
+  Trash2Icon,
 } from 'lucide-react';
 import {
   fetchPersonDetail,
   updatePersonBasic,
   updatePersonNotes,
   syncCourseEnrollments,
+  canDeletePerson,
+  deletePerson,
   type PersonDetail,
 } from '../lib/db/persons';
 import { fetchCourses, type CourseRow } from '../lib/db/clusterProfile';
@@ -60,11 +63,18 @@ export function IndividualProfile() {
   const [personNotes, setPersonNotes] = useState('');
   const [notesSaved, setNotesSaved] = useState(false);
 
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   useEffect(() => {
     if (!id) return;
-    Promise.all([fetchPersonDetail(id), fetchCourses()]).then(([p, courses]) => {
+    Promise.all([fetchPersonDetail(id), fetchCourses(), canDeletePerson()]).then(([p, courses, adminCheck]) => {
       setPerson(p);
       setAllCourses(courses);
+      setIsAdmin(adminCheck);
       if (p) {
         setPersonNotes(p.notes);
         setBannerImage(null); // banner image is a future feature
@@ -72,6 +82,20 @@ export function IndividualProfile() {
       setLoading(false);
     });
   }, [id]);
+
+  const handleDelete = async () => {
+    if (!person || deleteConfirmInput !== person.name) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deletePerson(id!);
+      navigate('/');
+    } catch (err) {
+      console.error('Failed to delete person:', err);
+      setDeleteError('Failed to delete person. Please try again.');
+      setDeleting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -181,7 +205,7 @@ export function IndividualProfile() {
   return (
     <div className="min-h-screen bg-gray-50/50 font-sans">
       <header className="bg-white border-b border-gray-200/80 px-8 py-5 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-5xl mx-auto">
+        <div className="max-w-5xl mx-auto flex items-center justify-between">
           <button
             onClick={() => navigate(-1)}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
@@ -189,8 +213,63 @@ export function IndividualProfile() {
             <ChevronLeftIcon className="w-4 h-4" />
             Back
           </button>
+          {isAdmin && (
+            <button
+              onClick={() => { setDeleteConfirmInput(''); setDeleteError(null); setShowDeleteConfirm(true); }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+            >
+              <Trash2Icon className="w-4 h-4" />
+              Delete Person
+            </button>
+          )}
         </div>
       </header>
+
+      {showDeleteConfirm && person && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <Trash2Icon className="w-5 h-5 text-red-600" />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">Delete Person</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-2">
+              This will permanently remove <strong>{person.name}</strong> from the system, including all activity participation records, nucleus enrollment, and engagement level placement. This action cannot be undone.
+            </p>
+            <p className="text-sm text-gray-600 mb-4">
+              Type <strong>{person.name}</strong> to confirm:
+            </p>
+            <input
+              type="text"
+              value={deleteConfirmInput}
+              onChange={e => setDeleteConfirmInput(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm mb-4"
+              placeholder={person.name}
+              autoFocus
+            />
+            {deleteError && (
+              <p className="text-sm text-red-600 mb-3">{deleteError}</p>
+            )}
+            <div className="flex gap-3 pt-2 border-t border-gray-100">
+              <button
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={deleting}
+                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleteConfirmInput !== person.name || deleting}
+                className="flex-1 px-4 py-2.5 bg-red-600 text-white font-medium rounded-xl hover:bg-red-700 shadow-sm hover:shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {deleting ? 'Deleting…' : 'Delete Person'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-5xl mx-auto p-8">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 overflow-hidden">
