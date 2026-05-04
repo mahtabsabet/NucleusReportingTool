@@ -134,7 +134,9 @@ export function ActivityDetail() {
       role,
       existingPersonId: params.existingPersonId,
     });
-    markPersonUnplaced(nucleusId!, personId);
+    if (!params.existingPersonId) {
+      markPersonUnplaced(nucleusId!, personId);
+    }
     setParticipants(prev => {
       const allIds = Object.values(prev).flat();
       if (allIds.includes(personId)) return prev;
