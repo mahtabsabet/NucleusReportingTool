@@ -158,49 +158,22 @@ export async function deletePerson(personId: string): Promise<void> {
     .single();
   if (!person) throw new Error('Person not found');
 
-  const now = new Date().toISOString();
-
-  // Remove from all activities
-  await supabase
-    .from('activity_participants')
-    .update({ deleted_at: now })
-    .eq('person_id', personId)
-    .is('deleted_at', null);
-
-  // Clear primary_contact_id references where this person is someone else's contact
-  await supabase
-    .from('nucleus_enrollments')
-    .update({ primary_contact_id: null } as any)
-    .eq('primary_contact_id', personId)
-    .is('deleted_at', null);
-
-  // Remove nucleus enrollments (engagement level placement)
-  const { error: enrollErr } = await supabase
-    .from('nucleus_enrollments')
-    .update({ deleted_at: now })
-    .eq('person_id', personId)
-    .is('deleted_at', null);
-  if (enrollErr) throw enrollErr;
-
-  // Remove course enrollments (no deleted_at column — hard delete)
-  await supabase
-    .from('course_enrollments')
-    .delete()
-    .eq('person_id', personId);
-
-  // Soft-delete the person record
-  const { error: personErr } = await supabase
+  // Hard-delete the person record. FK constraints in the database handle
+  // cascading removal of related rows:
+  //   ON DELETE CASCADE  → activity_participants, nucleus_enrollments,
+  //                        session_attendance, course_enrollments
+  //   ON DELETE SET NULL → nucleus_enrollments.primary_contact_id, event_log.person_id
+  //   ON DELETE SET NULL → profiles.person_id (pre-existing constraint)
+  const { error } = await supabase
     .from('persons')
-    .update({ deleted_at: now })
+    .delete()
     .eq('id', personId);
-  if (personErr) throw personErr;
+  if (error) throw error;
 
-  // best-effort audit log — swallow errors so a missing enum value never surfaces
-  // as a deletion failure (person_deleted must be in event_log_type_enum on the live DB)
+  // best-effort audit log — person_id intentionally omitted; the person no longer exists
   try {
     await supabase.from('event_log').insert({
       type: 'person_deleted' as any,
-      person_id: personId,
       user_id: user.id,
       description: `Deleted person "${(person as any).name}"`,
       details: { personName: (person as any).name },

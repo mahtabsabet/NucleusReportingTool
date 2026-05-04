@@ -90,10 +90,10 @@ alter table profiles add constraint profiles_person_id_fkey
 
 create table nucleus_enrollments (
   id                  uuid primary key default gen_random_uuid(),
-  person_id           uuid not null references persons(id),
+  person_id           uuid not null references persons(id) on delete cascade,
   nucleus_id          uuid not null references nuclei(id),
   engagement_level    engagement_level_enum,
-  primary_contact_id  uuid references persons(id),
+  primary_contact_id  uuid references persons(id) on delete set null,
   deleted_at          timestamptz,
   unique (person_id, nucleus_id)
 );
@@ -109,7 +109,7 @@ create table courses (
 
 create table course_enrollments (
   id           uuid primary key default gen_random_uuid(),
-  person_id    uuid not null references persons(id),
+  person_id    uuid not null references persons(id) on delete cascade,
   course_id    uuid not null references courses(id),
   status       course_status_enum not null default 'in_progress',
   started_at   date,
@@ -138,7 +138,7 @@ create table activities (
 create table activity_participants (
   id           uuid primary key default gen_random_uuid(),
   activity_id  uuid not null references activities(id),
-  person_id    uuid not null references persons(id),
+  person_id    uuid not null references persons(id) on delete cascade,
   role         participant_role_enum not null,
   role_notes   text,
   deleted_at   timestamptz,
@@ -158,7 +158,7 @@ create table sessions (
 create table session_attendance (
   id         uuid primary key default gen_random_uuid(),
   session_id uuid not null references sessions(id) on delete cascade,
-  person_id  uuid not null references persons(id),
+  person_id  uuid not null references persons(id) on delete cascade,
   attended   boolean not null default true,
   notes      text,
   unique (session_id, person_id)
@@ -205,7 +205,7 @@ create table event_log (
   cluster_id  uuid references clusters(id),
   nucleus_id  uuid references nuclei(id),
   activity_id uuid references activities(id),
-  person_id   uuid references persons(id),
+  person_id   uuid references persons(id) on delete set null,
   user_id     uuid references profiles(id) on delete set null,
   description text not null,
   details     jsonb
@@ -401,6 +401,9 @@ create policy "Activity leads and above create persons" on persons
         and role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
     )
   );
+
+create policy "Admins delete persons" on persons
+  for delete using (is_admin());
 
 create policy "Update persons in scope" on persons
   for update using (
