@@ -195,14 +195,19 @@ export async function deletePerson(personId: string): Promise<void> {
     .eq('id', personId);
   if (personErr) throw personErr;
 
-  // best-effort audit log (requires person_deleted enum value in event_log_type_enum)
-  await supabase.from('event_log').insert({
-    type: 'person_deleted' as any,
-    person_id: personId,
-    user_id: user.id,
-    description: `Deleted person "${(person as any).name}"`,
-    details: { personName: (person as any).name },
-  });
+  // best-effort audit log — swallow errors so a missing enum value never surfaces
+  // as a deletion failure (person_deleted must be in event_log_type_enum on the live DB)
+  try {
+    await supabase.from('event_log').insert({
+      type: 'person_deleted' as any,
+      person_id: personId,
+      user_id: user.id,
+      description: `Deleted person "${(person as any).name}"`,
+      details: { personName: (person as any).name },
+    });
+  } catch {
+    // non-critical; deletion already committed
+  }
 }
 
 export async function syncCourseEnrollments(
