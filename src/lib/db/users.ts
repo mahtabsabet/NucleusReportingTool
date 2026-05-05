@@ -22,6 +22,7 @@ export interface UserPermissionRow {
 export interface ManagedUser {
   id: string;
   name: string;
+  email: string;
   isAdmin: boolean;
   createdAt: string;
   permissions: UserPermissionRow[];
@@ -106,6 +107,7 @@ export async function fetchManagedUsers(): Promise<ManagedUser[]> {
   return (data as any[]).map(p => ({
     id: p.id,
     name: p.name,
+    email: '',
     isAdmin: p.is_admin,
     createdAt: p.created_at,
     permissions: ((p.user_permissions ?? []) as any[]).map((up: any) => ({
@@ -156,6 +158,44 @@ export async function createUser(params: CreateUserParams): Promise<void> {
     },
   });
 
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+}
+
+export async function fetchUserEmails(): Promise<Record<string, string>> {
+  const { data, error } = await supabase.functions.invoke('manage-user', {
+    body: { action: 'list-emails' },
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return (data?.emails ?? {}) as Record<string, string>;
+}
+
+export async function deleteUser(targetUserId: string, confirmedEmail: string): Promise<void> {
+  const { data, error } = await supabase.functions.invoke('manage-user', {
+    body: { action: 'delete', targetUserId, confirmedEmail },
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+}
+
+export interface ChangeRoleParams {
+  targetUserId: string;
+  newRole: CreatableRole;
+  confirmedEmail: string;
+  permissionId?: string;
+}
+
+export async function changeUserRole(params: ChangeRoleParams): Promise<void> {
+  const { data, error } = await supabase.functions.invoke('manage-user', {
+    body: {
+      action: 'change-role',
+      targetUserId: params.targetUserId,
+      newRole: params.newRole,
+      confirmedEmail: params.confirmedEmail,
+      permissionId: params.permissionId,
+    },
+  });
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
 }
