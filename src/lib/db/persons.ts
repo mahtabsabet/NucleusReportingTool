@@ -99,11 +99,14 @@ export async function uploadProfilePhoto(personId: string, file: File): Promise<
   if (uploadError) throw uploadError;
   const { data } = supabase.storage.from('profile-photos').getPublicUrl(path);
   const url = data.publicUrl;
-  const { error: updateError } = await supabase
+  const { data: updated, error: updateError } = await supabase
     .from('persons')
     .update({ profile_image_url: url })
-    .eq('id', personId);
+    .eq('id', personId)
+    .select('id');
   if (updateError) throw updateError;
+  // Supabase returns no error but 0 rows when RLS blocks the write.
+  if (!updated?.length) throw new Error('profile_image_url update matched 0 rows — check persons RLS update policy');
   return url;
 }
 
