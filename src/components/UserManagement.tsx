@@ -343,13 +343,9 @@ export function UserManagement() {
 
       // Enrich with emails for admins (requires service role via edge function)
       if (ctx?.isAdmin) {
-        try {
-          const emails = await fetchUserEmails();
-          for (const u of userList) {
-            u.email = emails[u.id] ?? '';
-          }
-        } catch {
-          // Non-fatal: proceed without emails
+        const emails = await fetchUserEmails();
+        for (const u of userList) {
+          u.email = emails[u.id] ?? '';
         }
       }
 

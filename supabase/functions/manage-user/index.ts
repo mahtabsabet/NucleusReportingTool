@@ -46,10 +46,10 @@ Deno.serve(async (req) => {
 
     // ── list-emails ──────────────────────────────────────────────
     if (action === 'list-emails') {
-      const { data: { users }, error } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
-      if (error) return json({ error: error.message }, 400);
+      const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
+      if (listError) return json({ error: listError.message }, 400);
       const emails: Record<string, string> = {};
-      for (const u of users) {
+      for (const u of (listData?.users ?? [])) {
         if (u.email) emails[u.id] = u.email;
       }
       return json({ emails });
