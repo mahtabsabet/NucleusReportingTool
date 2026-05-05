@@ -82,7 +82,7 @@ function UserCard({ user, callerCtx, onDelete, onChangeRole }: UserCardProps) {
           <div className="min-w-0">
             <p className="font-semibold text-gray-900 truncate">{user.name}</p>
             {user.email && (
-              <p className="text-xs text-gray-500 truncate">{user.email}</p>
+              <p className="text-sm text-gray-600 truncate">{user.email}</p>
             )}
             <p className="text-xs text-gray-400 mt-0.5">
               Joined {new Date(user.createdAt).toLocaleDateString('en-CA', { year: 'numeric', month: 'short', day: 'numeric' })}
@@ -175,12 +175,13 @@ function DeleteUserModal({ user, onClose, onDeleted }: DeleteModalProps) {
           </div>
           <h2 className="text-xl font-bold text-gray-900">Delete User</h2>
         </div>
-        <p className="text-sm text-gray-600 mb-2">
+        <p className="text-sm text-gray-600 mb-4">
           This will permanently remove <strong>{user.name}</strong> from the system. Their person record will not be affected.
         </p>
-        <p className="text-sm text-gray-600 mb-4">
-          Type <strong>{user.email}</strong> to confirm:
-        </p>
+        <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 mb-1">
+          <p className="text-sm font-mono font-semibold text-gray-900 break-all">{user.email}</p>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">Type this email to confirm</p>
         <input
           type="text"
           value={emailInput}
@@ -281,9 +282,10 @@ function ChangeRoleModal({ user, onClose, onChanged }: ChangeRoleModalProps) {
             ))}
           </select>
         </div>
-        <p className="text-sm text-gray-600 mb-2">
-          Type <strong>{user.email}</strong> to confirm:
-        </p>
+        <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 mb-1">
+          <p className="text-sm font-mono font-semibold text-gray-900 break-all">{user.email}</p>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">Type this email to confirm</p>
         <input
           type="text"
           value={emailInput}
