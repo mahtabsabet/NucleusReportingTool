@@ -5,6 +5,7 @@ export interface PersonDetail {
   name: string;
   capacities: string[];
   notes: string;
+  photoUrl: string | null;
   nuclei: Array<{ id: string; name: string }>;
   courseEnrollments: Array<{
     courseId: string;
@@ -23,7 +24,7 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
   const [personRes, nucleiRes, coursesRes, activitiesRes] = await Promise.all([
     supabase
       .from('persons')
-      .select('id, name, capacities, notes')
+      .select('id, name, capacities, notes, profile_image_url')
       .eq('id', personId)
       .is('deleted_at', null)
       .single(),
@@ -51,6 +52,7 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
     name: p.name,
     capacities: p.capacities ?? [],
     notes: p.notes ?? '',
+    photoUrl: p.profile_image_url ?? null,
     nuclei: ((nucleiRes.data ?? []) as any[]).map((e: any) => ({
       id: e.nucleus_id,
       name: e.nuclei?.name ?? e.nucleus_id,
@@ -86,6 +88,23 @@ export async function updatePersonNotes(personId: string, notes: string): Promis
     .update({ notes: notes || null })
     .eq('id', personId);
   if (error) throw error;
+}
+
+export async function uploadProfilePhoto(personId: string, file: File): Promise<string> {
+  const ext = file.name.split('.').pop() ?? 'jpg';
+  const path = `${personId}.${ext}`;
+  const { error: uploadError } = await supabase.storage
+    .from('profile-photos')
+    .upload(path, file, { upsert: true });
+  if (uploadError) throw uploadError;
+  const { data } = supabase.storage.from('profile-photos').getPublicUrl(path);
+  const url = data.publicUrl;
+  const { error: updateError } = await supabase
+    .from('persons')
+    .update({ profile_image_url: url })
+    .eq('id', personId);
+  if (updateError) throw updateError;
+  return url;
 }
 
 export interface EnrollmentDiff {

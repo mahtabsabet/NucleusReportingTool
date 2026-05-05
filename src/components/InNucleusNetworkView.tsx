@@ -72,6 +72,7 @@ interface SimNode {
   name: string;
   level: Level | 'unplaced';
   primaryContactId: string | null;
+  photoUrl: string | null;
   x: number;
   y: number;
   vx: number;
@@ -180,6 +181,7 @@ function initNodes(enrollments: NucleusEnrollmentEntry[]): SimNode[] {
       name: e.name,
       level: (e.engagementLevel ?? 'unplaced') as Level | 'unplaced',
       primaryContactId: e.primaryContactId,
+      photoUrl: e.photoUrl,
       x: WIDTH / 2 + r * Math.cos(angle) + (Math.random() - 0.5) * 40,
       y: HEIGHT / 2 + r * Math.sin(angle) + (Math.random() - 0.5) * 40,
       vx: 0,
@@ -413,26 +415,46 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
                   />
                 )}
 
+                {/* Clip path for photo */}
+                {node.photoUrl && (
+                  <defs>
+                    <clipPath id={`clip-${node.id}`}>
+                      <circle cx={0} cy={0} r={NODE_R} />
+                    </clipPath>
+                  </defs>
+                )}
+
                 {/* Avatar circle */}
                 <circle
                   cx={0} cy={0} r={NODE_R}
-                  fill={colors.avatar}
+                  fill={node.photoUrl ? 'transparent' : colors.avatar}
                   stroke="rgba(255,255,255,0.9)"
                   strokeWidth={2.5}
                 />
 
-                {/* Initials */}
-                <text
-                  x={0} y={0}
-                  textAnchor="middle"
-                  dominantBaseline="central"
-                  fill="white"
-                  fontSize={NODE_R * 0.65}
-                  fontWeight="700"
-                  style={{ pointerEvents: 'none', userSelect: 'none' }}
-                >
-                  {initials}
-                </text>
+                {/* Photo or initials */}
+                {node.photoUrl ? (
+                  <image
+                    href={node.photoUrl}
+                    x={-NODE_R} y={-NODE_R}
+                    width={NODE_R * 2} height={NODE_R * 2}
+                    clipPath={`url(#clip-${node.id})`}
+                    preserveAspectRatio="xMidYMid slice"
+                    style={{ pointerEvents: 'none' }}
+                  />
+                ) : (
+                  <text
+                    x={0} y={0}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fill="white"
+                    fontSize={NODE_R * 0.65}
+                    fontWeight="700"
+                    style={{ pointerEvents: 'none', userSelect: 'none' }}
+                  >
+                    {initials}
+                  </text>
+                )}
 
                 {/* Hover tooltip */}
                 {isHovered && (
@@ -506,10 +528,15 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
                   return (
                     <>
                       <div
-                        className="flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-md"
-                        style={{ backgroundColor: colors.avatar }}
+                        className="flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-md overflow-hidden"
+                        style={{
+                          backgroundColor: colors.avatar,
+                          backgroundImage: panel.photoUrl ? `url(${panel.photoUrl})` : undefined,
+                          backgroundSize: 'cover',
+                          backgroundPosition: 'center',
+                        }}
                       >
-                        {getInitials(panel.name)}
+                        {!panel.photoUrl && getInitials(panel.name)}
                       </div>
                       <div>
                         <h2 className="text-xl font-bold text-gray-900 leading-tight">{panel.name}</h2>

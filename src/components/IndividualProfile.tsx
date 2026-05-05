@@ -9,7 +9,7 @@ import {
   XIcon,
   CheckIcon,
   SaveIcon,
-  ImageIcon,
+  CameraIcon,
   Trash2Icon,
 } from 'lucide-react';
 import {
@@ -19,6 +19,7 @@ import {
   syncCourseEnrollments,
   canDeletePerson,
   deletePerson,
+  uploadProfilePhoto,
   type PersonDetail,
 } from '../lib/db/persons';
 import { fetchCourses, type CourseRow } from '../lib/db/clusterProfile';
@@ -59,7 +60,9 @@ export function IndividualProfile() {
   const [newCapacity, setNewCapacity] = useState('');
   const [saved, setSaved] = useState(false);
 
-  const [bannerImage, setBannerImage] = useState<string | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
+  const [editPhotoPreview, setEditPhotoPreview] = useState<string | null>(null);
   const [personNotes, setPersonNotes] = useState('');
   const [notesSaved, setNotesSaved] = useState(false);
 
@@ -77,7 +80,7 @@ export function IndividualProfile() {
       setIsAdmin(adminCheck);
       if (p) {
         setPersonNotes(p.notes);
-        setBannerImage(null); // banner image is a future feature
+        setPhotoUrl(p.photoUrl);
       }
       setLoading(false);
     });
@@ -137,6 +140,8 @@ export function IndividualProfile() {
       courseName: ce.courseName,
       status: ce.status,
     })));
+    setEditPhotoFile(null);
+    setEditPhotoPreview(null);
     setEditing(true);
   };
 
@@ -144,17 +149,25 @@ export function IndividualProfile() {
     try {
       await updatePersonBasic(id!, { name: editName, capacities: editCapacities });
       await syncCourseEnrollments(id!, editCourses.map(c => ({ courseId: c.courseId, status: c.status })));
+      let savedPhotoUrl = photoUrl;
+      if (editPhotoFile) {
+        savedPhotoUrl = await uploadProfilePhoto(id!, editPhotoFile);
+        setPhotoUrl(savedPhotoUrl);
+      }
       // Reflect changes locally without a full refetch
       setPerson(prev => prev ? {
         ...prev,
         name: editName,
         capacities: editCapacities,
+        photoUrl: savedPhotoUrl,
         courseEnrollments: editCourses.map(c => ({
           courseId: c.courseId,
           courseName: c.courseName,
           status: c.status,
         })),
       } : prev);
+      setEditPhotoFile(null);
+      setEditPhotoPreview(null);
       setEditing(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -284,21 +297,46 @@ export function IndividualProfile() {
           {/* Header */}
           <div
             className="relative px-8 py-10 text-white overflow-hidden"
-            style={
-              bannerImage
-                ? {
-                    backgroundImage: `linear-gradient(to bottom, rgba(37,99,235,0.85), rgba(30,64,175,0.92)), url(${bannerImage})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                  }
-                : { background: 'linear-gradient(to right, #2563eb, #1e40af)' }
-            }
+            style={{ background: 'linear-gradient(to right, #2563eb, #1e40af)' }}
           >
             <div className="absolute top-0 right-0 -mt-10 -mr-10 w-64 h-64 bg-white opacity-5 rounded-full blur-3xl pointer-events-none" />
             <div className="flex items-start justify-between relative z-10">
               <div className="flex items-center gap-6">
-                <div className="w-28 h-28 rounded-2xl bg-white/20 backdrop-blur-sm border border-white/30 flex items-center justify-center text-4xl font-bold shadow-inner">
-                  {initials}
+                {/* Avatar: shows photo if available, otherwise initials; upload overlay in edit mode */}
+                <div className="relative w-28 h-28 flex-shrink-0">
+                  <div className="w-28 h-28 rounded-2xl bg-white/20 backdrop-blur-sm border border-white/30 shadow-inner overflow-hidden flex items-center justify-center text-4xl font-bold">
+                    {(editing ? editPhotoPreview : photoUrl) ? (
+                      <img
+                        src={editing ? (editPhotoPreview ?? photoUrl ?? undefined) : (photoUrl ?? undefined)}
+                        alt={person.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span>{initials}</span>
+                    )}
+                  </div>
+                  {editing && (
+                    <label className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl bg-black/40 cursor-pointer opacity-0 hover:opacity-100 transition-opacity">
+                      <CameraIcon className="w-6 h-6 text-white mb-1" />
+                      <span className="text-white text-xs font-semibold">
+                        {editPhotoPreview || photoUrl ? 'Change' : 'Add Photo'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={e => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            setEditPhotoFile(file);
+                            const reader = new FileReader();
+                            reader.onloadend = () => setEditPhotoPreview(reader.result as string);
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+                  )}
                 </div>
                 <div>
                   {editing ? (
@@ -329,23 +367,6 @@ export function IndividualProfile() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-1.5 bg-white/15 hover:bg-white/25 text-sm font-medium text-white rounded-lg border border-white/20 transition-all backdrop-blur-sm">
-                  <ImageIcon className="w-4 h-4" />
-                  {bannerImage ? 'Change Photo' : 'Add Photo'}
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={e => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onloadend = () => setBannerImage(reader.result as string);
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                    className="hidden"
-                  />
-                </label>
                 {saved && (
                   <span className="flex items-center gap-1.5 text-sm font-bold bg-green-500/20 text-green-100 border border-green-400/30 px-4 py-2 rounded-xl backdrop-blur-sm">
                     <CheckIcon className="w-4 h-4" /> Saved!

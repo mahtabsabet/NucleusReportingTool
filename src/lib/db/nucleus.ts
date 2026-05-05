@@ -436,6 +436,7 @@ export interface NucleusEnrollmentEntry {
   name: string;
   engagementLevel: 'aware' | 'participating' | 'supporting' | 'coordinating' | null;
   primaryContactId: string | null;
+  photoUrl: string | null;
 }
 
 export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promise<NucleusEnrollmentEntry[]> {
@@ -461,16 +462,18 @@ export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promi
 
   if (rows.length === 0) return [];
 
-  // Fetch person names in a separate query — avoids PostgREST FK-join ambiguity
+  // Fetch person names and photos in a separate query — avoids PostgREST FK-join ambiguity
   const personIds = rows.map((e: any) => e.person_id);
-  const { data: persons } = await supabase.from('persons').select('id, name').in('id', personIds);
+  const { data: persons } = await supabase.from('persons').select('id, name, profile_image_url').in('id', personIds);
   const nameMap = Object.fromEntries(((persons ?? []) as any[]).map(p => [p.id, p.name]));
+  const photoMap = Object.fromEntries(((persons ?? []) as any[]).map(p => [p.id, p.profile_image_url ?? null]));
 
   return rows.map((e: any) => ({
     personId: e.person_id,
     name: nameMap[e.person_id] ?? e.person_id,
     engagementLevel: (e.engagement_level ?? null) as NucleusEnrollmentEntry['engagementLevel'],
     primaryContactId: (e.primary_contact_id ?? null) as string | null,
+    photoUrl: photoMap[e.person_id] ?? null,
   }));
 }
 

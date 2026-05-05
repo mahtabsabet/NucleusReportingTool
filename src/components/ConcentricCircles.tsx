@@ -53,6 +53,7 @@ interface NameEntry {
   id: string;
   name: string;
   primaryContactId: string | null;
+  photoUrl: string | null;
 }
 
 interface PanelActivity {
@@ -237,7 +238,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
         const newUnplaced: NameEntry[] = [];
         const unplacedIds = new Set(getUnplacedPersonIds(nucleusId));
         enrollments.forEach(e => {
-          const entry: NameEntry = { id: e.personId, name: e.name, primaryContactId: e.primaryContactId };
+          const entry: NameEntry = { id: e.personId, name: e.name, primaryContactId: e.primaryContactId, photoUrl: e.photoUrl };
           if (e.engagementLevel === null || unplacedIds.has(e.personId)) {
             newUnplaced.push(entry);
           } else {
@@ -429,6 +430,9 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
             height: '100%',
             borderRadius: '50%',
             backgroundColor: avatarColor,
+            backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined,
+            backgroundSize: 'cover',
+            backgroundPosition: 'center',
             border: '2.5px solid rgba(255,255,255,0.9)',
             boxShadow: isHovered
               ? '0 4px 14px rgba(0,0,0,0.25)'
@@ -439,9 +443,11 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
             userSelect: 'none',
           }}
         >
-          <span style={{ color: '#fff', fontSize: '12px', fontWeight: 700, lineHeight: 1, pointerEvents: 'none' }}>
-            {initials}
-          </span>
+          {!entry.photoUrl && (
+            <span style={{ color: '#fff', fontSize: '12px', fontWeight: 700, lineHeight: 1, pointerEvents: 'none' }}>
+              {initials}
+            </span>
+          )}
         </div>
         {isHovered && (
           <div
@@ -554,10 +560,15 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
           <div className="flex items-start justify-between p-6 pb-4 border-b border-gray-100">
             <div className="flex items-center gap-4">
               <div
-                className="flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-md"
-                style={{ backgroundColor: avatarColor }}
+                className="flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-md overflow-hidden"
+                style={{
+                  backgroundColor: avatarColor,
+                  backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined,
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                }}
               >
-                {initials}
+                {!entry.photoUrl && initials}
               </div>
               <div>
                 <h2 className="text-xl font-bold text-gray-900 leading-tight">{entry.name}</h2>
