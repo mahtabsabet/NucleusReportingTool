@@ -79,7 +79,7 @@ export function NetworkView({ nuclei, clusterId }: NetworkViewProps) {
     const edges: Edge[] = [];
     const validNucleusIds = new Set(nuclei.map(n => n.id));
 
-    const radius = Math.max(300, nuclei.length * 40);
+    const radius = Math.max(360, nuclei.length * 70);
     const centerX = 500;
     const centerY = 500;
     const nucleusPositions = new Map<string, { x: number; y: number }>();
@@ -98,32 +98,75 @@ export function NetworkView({ nuclei, clusterId }: NetworkViewProps) {
       });
     });
 
+    // Group cross-people by the exact set of nuclei they bridge so we can
+    // lay each group out without overlap.
+    const groups = new Map<string, { nucleiIds: string[]; people: CrossNucleusPerson[] }>();
     crossPeople.forEach(person => {
-      const connectedNuclei = person.nucleiIds.filter(nId => validNucleusIds.has(nId));
-      let avgX = 0;
-      let avgY = 0;
-      connectedNuclei.forEach(nId => {
-        const pos = nucleusPositions.get(nId);
-        if (pos) { avgX += pos.x; avgY += pos.y; }
-      });
-      avgX /= connectedNuclei.length;
-      avgY /= connectedNuclei.length;
-      const jitterX = (Math.random() - 0.5) * 100;
-      const jitterY = (Math.random() - 0.5) * 100;
-      nodes.push({
-        id: person.id,
-        type: 'individual',
-        position: { x: avgX + jitterX, y: avgY + jitterY },
-        data: { label: person.name, isIndividual: true },
-      });
-      connectedNuclei.forEach(nId => {
-        edges.push({
-          id: `e-${person.id}-${nId}`,
-          source: person.id,
-          target: nId,
-          type: 'default',
-          animated: true,
-          style: { stroke: '#94a3b8', strokeWidth: 2, opacity: 0.6 },
+      const connectedNuclei = person.nucleiIds
+        .filter(nId => validNucleusIds.has(nId))
+        .slice()
+        .sort();
+      if (connectedNuclei.length < 2) return;
+      const key = connectedNuclei.join('|');
+      let group = groups.get(key);
+      if (!group) {
+        group = { nucleiIds: connectedNuclei, people: [] };
+        groups.set(key, group);
+      }
+      group.people.push(person);
+    });
+
+    const PERSON_SPACING = 110; // px between adjacent person nodes
+
+    groups.forEach(({ nucleiIds, people }) => {
+      const positions = nucleiIds
+        .map(nId => nucleusPositions.get(nId))
+        .filter((p): p is { x: number; y: number } => !!p);
+      const cx = positions.reduce((s, p) => s + p.x, 0) / positions.length;
+      const cy = positions.reduce((s, p) => s + p.y, 0) / positions.length;
+
+      // Stable order so positions don't jump between renders.
+      people.sort((a, b) => (a.id < b.id ? -1 : 1));
+
+      people.forEach((person, i) => {
+        let x: number;
+        let y: number;
+        if (positions.length === 2) {
+          // Distribute along the perpendicular bisector of the line between
+          // the two nuclei — keeps every person on a clear, non-overlapping
+          // path between them.
+          const [a, b] = positions;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const px = -dy / len;
+          const py = dx / len;
+          const offset = (i - (people.length - 1) / 2) * PERSON_SPACING;
+          x = cx + px * offset;
+          y = cy + py * offset;
+        } else {
+          // 3+ nuclei: arrange around the centroid in a ring sized to fit them.
+          const ringR = Math.max(70, (people.length * PERSON_SPACING) / (2 * Math.PI));
+          const angle = (i / people.length) * 2 * Math.PI;
+          x = cx + ringR * Math.cos(angle);
+          y = cy + ringR * Math.sin(angle);
+        }
+
+        nodes.push({
+          id: person.id,
+          type: 'individual',
+          position: { x, y },
+          data: { label: person.name, isIndividual: true },
+        });
+        nucleiIds.forEach(nId => {
+          edges.push({
+            id: `e-${person.id}-${nId}`,
+            source: person.id,
+            target: nId,
+            type: 'default',
+            animated: true,
+            style: { stroke: '#94a3b8', strokeWidth: 2, opacity: 0.6 },
+          });
         });
       });
     });
