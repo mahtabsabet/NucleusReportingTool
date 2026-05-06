@@ -11,6 +11,7 @@ import {
 import { fetchCourses, fetchPersonsForCluster } from '../lib/db/clusterProfile';
 import type { CourseRow, PersonProfile } from '../lib/db/clusterProfile';
 import { fetchClusters } from '../lib/db/clusters';
+import { GlobalSearch } from './GlobalSearch';
 
 export function ClusterProfile() {
   const navigate = useNavigate();
@@ -59,12 +60,17 @@ export function ClusterProfile() {
     <div className="min-h-screen bg-gray-50/50 font-sans">
       <header className="bg-white border-b border-gray-200/80 px-8 py-6 sticky top-0 z-10 shadow-sm">
         <div className="max-w-6xl mx-auto">
-          <button
-            onClick={() => navigate('/')}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 mb-4 transition-colors">
-            <ChevronLeftIcon className="w-4 h-4" />
-            Back to Map
-          </button>
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <button
+              onClick={() => navigate('/')}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors">
+              <ChevronLeftIcon className="w-4 h-4" />
+              Back to Map
+            </button>
+            <div className="flex-1 max-w-sm">
+              <GlobalSearch />
+            </div>
+          </div>
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-md">
               <GlobeIcon className="w-6 h-6" />

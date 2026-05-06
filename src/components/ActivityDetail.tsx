@@ -20,6 +20,7 @@ import {
 import { markPersonUnplaced } from '../lib/unplacedTracker';
 import { Activity } from '../types';
 import { PersonNameCombobox } from './PersonNameCombobox';
+import { GlobalSearch } from './GlobalSearch';
 
 // DB role enum keys for each activity type
 const ROLES_FOR_TYPE: Record<string, string[]> = {
@@ -183,13 +184,18 @@ export function ActivityDetail() {
     <div className="min-h-screen bg-gray-50/50 font-sans">
       <header className="bg-white border-b border-gray-200/80 px-4 sm:px-8 py-5 sticky top-0 z-10 shadow-sm">
         <div className="max-w-5xl mx-auto">
-          <button
-            onClick={() => navigate(`/nucleus/${nucleusId}`)}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 mb-3 transition-colors"
-          >
-            <ChevronLeftIcon className="w-4 h-4" />
-            Back to {nucleusName}
-          </button>
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <button
+              onClick={() => navigate(`/nucleus/${nucleusId}`)}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
+            >
+              <ChevronLeftIcon className="w-4 h-4" />
+              Back to {nucleusName}
+            </button>
+            <div className="flex-1 max-w-sm">
+              <GlobalSearch />
+            </div>
+          </div>
           <div className="flex items-center justify-between gap-4">
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
               {activity.name}

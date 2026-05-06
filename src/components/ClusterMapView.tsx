@@ -30,6 +30,7 @@ import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
 import { Timeline } from './Timeline';
 import { NetworkView } from './NetworkView';
+import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 // Fix default marker icon
@@ -195,6 +196,9 @@ export function ClusterMapView() {
             </p>
           </div>
         </div>
+        <div className="hidden md:block flex-1 max-w-md mx-4">
+          <GlobalSearch />
+        </div>
         <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => setShowNetwork(!showNetwork)}
@@ -242,6 +246,10 @@ export function ClusterMapView() {
           }
         </div>
       </header>
+
+      <div className="md:hidden bg-white border-b border-gray-200 px-4 py-2">
+        <GlobalSearch />
+      </div>
 
       <div className="flex flex-1 overflow-hidden relative flex-col lg:flex-row">
         {/* Mobile sidebar overlay */}

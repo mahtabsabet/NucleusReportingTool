@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ChevronLeftIcon, ChevronRightIcon, UsersIcon } from 'lucide-react';
 import { fetchActivitiesByType, fetchClusterName, type ActivityReportRow } from '../lib/db/reports';
 import type { Activity } from '../types';
+import { GlobalSearch } from './GlobalSearch';
 
 const TYPE_LABELS: Record<string, string> = {
   'children-class': "Children's Classes",
@@ -66,13 +67,18 @@ export function ActivityTypeReport() {
     <div className="min-h-screen bg-gray-50/50 font-sans">
       <header className="bg-white border-b border-gray-200/80 px-8 py-6 sticky top-0 z-10 shadow-sm">
         <div className="max-w-6xl mx-auto">
-          <button
-            onClick={() => navigate('/')}
-            className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 mb-4 transition-colors"
-          >
-            <ChevronLeftIcon className="w-4 h-4" />
-            Back to Map
-          </button>
+          <div className="flex items-center justify-between gap-4 mb-4">
+            <button
+              onClick={() => navigate('/')}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
+            >
+              <ChevronLeftIcon className="w-4 h-4" />
+              Back to Map
+            </button>
+            <div className="flex-1 max-w-sm">
+              <GlobalSearch />
+            </div>
+          </div>
           <div className="flex items-center gap-4">
             <div className="w-12 h-12 bg-blue-100 text-blue-700 rounded-xl flex items-center justify-center shadow-inner">
               <UsersIcon className="w-6 h-6" />

@@ -24,6 +24,7 @@ import {
   type CreatableRole,
 } from '../lib/db/users';
 import { CreateUserModal } from './CreateUserModal';
+import { GlobalSearch } from './GlobalSearch';
 
 function RoleBadge({ role }: { role: string }) {
   const styles: Record<string, string> = {
@@ -409,6 +410,9 @@ export function UserManagement() {
             </p>
           </div>
         </div>
+        <div className="hidden md:block flex-1 max-w-sm mx-4">
+          <GlobalSearch />
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={load}
@@ -429,6 +433,10 @@ export function UserManagement() {
           )}
         </div>
       </header>
+
+      <div className="md:hidden bg-white border-b border-gray-200 px-4 py-2">
+        <GlobalSearch />
+      </div>
 
       <main className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
         {loading && (

@@ -23,6 +23,7 @@ import {
   type PersonDetail,
 } from '../lib/db/persons';
 import { fetchCourses, type CourseRow } from '../lib/db/clusterProfile';
+import { GlobalSearch } from './GlobalSearch';
 
 const ROLE_DISPLAY: Record<string, string> = {
   teacher: 'Teacher',
@@ -226,7 +227,7 @@ export function IndividualProfile() {
   return (
     <div className="min-h-screen bg-gray-50/50 font-sans">
       <header className="bg-white border-b border-gray-200/80 px-8 py-5 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
           <button
             onClick={() => navigate(-1)}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
@@ -234,6 +235,9 @@ export function IndividualProfile() {
             <ChevronLeftIcon className="w-4 h-4" />
             Back
           </button>
+          <div className="flex-1 max-w-sm">
+            <GlobalSearch />
+          </div>
           {isAdmin && (
             <button
               onClick={() => { setDeleteConfirmInput(''); setDeleteError(null); setShowDeleteConfirm(true); }}

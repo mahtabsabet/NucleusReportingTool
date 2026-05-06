@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { ConcentricCircles } from './ConcentricCircles';
 import { InNucleusNetworkView } from './InNucleusNetworkView';
+import { GlobalSearch } from './GlobalSearch';
 import { Activity } from '../types';
 import {
   fetchNucleus,
@@ -288,6 +289,10 @@ export function NucleusDashboard() {
               Back to Cluster Map
             </button>
 
+            <div className="hidden md:block flex-1 max-w-md mx-4">
+              <GlobalSearch />
+            </div>
+
             <div className="flex items-center gap-2">
               <button
                 onClick={() => navigate(`/nucleus/${id}/growth-report`)}
@@ -376,6 +381,10 @@ export function NucleusDashboard() {
           </div>
         </div>
       </header>
+
+      <div className="md:hidden bg-white/90 border-b border-gray-200/80 px-4 py-2">
+        <GlobalSearch />
+      </div>
 
       {/* Main content */}
       <div className="max-w-[1600px] mx-auto p-4 sm:p-8">
