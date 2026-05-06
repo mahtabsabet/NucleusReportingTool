@@ -99,6 +99,17 @@ export async function createNucleus(params: {
     .select('id, cluster_id, name, lat, lng')
     .single();
   if (error) throw error;
+
+  const { data: { user } } = await supabase.auth.getUser();
+  await supabase.from('event_log').insert({
+    type: 'nucleus_created',
+    cluster_id: data.cluster_id,
+    nucleus_id: data.id,
+    user_id: user?.id ?? null,
+    description: `Created nucleus "${data.name}"`,
+    details: { nucleusName: data.name },
+  });
+
   return {
     id: data.id,
     clusterId: data.cluster_id,

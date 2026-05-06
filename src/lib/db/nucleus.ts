@@ -93,6 +93,23 @@ export async function createActivity(params: {
     .select('id, nucleus_id, name, type')
     .single();
   if (error) throw error;
+
+  const { data: nucleus } = await supabase
+    .from('nuclei')
+    .select('cluster_id')
+    .eq('id', params.nucleusId)
+    .single();
+  const { data: { user } } = await supabase.auth.getUser();
+  await supabase.from('event_log').insert({
+    type: 'activity_created',
+    cluster_id: (nucleus as any)?.cluster_id ?? null,
+    nucleus_id: data.nucleus_id,
+    activity_id: data.id,
+    user_id: user?.id ?? null,
+    description: `Created activity "${data.name}"`,
+    details: { activityName: data.name, activityType: data.type },
+  });
+
   return {
     id: data.id,
     nucleusId: data.nucleus_id,
@@ -319,19 +336,72 @@ export async function addPersonToActivity(params: {
     personName = p.name;
   }
 
+  const { data: existingEnrollment } = await supabase
+    .from('nucleus_enrollments')
+    .select('person_id, deleted_at')
+    .eq('person_id', personId)
+    .eq('nucleus_id', params.nucleusId)
+    .maybeSingle();
+  const isNewToNucleus = !existingEnrollment || (existingEnrollment as any).deleted_at !== null;
+
   await supabase
     .from('nucleus_enrollments')
     .upsert(
-      { person_id: personId, nucleus_id: params.nucleusId },
-      { onConflict: 'person_id,nucleus_id', ignoreDuplicates: true }
+      { person_id: personId, nucleus_id: params.nucleusId, deleted_at: null },
+      { onConflict: 'person_id,nucleus_id' }
     );
+
+  const { data: existingParticipant } = await supabase
+    .from('activity_participants')
+    .select('activity_id, deleted_at')
+    .eq('activity_id', params.activityId)
+    .eq('person_id', personId)
+    .maybeSingle();
+  const isNewParticipant =
+    !existingParticipant || (existingParticipant as any).deleted_at !== null;
 
   await supabase
     .from('activity_participants')
     .upsert(
-      { activity_id: params.activityId, person_id: personId, role: params.role as any },
-      { onConflict: 'activity_id,person_id', ignoreDuplicates: true }
+      { activity_id: params.activityId, person_id: personId, role: params.role as any, deleted_at: null },
+      { onConflict: 'activity_id,person_id' }
     );
+
+  if (isNewToNucleus || isNewParticipant) {
+    const { data: nucleus } = await supabase
+      .from('nuclei')
+      .select('cluster_id')
+      .eq('id', params.nucleusId)
+      .single();
+    const clusterId = (nucleus as any)?.cluster_id ?? null;
+    const { data: { user } } = await supabase.auth.getUser();
+    const userId = user?.id ?? null;
+
+    if (isNewToNucleus) {
+      await supabase.from('event_log').insert({
+        type: 'person_created',
+        cluster_id: clusterId,
+        nucleus_id: params.nucleusId,
+        person_id: personId,
+        user_id: userId,
+        description: `${personName} joined nucleus`,
+        details: { personName },
+      });
+    }
+
+    if (isNewParticipant) {
+      await supabase.from('event_log').insert({
+        type: 'participant_added',
+        cluster_id: clusterId,
+        nucleus_id: params.nucleusId,
+        activity_id: params.activityId,
+        person_id: personId,
+        user_id: userId,
+        description: `${personName} added to activity as ${params.role}`,
+        details: { personName, role: params.role },
+      });
+    }
+  }
 
   return { personId, name: personName };
 }
@@ -349,6 +419,30 @@ export async function removeActivityParticipant(
     .eq('role', role as any)
     .is('deleted_at', null);
   if (error) throw error;
+
+  const { data: activity } = await supabase
+    .from('activities')
+    .select('nucleus_id, nuclei(cluster_id)')
+    .eq('id', activityId)
+    .single();
+  const { data: person } = await supabase
+    .from('persons')
+    .select('name')
+    .eq('id', personId)
+    .single();
+  const { data: { user } } = await supabase.auth.getUser();
+  const personName = (person as any)?.name ?? 'Person';
+
+  await supabase.from('event_log').insert({
+    type: 'participant_removed',
+    cluster_id: (activity as any)?.nuclei?.cluster_id ?? null,
+    nucleus_id: (activity as any)?.nucleus_id ?? null,
+    activity_id: activityId,
+    person_id: personId,
+    user_id: user?.id ?? null,
+    description: `${personName} removed from activity (${role})`,
+    details: { personName, role },
+  });
 }
 
 export async function canDeleteActivity(activityId: string): Promise<boolean> {
@@ -496,6 +590,15 @@ export async function updateEngagementLevel(
   nucleusId: string,
   level: NucleusEnrollmentEntry['engagementLevel']
 ): Promise<void> {
+  const { data: prior } = await supabase
+    .from('nucleus_enrollments')
+    .select('engagement_level')
+    .eq('person_id', personId)
+    .eq('nucleus_id', nucleusId)
+    .is('deleted_at', null)
+    .maybeSingle();
+  const previousLevel = (prior as any)?.engagement_level ?? null;
+
   const { error } = await supabase
     .from('nucleus_enrollments')
     .update({ engagement_level: level })
@@ -503,6 +606,31 @@ export async function updateEngagementLevel(
     .eq('nucleus_id', nucleusId)
     .is('deleted_at', null);
   if (error) throw error;
+
+  if (previousLevel === level) return;
+
+  const { data: nucleus } = await supabase
+    .from('nuclei')
+    .select('cluster_id')
+    .eq('id', nucleusId)
+    .single();
+  const { data: person } = await supabase
+    .from('persons')
+    .select('name')
+    .eq('id', personId)
+    .single();
+  const { data: { user } } = await supabase.auth.getUser();
+  const personName = (person as any)?.name ?? 'Person';
+
+  await supabase.from('event_log').insert({
+    type: 'circle_movement',
+    cluster_id: (nucleus as any)?.cluster_id ?? null,
+    nucleus_id: nucleusId,
+    person_id: personId,
+    user_id: user?.id ?? null,
+    description: `${personName} moved from ${previousLevel ?? 'none'} to ${level ?? 'none'}`,
+    details: { personName, from: previousLevel, to: level },
+  });
 }
 
 export async function fetchPersonsForNucleus(nucleusId: string): Promise<PersonProfile[]> {

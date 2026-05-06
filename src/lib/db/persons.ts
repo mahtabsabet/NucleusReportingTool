@@ -223,7 +223,10 @@ export async function syncCourseEnrollments(
     await supabase.from('course_enrollments').delete().in('id', idsToDelete);
   }
 
-  for (const { id, newStatus } of toUpdate) {
+  const newlyStarted: string[] = [];
+  const newlyCompleted: string[] = [];
+
+  for (const { id, courseId, newStatus } of toUpdate) {
     await supabase
       .from('course_enrollments')
       .update({
@@ -231,6 +234,7 @@ export async function syncCourseEnrollments(
         completed_at: newStatus === 'completed' ? new Date().toISOString() : null,
       })
       .eq('id', id);
+    if (newStatus === 'completed') newlyCompleted.push(courseId);
   }
 
   for (const { courseId, status } of toInsert) {
@@ -241,5 +245,74 @@ export async function syncCourseEnrollments(
       started_at: new Date().toISOString(),
       completed_at: status === 'completed' ? new Date().toISOString() : null,
     });
+    if (status === 'completed') newlyCompleted.push(courseId);
+    else newlyStarted.push(courseId);
+  }
+
+  if (newlyStarted.length === 0 && newlyCompleted.length === 0) return;
+
+  const courseIdsToName = [...new Set([...newlyStarted, ...newlyCompleted])];
+  const { data: courses } = await supabase
+    .from('courses')
+    .select('id, name')
+    .in('id', courseIdsToName);
+  const courseNameMap: Record<string, string> = {};
+  ((courses ?? []) as any[]).forEach(c => { courseNameMap[c.id] = c.name; });
+
+  const { data: person } = await supabase
+    .from('persons')
+    .select('name')
+    .eq('id', personId)
+    .single();
+  const personName = (person as any)?.name ?? 'Person';
+
+  const { data: enrollments } = await supabase
+    .from('nucleus_enrollments')
+    .select('nucleus_id, nuclei(cluster_id)')
+    .eq('person_id', personId)
+    .is('deleted_at', null);
+  const nucleusScopes = ((enrollments ?? []) as any[]).map(e => ({
+    nucleusId: e.nucleus_id as string,
+    clusterId: (e.nuclei?.cluster_id ?? null) as string | null,
+  }));
+  const scopes = nucleusScopes.length > 0
+    ? nucleusScopes
+    : [{ nucleusId: null as string | null, clusterId: null as string | null }];
+
+  const { data: { user } } = await supabase.auth.getUser();
+  const userId = user?.id ?? null;
+
+  const rows: any[] = [];
+  for (const courseId of newlyStarted) {
+    const courseName = courseNameMap[courseId] ?? 'course';
+    for (const scope of scopes) {
+      rows.push({
+        type: 'course_started',
+        cluster_id: scope.clusterId,
+        nucleus_id: scope.nucleusId,
+        person_id: personId,
+        user_id: userId,
+        description: `${personName} started ${courseName}`,
+        details: { personName, courseId, courseName },
+      });
+    }
+  }
+  for (const courseId of newlyCompleted) {
+    const courseName = courseNameMap[courseId] ?? 'course';
+    for (const scope of scopes) {
+      rows.push({
+        type: 'course_completed',
+        cluster_id: scope.clusterId,
+        nucleus_id: scope.nucleusId,
+        person_id: personId,
+        user_id: userId,
+        description: `${personName} completed ${courseName}`,
+        details: { personName, courseId, courseName },
+      });
+    }
+  }
+
+  if (rows.length > 0) {
+    await supabase.from('event_log').insert(rows);
   }
 }
