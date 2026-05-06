@@ -60,6 +60,7 @@ export function IndividualProfile() {
   const [editCourses, setEditCourses] = useState<EditCourse[]>([]);
   const [newCapacity, setNewCapacity] = useState('');
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [editPhotoFile, setEditPhotoFile] = useState<File | null>(null);
@@ -147,6 +148,7 @@ export function IndividualProfile() {
   };
 
   const handleSave = async () => {
+    setSaveError(null);
     try {
       await updatePersonBasic(id!, { name: editName, capacities: editCapacities });
       await syncCourseEnrollments(id!, editCourses.map(c => ({ courseId: c.courseId, status: c.status })));
@@ -174,6 +176,7 @@ export function IndividualProfile() {
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
       console.error('Failed to save profile:', err);
+      setSaveError(err instanceof Error ? err.message : 'Failed to save profile');
     }
   };
 
@@ -374,6 +377,11 @@ export function IndividualProfile() {
                 {saved && (
                   <span className="flex items-center gap-1.5 text-sm font-bold bg-green-500/20 text-green-100 border border-green-400/30 px-4 py-2 rounded-xl backdrop-blur-sm">
                     <CheckIcon className="w-4 h-4" /> Saved!
+                  </span>
+                )}
+                {saveError && (
+                  <span className="flex items-center gap-1.5 text-sm font-bold bg-red-500/20 text-red-100 border border-red-400/30 px-4 py-2 rounded-xl backdrop-blur-sm max-w-xs truncate" title={saveError}>
+                    Save failed
                   </span>
                 )}
                 {editing ? (
