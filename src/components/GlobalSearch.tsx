@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   SearchIcon,
@@ -51,22 +52,47 @@ export function GlobalSearch({
   const [highlight, setHighlight] = useState(0);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const inputWrapRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Monotonically-increasing request id; only the latest response wins.
   const requestSeq = useRef(0);
 
-  // Close dropdown on outside click.
+  // Portal-positioned dropdown: tracked in viewport (fixed) coords so it
+  // escapes any ancestor stacking context (sticky headers, map panes, etc.).
+  const [dropdownRect, setDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  // Close dropdown on outside click. Includes the portaled dropdown.
   useEffect(() => {
     function handle(e: MouseEvent) {
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
     }
     document.addEventListener('mousedown', handle);
     return () => document.removeEventListener('mousedown', handle);
   }, []);
+
+  // Track the input's viewport position whenever the dropdown is open so it
+  // sticks to the input through scroll/resize.
+  useLayoutEffect(() => {
+    if (!open) return;
+    function update() {
+      const el = inputWrapRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setDropdownRect({ top: r.bottom + 6, left: r.left, width: r.width });
+    }
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [open]);
 
   // Debounced search. Stale responses are dropped via the request sequence.
   useEffect(() => {
@@ -149,8 +175,8 @@ export function GlobalSearch({
   }
 
   return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      <div className="relative">
+    <div ref={containerRef} className={className}>
+      <div ref={inputWrapRef} className="relative">
         <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
         <input
           ref={inputRef}
@@ -186,8 +212,17 @@ export function GlobalSearch({
         )}
       </div>
 
-      {showDropdown && (
-        <div className="absolute z-40 left-0 right-0 mt-1.5 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden max-h-[70vh] overflow-y-auto">
+      {showDropdown && dropdownRect && createPortal(
+        <div
+          ref={dropdownRef}
+          style={{
+            position: 'fixed',
+            top: dropdownRect.top,
+            left: dropdownRect.left,
+            width: dropdownRect.width,
+          }}
+          className="z-[1000] bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden max-h-[70vh] overflow-y-auto"
+        >
           {loading && flat.length === 0 ? (
             <div className="px-4 py-3 text-xs text-gray-500">Searching…</div>
           ) : flat.length === 0 ? (
@@ -257,7 +292,8 @@ export function GlobalSearch({
               )}
             </>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
