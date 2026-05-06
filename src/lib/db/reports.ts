@@ -207,29 +207,43 @@ export interface CrossNucleusPerson {
 
 export async function fetchCrossNucleusPersons(nucleusIds: string[]): Promise<CrossNucleusPerson[]> {
   if (nucleusIds.length === 0) return [];
+  // Fetch enrollments without an embedded persons join — nucleus_enrollments has
+  // two FKs to persons (person_id and primary_contact_id), so PostgREST can't
+  // resolve `persons(...)` and the whole query fails silently. Look up names in
+  // a second query keyed by person_id.
   const { data, error } = await supabase
     .from('nucleus_enrollments')
-    .select('person_id, nucleus_id, persons(id, name)')
+    .select('person_id, nucleus_id')
     .in('nucleus_id', nucleusIds)
     .is('deleted_at', null);
   if (error) throw error;
 
-  const byPerson = new Map<string, { name: string; nucleiIds: string[] }>();
+  const byPerson = new Map<string, Set<string>>();
   ((data ?? []) as any[]).forEach(e => {
     const existing = byPerson.get(e.person_id);
     if (existing) {
-      existing.nucleiIds.push(e.nucleus_id);
+      existing.add(e.nucleus_id);
     } else {
-      byPerson.set(e.person_id, {
-        name: (e.persons as any)?.name ?? e.person_id,
-        nucleiIds: [e.nucleus_id],
-      });
+      byPerson.set(e.person_id, new Set([e.nucleus_id]));
     }
   });
 
-  return [...byPerson.entries()]
-    .filter(([, v]) => v.nucleiIds.length > 1)
-    .map(([id, v]) => ({ id, name: v.name, nucleiIds: v.nucleiIds }));
+  const crossPersonIds = [...byPerson.entries()]
+    .filter(([, nuclei]) => nuclei.size > 1)
+    .map(([id]) => id);
+  if (crossPersonIds.length === 0) return [];
+
+  const { data: persons } = await supabase
+    .from('persons')
+    .select('id, name')
+    .in('id', crossPersonIds);
+  const nameMap = Object.fromEntries(((persons ?? []) as any[]).map(p => [p.id, p.name]));
+
+  return crossPersonIds.map(id => ({
+    id,
+    name: nameMap[id] ?? id,
+    nucleiIds: [...byPerson.get(id)!],
+  }));
 }
 
 export async function fetchClusterName(clusterId: string): Promise<string | null> {
