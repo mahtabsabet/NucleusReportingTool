@@ -1,12 +1,19 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import ReactDOM from 'react-dom';
 import {
-  ChevronRightIcon,
   PlusIcon,
   MinusIcon,
   XIcon,
   CheckIcon,
   Trash2Icon,
+  MaximizeIcon,
 } from 'lucide-react';
 import {
   fetchTimelineCycles,
@@ -21,12 +28,17 @@ import { TimelineCycle, TimelineEvent } from '../types';
 import { buildCycleSchedule, ComputedCycle } from '../lib/timeline/cycles';
 import {
   addDays,
-  continuousWeeksInMonth,
   formatShortDate,
-  getDatePercent,
-  monthsInRange,
+  formatMonthYear,
 } from '../lib/timeline/dateRange';
 import { assignLanes } from '../lib/timeline/lanes';
+import {
+  clampPxPerDay,
+  dateAtPixel,
+  daysBetween,
+  fadeIn,
+  pixelAtDate,
+} from '../lib/timeline/scale';
 import { getCallerContext } from '../lib/db/users';
 import {
   type CallerContext,
@@ -34,7 +46,6 @@ import {
 } from '../lib/permissions';
 
 type TimelineCycleOverride = TimelineCycle;
-type ZoomLevel = 'multi-year' | 'year' | 'cycle' | 'month';
 
 // Cluster timelines display calendar years 2026..2030. Nucleus / regional
 // timelines will reuse buildCycleSchedule with their own scope-specific
@@ -42,21 +53,21 @@ type ZoomLevel = 'multi-year' | 'year' | 'cycle' | 'month';
 const TIMELINE_START_YEAR = 2026;
 const TIMELINE_END_YEAR = 2030;
 
-// Reference month length used to compute proportional widths in the cycle
-// view. Using a fixed 30 keeps Feb and a 31-day month visually equivalent
-// when both are fully contained — only partial months at the cycle's edges
-// look shorter.
-const STANDARD_MONTH_DAYS = 30;
-const CYCLE_VIEW_MONTH_MIN_PX_PER_FACTOR = 200;
-const CYCLE_VIEW_MONTH_MIN_PX_FLOOR = 80;
+// pxPerDay thresholds at which each tick layer fades in. Year ticks are
+// always visible; the rest fade in as the user zooms past the listed
+// pxPerDay values. Numbers picked so adjacent layers' labels never
+// visually compete for the same horizontal space.
+const CYCLE_FADE = [0.3, 0.5] as const;
+const MONTH_FADE = [1.4, 2.4] as const;
+const WEEK_FADE = [5, 9] as const;
+const DAY_FADE = [15, 22] as const;
+// The cycle-boundary +/- editor needs ~80px of horizontal space next to
+// the boundary to be usable. Show only when each cycle is at least this
+// wide on screen.
+const CYCLE_EDIT_MIN_PX = 140;
 
 interface TimelineProps {
   clusterId: string | null;
-}
-
-interface CycleSlot {
-  bahaiYear: number;
-  cycleNumber: 1 | 2 | 3 | 4;
 }
 
 type EventModalState =
@@ -67,21 +78,13 @@ export function Timeline({ clusterId }: TimelineProps) {
   const [overrides, setOverrides] = useState<TimelineCycleOverride[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [callerCtx, setCallerCtx] = useState<CallerContext | null>(null);
-  const [zoomLevel, setZoomLevel] = useState<ZoomLevel>('multi-year');
-  const [selectedYear, setSelectedYear] = useState<number | null>(null);
-  const [selectedCycleSlot, setSelectedCycleSlot] = useState<CycleSlot | null>(null);
-  const [selectedMonth, setSelectedMonth] =
-    useState<{ start: Date; end: Date; label: string } | null>(null);
   const [panelHeight, setPanelHeight] = useState(256);
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   // ───── Pending boundary shifts ────────────────────────────────────────
   // Edits to cycle dates accumulate locally in `pendingShifts` (keyed by
   // cycle id, value = days shifted from the persisted boundary). They only
   // hit the database when the user clicks "Save changes" in the
-  // confirmation banner. "Discard" clears them. This lets users hold the +
-  // button down to walk a boundary by many days without confirming each
-  // step.
+  // confirmation banner. "Discard" clears them.
   const [pendingShifts, setPendingShifts] = useState<Record<string, number>>({});
 
   // ───── Event editor modal ─────────────────────────────────────────────
@@ -110,7 +113,6 @@ export function Timeline({ clusterId }: TimelineProps) {
   useEffect(() => {
     reloadCycles();
     reloadEvents();
-    // Reset state that's tied to the cluster scope.
     setPendingShifts({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clusterId]);
@@ -120,10 +122,6 @@ export function Timeline({ clusterId }: TimelineProps) {
   }, []);
 
   // ───── Cycle schedule derivation ──────────────────────────────────────
-  // 1. Computed defaults (with DB overrides applied) → `cycles`.
-  // 2. Pending boundary shifts overlaid → `displayedCycles`. These are
-  //    what the UI renders at every zoom level so the user sees their
-  //    in-flight edits reflected before they confirm.
   const cycles = useMemo<ComputedCycle[]>(
     () =>
       buildCycleSchedule({
@@ -149,28 +147,273 @@ export function Timeline({ clusterId }: TimelineProps) {
 
   const hasPendingShifts = Object.keys(pendingShifts).length > 0;
 
-  // Distinct Gregorian years between TIMELINE_START_YEAR and
-  // TIMELINE_END_YEAR. Each year contains at most 4 cycles in chronological
-  // order (Cycle 4 → 1 → 2 → 3 when fully populated).
-  const years = useMemo(() => {
-    const set = new Set<number>();
-    for (const c of displayedCycles) {
-      const y = c.startDate.getFullYear();
-      if (y >= TIMELINE_START_YEAR && y <= TIMELINE_END_YEAR) set.add(y);
-    }
-    return [...set].sort((a, b) => a - b);
-  }, [displayedCycles]);
+  // ───── Continuous-zoom viewport ───────────────────────────────────────
+  // The whole timeline lives on a single horizontal axis: an inner div
+  // whose width is `totalDays * pxPerDay`. Panning is just the browser's
+  // scrollLeft on the outer container; zooming changes pxPerDay and
+  // adjusts scrollLeft to keep the cursor anchored on the same date.
+  const minDate = useMemo(
+    () =>
+      displayedCycles.length > 0
+        ? displayedCycles[0].startDate
+        : new Date(TIMELINE_START_YEAR, 0, 1),
+    [displayedCycles],
+  );
+  const maxDate = useMemo(
+    () =>
+      displayedCycles.length > 0
+        ? displayedCycles[displayedCycles.length - 1].endDate
+        : new Date(TIMELINE_END_YEAR, 11, 31),
+    [displayedCycles],
+  );
+  const totalDays = useMemo(
+    () => Math.max(1, daysBetween(minDate, maxDate) + 1),
+    [minDate, maxDate],
+  );
 
-  const selectedCycle = useMemo<ComputedCycle | null>(() => {
-    if (!selectedCycleSlot) return null;
-    return (
-      displayedCycles.find(
-        c =>
-          c.bahaiYear === selectedCycleSlot.bahaiYear &&
-          c.cycleNumber === selectedCycleSlot.cycleNumber,
-      ) ?? null
-    );
-  }, [displayedCycles, selectedCycleSlot]);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+  const [pxPerDay, setPxPerDay] = useState(0);
+  const [scrollLeft, setScrollLeft] = useState(0);
+  // Cursor-anchored zoom needs to set scrollLeft to a precise value AFTER
+  // React applies the new inner width. Stash the target here; useLayoutEffect
+  // applies it as soon as the new width is in the DOM.
+  const pendingScrollLeftRef = useRef<number | null>(null);
+  const initializedRef = useRef(false);
+
+  // Track container width via ResizeObserver.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setContainerWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // First-time initialization: once we know the container width and the
+  // cycle range, fit the entire timeline into the viewport.
+  useEffect(() => {
+    if (initializedRef.current) return;
+    if (containerWidth <= 0 || totalDays <= 0) return;
+    setPxPerDay(containerWidth / totalDays);
+    initializedRef.current = true;
+  }, [containerWidth, totalDays]);
+
+  // If the viewport shrinks below the current "fit-all" minimum (e.g. user
+  // shrinks the window), bump pxPerDay back up to the floor so we don't
+  // leave dead space at the right.
+  useEffect(() => {
+    if (!initializedRef.current || pxPerDay <= 0) return;
+    const clamped = clampPxPerDay(pxPerDay, containerWidth, totalDays);
+    if (clamped !== pxPerDay) setPxPerDay(clamped);
+  }, [containerWidth, totalDays, pxPerDay]);
+
+  // Apply pending scrollLeft synchronously after the new inner width is
+  // in the DOM, so the cursor-anchored zoom never "skips" a frame.
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el || pendingScrollLeftRef.current === null) return;
+    const max = el.scrollWidth - el.clientWidth;
+    el.scrollLeft = Math.max(0, Math.min(max, pendingScrollLeftRef.current));
+    pendingScrollLeftRef.current = null;
+    setScrollLeft(el.scrollLeft);
+  }, [pxPerDay]);
+
+  // Track scrollLeft so visible-window memos recompute on pan.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        setScrollLeft(el.scrollLeft);
+      });
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
+  // Wheel: plain wheel zooms (anchored on cursor); shift+wheel pans
+  // horizontally. Attached via addEventListener so we can preventDefault —
+  // React's onWheel is passive.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || pxPerDay <= 0) return;
+    const handler = (e: WheelEvent) => {
+      if (e.shiftKey) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+        return;
+      }
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const cursorViewportX = e.clientX - rect.left;
+      const cursorContentX = el.scrollLeft + cursorViewportX;
+      const cursorDate = dateAtPixel(cursorContentX, minDate, pxPerDay);
+      // Exponential zoom — a single wheel "notch" (deltaY = 100) gives a
+      // ~1.35× zoom step.
+      const factor = Math.exp(-e.deltaY * 0.003);
+      const newPpd = clampPxPerDay(pxPerDay * factor, el.clientWidth, totalDays);
+      if (newPpd === pxPerDay) return;
+      const newCursorContentX = pixelAtDate(cursorDate, minDate, newPpd);
+      pendingScrollLeftRef.current = newCursorContentX - cursorViewportX;
+      setPxPerDay(newPpd);
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [pxPerDay, minDate, totalDays]);
+
+  // Pinch zoom on touch devices. Two fingers → zoom anchored on midpoint.
+  // Single-finger pan is left to native horizontal scroll on the container.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || pxPerDay <= 0) return;
+    let pinch:
+      | { d0: number; ppd0: number; midViewportX: number; midDate: Date }
+      | null = null;
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const rect = el.getBoundingClientRect();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const midViewportX = (t1.clientX + t2.clientX) / 2 - rect.left;
+        const midContentX = el.scrollLeft + midViewportX;
+        pinch = {
+          d0: Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY),
+          ppd0: pxPerDay,
+          midViewportX,
+          midDate: dateAtPixel(midContentX, minDate, pxPerDay),
+        };
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const d = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      if (d < 10 || pinch.d0 < 10) return;
+      const newPpd = clampPxPerDay(
+        pinch.ppd0 * (d / pinch.d0),
+        el.clientWidth,
+        totalDays,
+      );
+      if (newPpd === pxPerDay) return;
+      const newMidContentX = pixelAtDate(pinch.midDate, minDate, newPpd);
+      pendingScrollLeftRef.current = newMidContentX - pinch.midViewportX;
+      setPxPerDay(newPpd);
+    };
+
+    const onTouchEnd = () => {
+      pinch = null;
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEnd);
+    el.addEventListener('touchcancel', onTouchEnd);
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEnd);
+      el.removeEventListener('touchcancel', onTouchEnd);
+    };
+  }, [pxPerDay, minDate, totalDays]);
+
+  const fitAll = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ppd = el.clientWidth / totalDays;
+    pendingScrollLeftRef.current = 0;
+    setPxPerDay(ppd);
+  }, [totalDays]);
+
+  // ───── Visible window ────────────────────────────────────────────────
+  // A small buffer keeps tick labels from popping in/out at the edges
+  // when the user pans.
+  const visibleStart = useMemo(
+    () =>
+      pxPerDay > 0
+        ? dateAtPixel(scrollLeft - 200, minDate, pxPerDay)
+        : minDate,
+    [scrollLeft, pxPerDay, minDate],
+  );
+  const visibleEnd = useMemo(
+    () =>
+      pxPerDay > 0
+        ? dateAtPixel(scrollLeft + containerWidth + 200, minDate, pxPerDay)
+        : maxDate,
+    [scrollLeft, containerWidth, pxPerDay, minDate, maxDate],
+  );
+
+  // ───── Tick computations ──────────────────────────────────────────────
+  const yearTicks = useMemo(() => {
+    const out: { date: Date; label: string }[] = [];
+    const startYear = visibleStart.getFullYear();
+    const endYear = visibleEnd.getFullYear();
+    for (let y = startYear; y <= endYear + 1; y++) {
+      const d = new Date(y, 0, 1);
+      if (d >= addDays(minDate, -1) && d <= addDays(maxDate, 1)) {
+        out.push({ date: d, label: String(y) });
+      }
+    }
+    return out;
+  }, [visibleStart, visibleEnd, minDate, maxDate]);
+
+  const visibleCycles = useMemo(
+    () =>
+      displayedCycles.filter(
+        c => c.endDate >= visibleStart && c.startDate <= visibleEnd,
+      ),
+    [displayedCycles, visibleStart, visibleEnd],
+  );
+
+  const monthTicks = useMemo(() => {
+    const out: { date: Date; label: string }[] = [];
+    const cursor = new Date(visibleStart.getFullYear(), visibleStart.getMonth(), 1);
+    while (cursor <= visibleEnd) {
+      out.push({
+        date: new Date(cursor),
+        label: cursor.toLocaleDateString('en-US', { month: 'short' }),
+      });
+      cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return out;
+  }, [visibleStart, visibleEnd]);
+
+  const weekTicks = useMemo(() => {
+    const out: Date[] = [];
+    const cursor = new Date(visibleStart);
+    cursor.setHours(0, 0, 0, 0);
+    cursor.setDate(cursor.getDate() - cursor.getDay()); // back to Sunday
+    while (cursor <= visibleEnd) {
+      out.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + 7);
+    }
+    return out;
+  }, [visibleStart, visibleEnd]);
+
+  const dayTicks = useMemo(() => {
+    if (pxPerDay < DAY_FADE[0]) return [];
+    const out: Date[] = [];
+    const cursor = new Date(visibleStart);
+    cursor.setHours(0, 0, 0, 0);
+    while (cursor <= visibleEnd) {
+      out.push(new Date(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return out;
+  }, [visibleStart, visibleEnd, pxPerDay]);
 
   // ───── Boundary shift requests (no DB write — stages a pending change) ─
   const requestShift = (cycle: ComputedCycle, days: number) => {
@@ -179,10 +422,8 @@ export function Timeline({ clusterId }: TimelineProps) {
     const dCycle = displayedCycles[idx];
     const tentativeStart = addDays(dCycle.startDate, days);
 
-    // This cycle must remain at least 7 days long.
     if (addDays(tentativeStart, 6) > dCycle.endDate) return;
 
-    // Previous cycle (if any) must also remain at least 7 days long.
     const prev = idx > 0 ? displayedCycles[idx - 1] : null;
     if (prev) {
       const tentativePrevEnd = addDays(tentativeStart, -1);
@@ -202,10 +443,6 @@ export function Timeline({ clusterId }: TimelineProps) {
   const confirmPendingShifts = async () => {
     if (!hasPendingShifts) return;
 
-    // Collect per-cycle final dates. A boundary shift between cycle A and
-    // B updates A.endDate AND B.startDate together, so a cycle can appear
-    // in the update set with both fields set if BOTH of its boundaries
-    // were touched.
     const updates = new Map<
       string,
       { cycle: ComputedCycle; newStart?: Date; newEnd?: Date }
@@ -237,16 +474,12 @@ export function Timeline({ clusterId }: TimelineProps) {
       await reloadCycles();
     } catch (err) {
       console.error('Failed to save cycle date changes:', err);
-      // Recover from server.
       await reloadCycles();
     }
   };
 
   const discardPendingShifts = () => setPendingShifts({});
 
-  // ───── Cycle persistence helper ───────────────────────────────────────
-  // INSERT a new override row for never-edited (computed) cycles, UPDATE
-  // an existing override row otherwise. Caller passes the boundary patch.
   const persistCycleEdit = async (
     cycle: ComputedCycle,
     patch: { startDate?: Date; endDate?: Date },
@@ -339,94 +572,49 @@ export function Timeline({ clusterId }: TimelineProps) {
   const [hoveredEvent, setHoveredEvent] =
     useState<{ event: TimelineEvent; x: number; y: number } | null>(null);
 
-  const renderEvents = (start: Date, end: Date) => {
-    const rangeEvents = events.filter(e => {
-      const evtEnd = e.endDate || e.startDate;
-      return evtEnd >= start && e.startDate <= end;
-    });
-    if (rangeEvents.length === 0) return null;
+  const visibleEvents = useMemo(
+    () =>
+      events.filter(e => {
+        const evtEnd = e.endDate ?? e.startDate;
+        return evtEnd >= visibleStart && e.startDate <= visibleEnd;
+      }),
+    [events, visibleStart, visibleEnd],
+  );
 
-    const sorted = [...rangeEvents].sort((a, b) => {
+  // Pack visible events into stacked lanes. Intervals are in pixel units
+  // (anchored on minDate) and we use a small pixel gap so single-day events
+  // never visually fuse on the same lane.
+  const sortedVisibleEvents = useMemo(() => {
+    return [...visibleEvents].sort((a, b) => {
       const diff = a.startDate.getTime() - b.startDate.getTime();
       if (diff !== 0) return diff;
       const aDur = (a.endDate || a.startDate).getTime() - a.startDate.getTime();
       const bDur = (b.endDate || b.startDate).getTime() - b.startDate.getTime();
       return bDur - aDur;
     });
+  }, [visibleEvents]);
 
-    const intervals = sorted.map(evt => {
-      const evtStart = getDatePercent(evt.startDate, start, end);
-      const evtEnd = evt.endDate
-        ? getDatePercent(evt.endDate, start, end)
-        : evtStart + 1.5;
-      return { start: evtStart, end: evtEnd };
+  const eventLayout = useMemo(() => {
+    if (pxPerDay <= 0)
+      return { lanes: [] as number[], laneCount: 0 };
+    const intervals = sortedVisibleEvents.map(evt => {
+      const startPx = pixelAtDate(evt.startDate, minDate, pxPerDay);
+      const endPx = evt.endDate
+        ? pixelAtDate(evt.endDate, minDate, pxPerDay)
+        : startPx;
+      return { start: startPx, end: endPx };
     });
-    const { lanes, laneCount } = assignLanes(intervals);
+    return assignLanes(intervals, 4);
+  }, [sortedVisibleEvents, minDate, pxPerDay]);
 
-    const onEventClick = canManageEvents
-      ? (e: TimelineEvent) => openEditEvent(e)
-      : undefined;
-    const interactionClass = onEventClick ? 'cursor-pointer' : 'cursor-help';
+  // ───── Layer opacities (smooth fades driven by pxPerDay) ──────────────
+  const cycleOpacity = fadeIn(pxPerDay, CYCLE_FADE[0], CYCLE_FADE[1]);
+  const monthOpacity = fadeIn(pxPerDay, MONTH_FADE[0], MONTH_FADE[1]);
+  const weekOpacity = fadeIn(pxPerDay, WEEK_FADE[0], WEEK_FADE[1]);
+  const dayOpacity = fadeIn(pxPerDay, DAY_FADE[0], DAY_FADE[1]);
 
-    return (
-      <div
-        className="absolute left-0 right-0 bottom-[55%]"
-        style={{ height: `${laneCount * 14 + 4}px` }}
-      >
-        {sorted.map((e, i) => {
-          const isBar = e.endDate && e.endDate.getTime() > e.startDate.getTime();
-          const leftPct = getDatePercent(e.startDate, start, end);
-          const rightPct = isBar
-            ? getDatePercent(e.endDate!, start, end)
-            : leftPct;
-          const row = lanes[i];
-          const bottomOffset = row * 14 + 2;
-          const onMouseEnter = (ev: React.MouseEvent) => {
-            const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-            setHoveredEvent({
-              event: e,
-              x: rect.left + rect.width / 2,
-              y: rect.top,
-            });
-          };
-          const onMouseLeave = () => setHoveredEvent(null);
-          if (isBar) {
-            return (
-              <div
-                key={e.id}
-                className={`absolute ${interactionClass}`}
-                style={{
-                  left: `${leftPct}%`,
-                  width: `${Math.max(rightPct - leftPct, 1)}%`,
-                  bottom: `${bottomOffset}px`,
-                  height: '10px',
-                }}
-                onMouseEnter={onMouseEnter}
-                onMouseLeave={onMouseLeave}
-                onClick={onEventClick ? () => onEventClick(e) : undefined}
-              >
-                <div className="w-full h-full bg-blue-400/80 rounded-sm border border-blue-500/50 hover:bg-blue-500/90 transition-colors" />
-              </div>
-            );
-          }
-          return (
-            <div
-              key={e.id}
-              className={`absolute w-2.5 h-2.5 rounded-full bg-blue-500 hover:bg-blue-600 transition-colors ${interactionClass}`}
-              style={{
-                left: `${leftPct}%`,
-                bottom: `${bottomOffset}px`,
-                transform: 'translateX(-50%)',
-              }}
-              onMouseEnter={onMouseEnter}
-              onMouseLeave={onMouseLeave}
-              onClick={onEventClick ? () => onEventClick(e) : undefined}
-            />
-          );
-        })}
-      </div>
-    );
-  };
+  const innerWidthPx = pxPerDay > 0 ? totalDays * pxPerDay : 0;
+  const ready = pxPerDay > 0 && containerWidth > 0;
 
   // ───── Render ────────────────────────────────────────────────────────
   return (
@@ -459,51 +647,24 @@ export function Timeline({ clusterId }: TimelineProps) {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-2 border-b border-gray-100 bg-gray-50/50 gap-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-gray-600 min-w-0">
+          <span className="text-gray-900 whitespace-nowrap">
+            {ready
+              ? `${formatMonthYear(visibleStart)} – ${formatMonthYear(visibleEnd)}`
+              : 'Timeline'}
+          </span>
           <button
-            onClick={() => setZoomLevel('multi-year')}
-            className={`hover:text-blue-600 transition-colors ${
-              zoomLevel === 'multi-year' ? 'text-gray-900' : ''
-            }`}
+            onClick={fitAll}
+            className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold text-gray-500 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+            title="Fit entire timeline"
           >
-            All Years
+            <MaximizeIcon className="w-3 h-3" />
+            Fit all
           </button>
-          {zoomLevel !== 'multi-year' && selectedYear && (
-            <>
-              <ChevronRightIcon className="w-4 h-4 text-gray-400" />
-              <button
-                onClick={() => setZoomLevel('year')}
-                className={`hover:text-blue-600 transition-colors ${
-                  zoomLevel === 'year' ? 'text-gray-900' : ''
-                }`}
-              >
-                {selectedYear}
-              </button>
-            </>
-          )}
-          {(zoomLevel === 'cycle' || zoomLevel === 'month') && selectedCycle && (
-            <>
-              <ChevronRightIcon className="w-4 h-4 text-gray-400" />
-              <button
-                onClick={() => setZoomLevel('cycle')}
-                className={`hover:text-blue-600 transition-colors ${
-                  zoomLevel === 'cycle' ? 'text-gray-900' : ''
-                }`}
-              >
-                {selectedCycle.label}
-              </button>
-            </>
-          )}
-          {zoomLevel === 'month' && selectedMonth && (
-            <>
-              <ChevronRightIcon className="w-4 h-4 text-gray-400" />
-              <span className="text-gray-900">{selectedMonth.label}</span>
-            </>
-          )}
+          <span className="hidden md:inline text-xs font-normal text-gray-400 ml-2">
+            Scroll to zoom · shift+scroll to pan
+          </span>
         </div>
         <div className="flex items-center gap-2">
-          {/* Pending boundary changes — sticky banner that doesn't block
-              further +/- presses; user confirms only after they're done
-              walking the boundary by however many days they need. */}
           {hasPendingShifts && (
             <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
               <span className="text-xs font-semibold text-amber-900 whitespace-nowrap">
@@ -541,99 +702,83 @@ export function Timeline({ clusterId }: TimelineProps) {
 
       {/* Timeline Content */}
       <div
-        ref={scrollRef}
-        className="flex-1 overflow-x-auto overflow-y-hidden relative p-8 flex items-center"
+        ref={containerRef}
+        className="flex-1 overflow-x-auto overflow-y-hidden relative touch-pan-x"
       >
-        <div className="min-w-max w-full flex items-center h-full relative px-8">
-          <div className="absolute left-8 right-8 h-0.5 bg-gray-300 top-1/2 -translate-y-1/2" />
+        {ready ? (
+          <div
+            className="relative h-full"
+            style={{ width: `${innerWidthPx}px`, minWidth: '100%' }}
+          >
+            {/* Center horizontal axis */}
+            <div className="absolute left-0 right-0 h-0.5 bg-gray-300 top-1/2 -translate-y-1/2" />
 
-          {displayedCycles.length === 0 && (
-            <div className="text-sm text-gray-400 italic mx-auto">
-              No timeline cycles available.
-            </div>
-          )}
+            {displayedCycles.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 italic">
+                No timeline cycles available.
+              </div>
+            )}
 
-          {/* MULTI-YEAR VIEW */}
-          {zoomLevel === 'multi-year' &&
-            years.map(year => {
-              const yearCycles = displayedCycles.filter(
-                c => c.startDate.getFullYear() === year,
-              );
-              if (yearCycles.length === 0) return null;
-              const yearStart = yearCycles[0].startDate;
-              const yearEnd = yearCycles[yearCycles.length - 1].endDate;
+            {/* YEAR layer — always visible */}
+            {yearTicks.map(({ date, label }) => {
+              const x = pixelAtDate(date, minDate, pxPerDay);
               return (
                 <div
-                  key={year}
-                  className="flex-1 min-w-[300px] relative h-full flex flex-col justify-center group cursor-pointer"
-                  onClick={() => {
-                    setSelectedYear(year);
-                    setZoomLevel('year');
-                  }}
+                  key={`y-${label}`}
+                  className="absolute top-0 bottom-0 pointer-events-none"
+                  style={{ left: `${x}px` }}
                 >
-                  <div className="absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-4 bg-gray-400" />
-                  <div className="absolute -top-8 left-2 font-bold text-gray-900 text-lg group-hover:text-blue-600 transition-colors">
-                    {year}
+                  <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-8 bg-gray-400" />
+                  <div className="absolute top-2 -translate-x-1/2 font-bold text-gray-900 text-base whitespace-nowrap bg-white/80 px-1 rounded">
+                    {label}
                   </div>
-                  <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 flex justify-around">
-                    {yearCycles.map(cycle => (
-                      <div
-                        key={cycle.id}
-                        className="bg-white px-2 text-xs font-medium text-gray-500 group-hover:text-blue-500 z-10"
-                      >
-                        {cycle.label}
-                      </div>
-                    ))}
-                  </div>
-                  {renderEvents(yearStart, yearEnd)}
                 </div>
               );
             })}
 
-          {/* YEAR VIEW
-              Each cycle gets a single date label at its LEFT boundary —
-              that's the cycle's start date. The right-pointing chevron and
-              flush-left placement make it visually clear the date belongs
-              to the cycle on the right (a starting boundary, not an ending
-              one). +/- buttons under the date stage a pending shift that
-              moves the boundary itself: cycle.startDate AND
-              prevCycle.endDate move together so cycles stay contiguous (no
-              gaps, no overlaps). The very last cycle of the year also gets
-              a closing "ends <date>" marker on its right edge so the year
-              visually completes. Pending changes are highlighted in amber
-              and only persist after the user confirms in the header. */}
-          {zoomLevel === 'year' &&
-            selectedYear &&
-            (() => {
-              const yearCycles = displayedCycles.filter(
-                c => c.startDate.getFullYear() === selectedYear,
-              );
-              return yearCycles.map((cycle, i) => {
-                const isLast = i === yearCycles.length - 1;
+            {/* CYCLE layer */}
+            {cycleOpacity > 0 &&
+              visibleCycles.map(cycle => {
+                const startX = pixelAtDate(cycle.startDate, minDate, pxPerDay);
+                const endX = pixelAtDate(
+                  addDays(cycle.endDate, 1),
+                  minDate,
+                  pxPerDay,
+                );
+                const widthPx = endX - startX;
                 const pending = (pendingShifts[cycle.id] ?? 0) !== 0;
-                const dateChipClass = pending
-                  ? 'text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded'
-                  : 'text-gray-600';
+                const showEdit =
+                  callerCtx?.isAdmin && widthPx >= CYCLE_EDIT_MIN_PX;
+                const showLabel = widthPx >= 50;
                 return (
                   <div
-                    key={cycle.id}
-                    className="flex-1 min-w-[250px] relative h-full flex flex-col justify-center group"
+                    key={`c-${cycle.id}`}
+                    className="absolute top-0 bottom-0"
+                    style={{
+                      left: `${startX}px`,
+                      width: `${widthPx}px`,
+                      opacity: cycleOpacity,
+                    }}
                   >
+                    {/* Boundary tick at the left edge */}
                     <div
                       className={`absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-6 ${
                         pending ? 'bg-amber-400' : 'bg-gray-400'
                       }`}
                     />
+                    {/* Start-date chip below the boundary */}
                     <div className="absolute top-1/2 mt-3 left-0 ml-1 flex items-center gap-0.5 text-xs font-medium whitespace-nowrap">
-                      <ChevronRightIcon className="w-3 h-3 text-gray-400" />
-                      <span className={dateChipClass}>
+                      <span
+                        className={
+                          pending
+                            ? 'text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded'
+                            : 'text-gray-600'
+                        }
+                      >
                         {formatShortDate(cycle.startDate)}
                       </span>
                     </div>
-                    {/* Boundary +/- buttons: stage pending shifts, no DB
-                        write until user confirms in the header. Only shown
-                        to admins (matches the timeline_cycles RLS policy). */}
-                    {callerCtx?.isAdmin && (
+                    {showEdit && (
                       <div className="absolute top-1/2 mt-9 left-0 ml-1 flex items-center gap-0.5 z-20">
                         <button
                           onClick={ev => {
@@ -657,228 +802,142 @@ export function Timeline({ clusterId }: TimelineProps) {
                         </button>
                       </div>
                     )}
-                    {isLast &&
-                      (() => {
-                        // The closing edge is the start of the *next*
-                        // cycle in the schedule, minus one day. Show its
-                        // pending state too.
-                        const nextIdx = displayedCycles.indexOf(cycle) + 1;
-                        const next =
-                          nextIdx < displayedCycles.length
-                            ? displayedCycles[nextIdx]
-                            : null;
-                        const nextPending = next
-                          ? (pendingShifts[next.id] ?? 0) !== 0
-                          : false;
-                        return (
-                          <>
-                            <div
-                              className={`absolute top-1/2 -translate-y-1/2 right-0 w-0.5 h-6 z-20 ${
-                                nextPending ? 'bg-amber-400' : 'bg-gray-400'
-                              }`}
-                            />
-                            <div className="absolute top-1/2 mt-3 right-0 mr-1 text-xs font-medium text-gray-500 whitespace-nowrap">
-                              ends{' '}
-                              <span
-                                className={
-                                  nextPending
-                                    ? 'text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded'
-                                    : ''
-                                }
-                              >
-                                {formatShortDate(cycle.endDate)}
-                              </span>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    <div
-                      className="absolute top-1/2 -translate-y-1/2 left-0 right-0 flex justify-center cursor-pointer"
-                      onClick={() => {
-                        setSelectedCycleSlot({
-                          bahaiYear: cycle.bahaiYear,
-                          cycleNumber: cycle.cycleNumber,
-                        });
-                        setZoomLevel('cycle');
-                      }}
-                    >
-                      <div className="bg-white px-3 py-1 text-sm font-bold text-gray-900 group-hover:text-blue-600 z-10 border border-transparent group-hover:border-blue-100 rounded-full transition-all">
+                    {showLabel && (
+                      <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 bg-white px-2 text-xs font-bold text-gray-900 z-10 whitespace-nowrap">
                         {cycle.label}
                       </div>
-                    </div>
-                    {renderEvents(cycle.startDate, cycle.endDate)}
+                    )}
                   </div>
                 );
-              });
-            })()}
+              })}
 
-          {/* CYCLE VIEW
-              Months are drawn with a width proportional to how much of the
-              cycle they cover. A fully-included month gets factor 1.0; a
-              partial month at the cycle's edge gets daysIncluded /
-              STANDARD_MONTH_DAYS. Using a fixed 30 keeps Feb and a 31-day
-              month visually identical when both are full — only the
-              partials look "short". */}
-          {zoomLevel === 'cycle' &&
-            selectedCycle &&
-            (() => {
-              const months = monthsInRange(
-                selectedCycle.startDate,
-                selectedCycle.endDate,
-              );
-              return months.map((month, index) => {
-                const lastDayOfMonth = new Date(
-                  month.start.getFullYear(),
-                  month.start.getMonth() + 1,
-                  0,
-                ).getDate();
-                const isFullMonth =
-                  month.start.getDate() === 1 &&
-                  month.end.getDate() === lastDayOfMonth;
-                const daysIncluded =
-                  Math.round(
-                    (month.end.getTime() - month.start.getTime()) /
-                      86400000,
-                  ) + 1;
-                const widthFactor = isFullMonth
-                  ? 1
-                  : Math.max(0.15, daysIncluded / STANDARD_MONTH_DAYS);
-                const minWidth = Math.max(
-                  CYCLE_VIEW_MONTH_MIN_PX_FLOOR,
-                  CYCLE_VIEW_MONTH_MIN_PX_PER_FACTOR * widthFactor,
-                );
+            {/* MONTH layer */}
+            {monthOpacity > 0 &&
+              monthTicks.map(({ date, label }) => {
+                const x = pixelAtDate(date, minDate, pxPerDay);
                 return (
                   <div
-                    key={index}
-                    className="relative h-full flex flex-col justify-center group cursor-pointer"
-                    style={{
-                      flex: `${widthFactor} 1 0%`,
-                      minWidth: `${minWidth}px`,
-                    }}
-                    onClick={() => {
-                      setSelectedMonth(month);
-                      setZoomLevel('month');
-                    }}
+                    key={`m-${date.toISOString()}`}
+                    className="absolute top-0 bottom-0 pointer-events-none"
+                    style={{ left: `${x}px`, opacity: monthOpacity }}
                   >
-                    <div className="absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-4 bg-gray-400" />
-                    <div className="absolute top-1/2 mt-3 left-0 -translate-x-1/2 text-xs font-medium text-gray-500">
-                      {formatShortDate(month.start)}
+                    <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-4 bg-gray-300" />
+                    <div className="absolute -translate-x-1/2 text-[11px] font-semibold text-gray-500 whitespace-nowrap bg-white px-1 rounded"
+                         style={{ top: 'calc(50% - 28px)' }}>
+                      {label}
                     </div>
-                    {index === months.length - 1 && (
-                      <div className="absolute top-1/2 mt-3 right-0 translate-x-1/2 text-xs font-medium text-gray-500">
-                        {formatShortDate(month.end)}
-                      </div>
-                    )}
-                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 font-bold text-gray-900 text-sm group-hover:text-blue-600 bg-white px-2 z-10">
-                      {month.label}
-                    </div>
-                    {renderEvents(month.start, month.end)}
                   </div>
                 );
-              });
-            })()}
+              })}
 
-          {/* MONTH VIEW
-              Real chronological Sunday-Saturday weeks projected onto the
-              visible window (the cycle's clip of one calendar month).
-              Weeks are NOT reset at the 1st of the month — calendar weeks
-              are globally continuous and the month-view is just a window
-              onto them. So the partial week that wraps from May into June
-              shows as Week 1 of June with only Jun 1–6 visible (its May
-              31 portion is faded out at the left edge), and the partial
-              week wrapping from June into July shows as Week 5 with only
-              Jun 28–30 visible (faded at the right). The same week
-              continues naturally as Week 1 in July's view. Column widths
-              are proportional to visibleDays / 7, so a 3-day partial does
-              NOT occupy a full week's worth of horizontal space. */}
-          {zoomLevel === 'month' &&
-            selectedMonth &&
-            (() => {
-              const weeks = continuousWeeksInMonth(
-                selectedMonth.start,
-                selectedMonth.end,
-              );
-              return weeks.map((week, index) => {
-                const isPartialStart =
-                  week.partialAt === 'start' || week.partialAt === 'both';
-                const isPartialEnd =
-                  week.partialAt === 'end' || week.partialAt === 'both';
-                const isPartial = week.partialAt !== 'none';
-                // Width proportional to visible portion. Full week = factor
-                // 7 (≈140px floor); a 1-day partial = factor 1 (≈40px).
-                const minWidth = Math.max(40, 22 * week.visibleDays);
+            {/* WEEK layer */}
+            {weekOpacity > 0 &&
+              weekTicks.map(date => {
+                const x = pixelAtDate(date, minDate, pxPerDay);
                 return (
                   <div
-                    key={index}
-                    className="relative h-full flex flex-col justify-center"
-                    style={{
-                      flex: `${week.visibleDays} 0 0%`,
-                      minWidth: `${minWidth}px`,
-                    }}
+                    key={`w-${date.toISOString()}`}
+                    className="absolute top-0 bottom-0 pointer-events-none"
+                    style={{ left: `${x}px`, opacity: weekOpacity }}
                   >
-                    {/* Tick at the LEFT edge: solid for a true Sunday
-                        boundary, faded gradient for a clipped week start
-                        (the rest of the week lives in the previous month
-                        view). */}
-                    {isPartialStart ? (
-                      <div
-                        className="absolute top-1/2 -translate-y-1/2 left-0 h-3 pointer-events-none"
-                        style={{
-                          width: '14px',
-                          background:
-                            'linear-gradient(to right, transparent 0%, #d1d5db 100%)',
-                        }}
-                      />
-                    ) : (
-                      <div className="absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-3 bg-gray-400" />
-                    )}
-                    {/* Right edge fade-out for clipped week ends. Only the
-                        last week of the month gets a date label on the
-                        right; the gradient is purely visual. */}
-                    {isPartialEnd && (
-                      <div
-                        className="absolute top-1/2 -translate-y-1/2 right-0 h-3 pointer-events-none"
-                        style={{
-                          width: '14px',
-                          background:
-                            'linear-gradient(to left, transparent 0%, #d1d5db 100%)',
-                        }}
-                      />
-                    )}
-                    <div
-                      className={`absolute top-1/2 mt-2 left-0 -translate-x-1/2 text-[10px] font-medium ${
-                        isPartialStart ? 'text-gray-300' : 'text-gray-400'
-                      }`}
-                    >
-                      {formatShortDate(week.visibleStart)}
-                    </div>
-                    {index === weeks.length - 1 && (
-                      <div
-                        className={`absolute top-1/2 mt-2 right-0 translate-x-1/2 text-[10px] font-medium ${
-                          isPartialEnd ? 'text-gray-300' : 'text-gray-400'
-                        }`}
-                      >
-                        {formatShortDate(week.visibleEnd)}
-                      </div>
-                    )}
-                    <div
-                      className={`absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 bg-white px-2 text-xs font-semibold z-10 ${
-                        isPartial ? 'text-gray-400 italic' : 'text-gray-700'
-                      }`}
-                      title={
-                        isPartial
-                          ? `${formatShortDate(week.weekStart)} – ${formatShortDate(week.weekEnd)} (continues into the adjacent month)`
-                          : undefined
-                      }
-                    >
-                      {week.label}
-                    </div>
-                    {renderEvents(week.visibleStart, week.visibleEnd)}
+                    <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-2 bg-gray-300" />
                   </div>
                 );
-              });
-            })()}
-        </div>
+              })}
+
+            {/* DAY layer */}
+            {dayOpacity > 0 &&
+              dayTicks.map(date => {
+                const x = pixelAtDate(date, minDate, pxPerDay);
+                const isMonthStart = date.getDate() === 1;
+                if (isMonthStart) return null;
+                return (
+                  <div
+                    key={`d-${date.toISOString()}`}
+                    className="absolute top-0 bottom-0 pointer-events-none"
+                    style={{ left: `${x}px`, opacity: dayOpacity }}
+                  >
+                    <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-1.5 bg-gray-200" />
+                    {pxPerDay > 25 && (
+                      <div className="absolute -translate-x-1/2 text-[9px] font-medium text-gray-400 whitespace-nowrap"
+                           style={{ top: 'calc(50% + 18px)' }}>
+                        {date.getDate()}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+            {/* EVENT layer */}
+            <div
+              className="absolute left-0 right-0"
+              style={{
+                bottom: '55%',
+                height: `${eventLayout.laneCount * 14 + 4}px`,
+              }}
+            >
+              {sortedVisibleEvents.map((e, i) => {
+                const isBar = e.endDate && e.endDate.getTime() > e.startDate.getTime();
+                const leftPx = pixelAtDate(e.startDate, minDate, pxPerDay);
+                const rightPx = isBar
+                  ? pixelAtDate(e.endDate!, minDate, pxPerDay)
+                  : leftPx;
+                const row = eventLayout.lanes[i] ?? 0;
+                const bottomOffset = row * 14 + 2;
+                const onMouseEnter = (ev: React.MouseEvent) => {
+                  const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                  setHoveredEvent({
+                    event: e,
+                    x: rect.left + rect.width / 2,
+                    y: rect.top,
+                  });
+                };
+                const onMouseLeave = () => setHoveredEvent(null);
+                const onClick = canManageEvents
+                  ? () => openEditEvent(e)
+                  : undefined;
+                const interactionClass = onClick ? 'cursor-pointer' : 'cursor-help';
+                if (isBar) {
+                  return (
+                    <div
+                      key={e.id}
+                      className={`absolute ${interactionClass}`}
+                      style={{
+                        left: `${leftPx}px`,
+                        width: `${Math.max(rightPx - leftPx, 4)}px`,
+                        bottom: `${bottomOffset}px`,
+                        height: '10px',
+                      }}
+                      onMouseEnter={onMouseEnter}
+                      onMouseLeave={onMouseLeave}
+                      onClick={onClick}
+                    >
+                      <div className="w-full h-full bg-blue-400/80 rounded-sm border border-blue-500/50 hover:bg-blue-500/90 transition-colors" />
+                    </div>
+                  );
+                }
+                return (
+                  <div
+                    key={e.id}
+                    className={`absolute w-2.5 h-2.5 rounded-full bg-blue-500 hover:bg-blue-600 transition-colors ${interactionClass}`}
+                    style={{
+                      left: `${leftPx}px`,
+                      bottom: `${bottomOffset}px`,
+                      transform: 'translateX(-50%)',
+                    }}
+                    onMouseEnter={onMouseEnter}
+                    onMouseLeave={onMouseLeave}
+                    onClick={onClick}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 italic">
+            Loading timeline…
+          </div>
+        )}
       </div>
 
       {/* Tooltip */}
@@ -1024,8 +1083,6 @@ export function Timeline({ clusterId }: TimelineProps) {
 // ─── Local helpers ──────────────────────────────────────────────────────
 
 function toDateInputValue(d: Date): string {
-  // <input type="date"> wants YYYY-MM-DD in local time. Compose it directly
-  // from the Date's local fields to avoid UTC-shift surprises.
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
@@ -1033,7 +1090,6 @@ function toDateInputValue(d: Date): string {
 }
 
 function parseDateInput(value: string): Date {
-  // Treat the YYYY-MM-DD value as a local-calendar date.
   const [y, m, d] = value.split('-').map(Number);
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
