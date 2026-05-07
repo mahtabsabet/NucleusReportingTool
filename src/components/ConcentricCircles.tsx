@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   UserIcon,
@@ -10,6 +10,9 @@ import {
   HeartIcon,
   StarIcon,
   ChevronDownIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+  Maximize2Icon,
 } from 'lucide-react';
 import {
   fetchNucleusEnrollmentsWithNames,
@@ -64,32 +67,36 @@ interface PanelActivity {
   role: string;
 }
 
-// Band boundaries in SVG coordinate space (viewBox 0 0 400 400, center 200,200)
-const BANDS: Record<Level, { innerR: number; outerR: number }> = {
-  coordinating: { innerR: 4,   outerR: 62  },
-  supporting:   { innerR: 68,  outerR: 102 },
-  participating:{ innerR: 108, outerR: 147 },
-  aware:        { innerR: 153, outerR: 192 },
+// Layout primitives — bands are planned dynamically based on participant counts.
+const NODE_R = 16; // SVG units — visual radius of each person node
+const NODE_PADDING = 3; // padding inside band boundaries around node circles
+const MIN_TANGENTIAL_SPACING = NODE_R * 2 + 6; // arc-length minimum between adjacent nodes on a sub-ring
+const MIN_RADIAL_SPACING = NODE_R * 2 + 4; // radial minimum between sub-rings within a band
+const BAND_GAP = 8; // breathing room between adjacent bands
+const VIEW_MARGIN = 14; // margin around the outermost ring inside the viewBox
+const CORE_INNER_R = 6; // inner anchor radius for the innermost (core) band
+const MIN_BAND_WIDTH_CORE = 56; // minimum visible thickness for the core band
+const MIN_BAND_WIDTH_OUTER = 42; // minimum visible thickness for outer bands
+const BASE_VIEW_SIZE = 400; // baseline viewBox dimension (unchanged from prior)
+const BASE_CONTAINER_PX = 500; // baseline rendered CSS size
+const MAX_CONTAINER_PX = 720; // max rendered size — beyond this, zoom is used to enlarge
+
+// Order from innermost to outermost — used for nesting / z-ordering
+const ORDERED_LEVELS: Level[] = ['coordinating', 'supporting', 'participating', 'aware'];
+
+const LEVEL_LABEL_COLOR: Record<Level, string> = {
+  aware:         '#6b7280',
+  participating: '#059669',
+  supporting:    '#b45309',
+  coordinating:  '#2563eb',
 };
 
-const NODE_R = 16; // SVG units — radius of each person node
-const MIN_SPACING = NODE_R * 2 + 5;
-
-// Drop zone insets (concentric divs layered over the SVG)
-const RING_CONFIG: { level: Level; inset: string }[] = [
-  { level: 'aware',         inset: '0%'    },
-  { level: 'participating', inset: '12.5%' },
-  { level: 'supporting',    inset: '25%'   },
-  { level: 'coordinating',  inset: '37.5%' },
-];
-
-// SVG label y-positions (top of each visible band)
-const LABEL_CONFIG: { level: Level; y: number; color: string }[] = [
-  { level: 'aware',         y: 8,   color: '#6b7280' },
-  { level: 'participating', y: 57,  color: '#059669' },
-  { level: 'supporting',    y: 102, color: '#b45309' },
-  { level: 'coordinating',  y: 145, color: '#2563eb' },
-];
+interface SubRing { r: number; count: number; }
+interface BandPlan {
+  innerR: number;
+  outerR: number;
+  rings: SubRing[];
+}
 
 const LEVEL_DISPLAY: Record<Level, string> = {
   coordinating: 'Core',
@@ -116,38 +123,59 @@ const ACTIVITY_ICON_COLORS: Record<string, { icon: React.ElementType; color: str
   other:          { icon: UsersIcon,    color: '#6b7280' },
 };
 
-function layoutRing(count: number, r: number, angleOffset = 0): { x: number; y: number }[] {
+function layoutRing(count: number, r: number, cx: number, cy: number, angleOffset = 0): { x: number; y: number }[] {
   return Array.from({ length: count }, (_, i) => {
     const angle = (2 * Math.PI * i) / count - Math.PI / 2 + angleOffset;
-    return { x: 200 + r * Math.cos(angle), y: 200 + r * Math.sin(angle) };
+    return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle) };
   });
 }
 
-function computePositions(count: number, innerR: number, outerR: number): { x: number; y: number }[] {
-  if (count === 0) return [];
-  const midR = (innerR + outerR) / 2;
-  const perRingAtMid = Math.max(1, Math.floor((2 * Math.PI * midR) / MIN_SPACING));
-
-  if (count <= perRingAtMid) {
-    return layoutRing(count, midR);
+// Plan a band: fit `count` nodes across as many concentric sub-rings as needed
+// starting at innerR, growing outward. Capacity per sub-ring is bounded by arc-length.
+function planBand(count: number, innerR: number, minWidth: number): BandPlan {
+  if (count === 0) {
+    return { innerR, outerR: innerR + minWidth, rings: [] };
   }
 
-  // Distribute across two sub-rings within the band
-  const r1 = innerR + (outerR - innerR) * 0.3;
-  const r2 = innerR + (outerR - innerR) * 0.7;
-  const maxR1 = Math.max(1, Math.floor((2 * Math.PI * Math.max(r1, 1)) / MIN_SPACING));
-  const maxR2 = Math.max(1, Math.floor((2 * Math.PI * r2) / MIN_SPACING));
-  const c1 = Math.min(Math.ceil(count / 2), maxR1);
-  const c2 = Math.min(count - c1, maxR2);
-  const extra = count - c1 - c2;
-
-  const positions = [
-    ...layoutRing(c1, r1),
-    ...layoutRing(c2, r2, c2 > 0 ? Math.PI / c2 : 0),
-  ];
-  if (extra > 0) {
-    positions.push(...layoutRing(extra, outerR - NODE_R - 1));
+  const subRings: { r: number; capacity: number }[] = [];
+  let r = innerR + NODE_R + NODE_PADDING;
+  for (let safety = 0; safety < 200; safety++) {
+    const capacity = Math.max(1, Math.floor((2 * Math.PI * r) / MIN_TANGENTIAL_SPACING));
+    subRings.push({ r, capacity });
+    const total = subRings.reduce((acc, ring) => acc + ring.capacity, 0);
+    if (total >= count) break;
+    r += MIN_RADIAL_SPACING;
   }
+
+  let outerR = subRings[subRings.length - 1].r + NODE_R + NODE_PADDING;
+  if (outerR - innerR < minWidth) outerR = innerR + minWidth;
+
+  // Distribute count proportional to each sub-ring's capacity; push remainders to outer rings.
+  const totalCap = subRings.reduce((acc, ring) => acc + ring.capacity, 0);
+  const counts = subRings.map(ring => Math.floor((count * ring.capacity) / totalCap));
+  let allocated = counts.reduce((acc, n) => acc + n, 0);
+  let idx = subRings.length - 1;
+  while (allocated < count) {
+    counts[idx]++;
+    allocated++;
+    idx = idx === 0 ? subRings.length - 1 : idx - 1;
+  }
+
+  return {
+    innerR,
+    outerR,
+    rings: subRings.map((ring, i) => ({ r: ring.r, count: counts[i] })),
+  };
+}
+
+function computePositionsFromPlan(plan: BandPlan, cx: number, cy: number): { x: number; y: number }[] {
+  const positions: { x: number; y: number }[] = [];
+  plan.rings.forEach((ring, idx) => {
+    if (ring.count === 0) return;
+    // Stagger angular offset on each sub-ring so adjacent sub-rings don't radially align.
+    const offset = (idx * Math.PI) / Math.max(1, ring.count);
+    positions.push(...layoutRing(ring.count, ring.r, cx, cy, offset));
+  });
   return positions;
 }
 
@@ -227,6 +255,15 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     targetLevel: Level;
     selectedId: string;
   } | null>(null);
+
+  // Zoom & pan state (visualization is wrapped in a CSS transform)
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef<{ mx: number; my: number; px: number; py: number } | null>(null);
+  const vizContainerRef = useRef<HTMLDivElement | null>(null);
+  const ZOOM_MIN = 0.5;
+  const ZOOM_MAX = 3;
 
   useEffect(() => {
     setLoading(true);
@@ -380,17 +417,92 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     setContactPrompt(null);
   };
 
-  // Compute node positions for each level
+  // Plan each band dynamically based on member counts.
+  // Bands stack outward from CORE_INNER_R, each separated by BAND_GAP.
+  const bandPlans = useMemo(() => {
+    const plans: Record<Level, BandPlan> = {
+      coordinating: { innerR: 0, outerR: 0, rings: [] },
+      supporting:   { innerR: 0, outerR: 0, rings: [] },
+      participating:{ innerR: 0, outerR: 0, rings: [] },
+      aware:        { innerR: 0, outerR: 0, rings: [] },
+    };
+    let cursor = CORE_INNER_R;
+    for (const level of ORDERED_LEVELS) {
+      const minWidth = level === 'coordinating' ? MIN_BAND_WIDTH_CORE : MIN_BAND_WIDTH_OUTER;
+      const plan = planBand(circles[level].length, cursor, minWidth);
+      plans[level] = plan;
+      cursor = plan.outerR + BAND_GAP;
+    }
+    return plans;
+  }, [circles]);
+
+  // viewBox dimensions grow with content. Center stays at the viewBox center.
+  const viewSize = useMemo(() => {
+    const outermost = bandPlans.aware.outerR + VIEW_MARGIN;
+    return Math.max(BASE_VIEW_SIZE, outermost * 2);
+  }, [bandPlans]);
+  const center = viewSize / 2;
+
+  // Container CSS size grows with viewSize up to a cap; beyond the cap, users zoom.
+  const containerMaxPx = useMemo(() => {
+    const ratio = BASE_CONTAINER_PX / BASE_VIEW_SIZE;
+    return Math.min(MAX_CONTAINER_PX, Math.max(BASE_CONTAINER_PX, viewSize * ratio));
+  }, [viewSize]);
+
+  // Compute node positions for each level using the dynamic plans.
   const nodePositions = useMemo(() => {
     const result: Record<Level, { x: number; y: number }[]> = {
       coordinating: [], supporting: [], participating: [], aware: [],
     };
-    for (const level of Object.keys(BANDS) as Level[]) {
-      const { innerR, outerR } = BANDS[level];
-      result[level] = computePositions(circles[level].length, innerR, outerR);
+    for (const level of ORDERED_LEVELS) {
+      result[level] = computePositionsFromPlan(bandPlans[level], center, center);
     }
     return result;
-  }, [circles]);
+  }, [bandPlans, center]);
+
+  // Zoom & pan handlers
+  const zoomIn  = useCallback(() => setZoom(z => Math.min(ZOOM_MAX, z * 1.2)), []);
+  const zoomOut = useCallback(() => setZoom(z => Math.max(ZOOM_MIN, z / 1.2)), []);
+  const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
+
+  const handlePanMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // Skip when starting on a draggable node or a control — preserves drag/drop and clicks.
+    if (target.closest('[data-node]') || target.closest('[data-pan-skip]')) return;
+    setIsPanning(true);
+    panStartRef.current = { mx: e.clientX, my: e.clientY, px: pan.x, py: pan.y };
+  }, [pan.x, pan.y]);
+
+  useEffect(() => {
+    if (!isPanning) return;
+    const onMove = (e: MouseEvent) => {
+      if (!panStartRef.current) return;
+      const dx = e.clientX - panStartRef.current.mx;
+      const dy = e.clientY - panStartRef.current.my;
+      setPan({ x: panStartRef.current.px + dx, y: panStartRef.current.py + dy });
+    };
+    const onUp = () => { setIsPanning(false); panStartRef.current = null; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+  }, [isPanning]);
+
+  // Wheel zoom — attach as a non-passive native listener so we can preventDefault.
+  useEffect(() => {
+    const el = vizContainerRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = Math.exp(-e.deltaY * 0.0015);
+      setZoom(prev => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, prev * factor)));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   const allPlaced = useMemo(() => getAllPlaced(circles), [circles]);
 
@@ -399,9 +511,9 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     const avatarColor = level !== 'unplaced' ? LEVEL_COLORS[level].avatar : '#9ca3af';
     const scale = isHovered ? 1.2 : 1;
     const initials = getInitials(entry.name);
-    const leftPct = (x / 400) * 100;
-    const topPct = (y / 400) * 100;
-    const sizePct = (NODE_R * 2 / 400) * 100;
+    const leftPct = (x / viewSize) * 100;
+    const topPct = (y / viewSize) * 100;
+    const sizePct = (NODE_R * 2 / viewSize) * 100;
 
     return (
       <div
@@ -777,79 +889,146 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
       <div className="flex flex-col gap-8">
         {/* Hint text */}
         <p className="text-xs text-gray-400 text-center -mb-4">
-          Hover over any person to see their name. Click to view details. Drag to reassign.
+          Hover for name • Click for details • Drag to reassign • Scroll to zoom • Drag empty space to pan
         </p>
 
-        {/* Circles visualization */}
-        <div className="relative mx-auto w-full" style={{ maxWidth: '500px', aspectRatio: '1/1' }}>
-
-          {/* SVG: background circles + labels */}
-          <svg viewBox="0 0 400 400" className="absolute inset-0 w-full h-full z-0 pointer-events-none drop-shadow-sm">
-            {(['aware', 'participating', 'supporting', 'coordinating'] as Level[]).map((level, i) => {
-              const radii = [195, 150, 105, 65];
-              return (
+        {/* Circles visualization — viewport with zoom/pan, transformed inner stage */}
+        <div
+          ref={vizContainerRef}
+          className="relative mx-auto w-full overflow-hidden rounded-2xl select-none"
+          style={{
+            maxWidth: `${containerMaxPx}px`,
+            aspectRatio: '1/1',
+            cursor: isPanning ? 'grabbing' : 'grab',
+            touchAction: 'none',
+          }}
+          onMouseDown={handlePanMouseDown}
+        >
+          <div
+            className="absolute inset-0"
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: '50% 50%',
+              transition: isPanning ? 'none' : 'transform 0.18s ease-out',
+              willChange: 'transform',
+            }}
+          >
+            {/* SVG: background circles + labels (sized by dynamic viewBox) */}
+            <svg
+              viewBox={`0 0 ${viewSize} ${viewSize}`}
+              className="absolute inset-0 w-full h-full z-0 pointer-events-none drop-shadow-sm"
+            >
+              {/* Render outermost first so inner band colors overlay */}
+              {[...ORDERED_LEVELS].reverse().map((level) => (
                 <circle
                   key={level}
-                  cx="200" cy="200" r={radii[i]}
+                  cx={center}
+                  cy={center}
+                  r={bandPlans[level].outerR}
                   fill={LEVEL_COLORS[level].bg}
                   stroke={dragOverLevel === level ? LEVEL_COLORS[level].border : 'transparent'}
                   strokeWidth={dragOverLevel === level ? 3 : 0}
                   className="transition-all duration-200"
                 />
-              );
-            })}
+              ))}
 
-            {/* Ring labels */}
-            {LABEL_CONFIG.map(({ level, y, color }) => (
-              <text
-                key={level}
-                x="200"
-                y={y + 12}
-                textAnchor="middle"
-                fontSize="10"
-                fontWeight="600"
-                letterSpacing="1"
-                fill={color}
-                style={{ textTransform: 'uppercase' }}
-              >
-                {LEVEL_DISPLAY[level].toUpperCase()} ({circles[level].length})
-              </text>
-            ))}
-          </svg>
+              {/* Ring labels positioned at the top edge of each band */}
+              {ORDERED_LEVELS.map((level) => {
+                const labelY = center - bandPlans[level].outerR + 14;
+                return (
+                  <text
+                    key={level}
+                    x={center}
+                    y={labelY}
+                    textAnchor="middle"
+                    fontSize="11"
+                    fontWeight="600"
+                    letterSpacing="1"
+                    fill={LEVEL_LABEL_COLOR[level]}
+                    style={{ textTransform: 'uppercase' }}
+                  >
+                    {LEVEL_DISPLAY[level].toUpperCase()} ({circles[level].length})
+                  </text>
+                );
+              })}
+            </svg>
 
-          {/* Drop zones */}
-          <div className="absolute inset-0 z-10">
-            {RING_CONFIG.map(({ level, inset }) => (
-              <div
-                key={level}
-                className="absolute rounded-full transition-all duration-200"
-                style={{
-                  inset,
-                  ...(dragOverLevel === level ? {
-                    border: `3px dashed ${LEVEL_COLORS[level].border}`,
-                    backgroundColor: LEVEL_COLORS[level].highlight,
-                  } : {}),
-                }}
-                onDragOver={e => handleDragOver(e, level)}
-                onDragLeave={e => handleDragLeave(e, level)}
-                onDrop={e => handleDrop(e, level)}
-              />
-            ))}
+            {/* Drop zones — outermost first, innermost last so smaller zones sit on top */}
+            <div className="absolute inset-0 z-10">
+              {[...ORDERED_LEVELS].reverse().map((level) => {
+                const r = bandPlans[level].outerR;
+                const insetPct = ((center - r) / viewSize) * 100;
+                return (
+                  <div
+                    key={level}
+                    className="absolute rounded-full transition-all duration-200"
+                    style={{
+                      inset: `${insetPct}%`,
+                      ...(dragOverLevel === level ? {
+                        border: `3px dashed ${LEVEL_COLORS[level].border}`,
+                        backgroundColor: LEVEL_COLORS[level].highlight,
+                      } : {}),
+                    }}
+                    onDragOver={e => handleDragOver(e, level)}
+                    onDragLeave={e => handleDragLeave(e, level)}
+                    onDrop={e => handleDrop(e, level)}
+                  />
+                );
+              })}
+            </div>
+
+            {/* Node layer */}
+            <div className="absolute inset-0 z-20" style={{ pointerEvents: 'none' }}>
+              {ORDERED_LEVELS.map(level =>
+                circles[level].map((entry, i) => {
+                  const pos = nodePositions[level][i];
+                  if (!pos) return null;
+                  return (
+                    <div key={entry.id} data-node="true" style={{ pointerEvents: 'auto' }}>
+                      {renderNode(entry, level, pos.x, pos.y)}
+                    </div>
+                  );
+                })
+              )}
+            </div>
           </div>
 
-          {/* Node layer */}
-          <div className="absolute inset-0 z-20" style={{ pointerEvents: 'none' }}>
-            {(Object.keys(BANDS) as Level[]).map(level =>
-              circles[level].map((entry, i) => {
-                const pos = nodePositions[level][i];
-                if (!pos) return null;
-                return (
-                  <div key={entry.id} style={{ pointerEvents: 'auto' }}>
-                    {renderNode(entry, level, pos.x, pos.y)}
-                  </div>
-                );
-              })
-            )}
+          {/* Zoom controls (outside transform so they stay fixed-size and easy to hit) */}
+          <div
+            data-pan-skip="true"
+            className="absolute top-3 right-3 z-40 flex flex-col gap-1 bg-white/95 backdrop-blur-sm rounded-full shadow-md border border-gray-100 p-1"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={zoomIn}
+              disabled={zoom >= ZOOM_MAX - 1e-3}
+              aria-label="Zoom in"
+              title="Zoom in"
+              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <ZoomInIcon className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={zoomOut}
+              disabled={zoom <= ZOOM_MIN + 1e-3}
+              aria-label="Zoom out"
+              title="Zoom out"
+              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <ZoomOutIcon className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={resetView}
+              disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
+              aria-label="Reset view"
+              title="Reset view"
+              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              <Maximize2Icon className="w-4 h-4" />
+            </button>
           </div>
         </div>
 
