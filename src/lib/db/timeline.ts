@@ -58,6 +58,35 @@ export async function updateCycleBoundary(
   if (error) throw error;
 }
 
+// Creates a cluster-scoped override row for a cycle that has only ever
+// existed as a computed default. Used the first time an admin edits a
+// boundary — subsequent edits go through updateCycleBoundary by id.
+export async function insertCycleOverride(params: {
+  label: string;
+  startDate: Date;
+  endDate: Date;
+  clusterId?: string | null;
+}): Promise<TimelineCycle> {
+  const { data, error } = await supabase
+    .from('timeline_cycles')
+    .insert({
+      label: params.label,
+      start_date: params.startDate.toISOString().split('T')[0],
+      end_date: params.endDate.toISOString().split('T')[0],
+      cluster_id: params.clusterId ?? null,
+    })
+    .select('id, label, start_date, end_date, cluster_id')
+    .single();
+  if (error) throw error;
+  const c = data as any;
+  return {
+    id: c.id,
+    label: c.label,
+    startDate: new Date(c.start_date),
+    endDate: new Date(c.end_date),
+  };
+}
+
 export async function addTimelineEvent(params: {
   name: string;
   startDate: Date;

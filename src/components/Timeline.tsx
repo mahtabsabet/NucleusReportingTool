@@ -5,16 +5,14 @@ import {
   fetchTimelineCycles,
   fetchTimelineEvents,
   updateCycleBoundary,
+  insertCycleOverride,
   addTimelineEvent,
 } from '../lib/db/timeline';
 import { TimelineCycle, TimelineEvent } from '../types';
 import {
   buildCycleSchedule,
   ComputedCycle,
-  DEFAULT_CYCLE_ANCHOR,
 } from '../lib/timeline/cycles';
-
-type TimelineCycleOverride = TimelineCycle;
 import {
   formatShortDate,
   getDatePercent,
@@ -23,11 +21,13 @@ import {
 } from '../lib/timeline/dateRange';
 import { assignLanes } from '../lib/timeline/lanes';
 
+type TimelineCycleOverride = TimelineCycle;
 type ZoomLevel = 'multi-year' | 'year' | 'cycle' | 'month';
 
-// Cluster timelines render through 2030 by default. When nucleus / regional
+// Cluster timelines display calendar years 2026..2030. When nucleus / regional
 // timelines are added they will reuse buildCycleSchedule with their own
 // scope-specific overrides.
+const TIMELINE_START_YEAR = 2026;
 const TIMELINE_END_YEAR = 2030;
 
 interface TimelineProps {
@@ -53,7 +53,7 @@ export function Timeline({ clusterId }: TimelineProps) {
   // an admin edits one — guarantees the timeline always renders.
   const cycles = useMemo<ComputedCycle[]>(
     () => buildCycleSchedule({
-      fromYear: DEFAULT_CYCLE_ANCHOR.year,
+      fromYear: TIMELINE_START_YEAR,
       toYear: TIMELINE_END_YEAR,
       overrides,
     }),
@@ -69,52 +69,113 @@ export function Timeline({ clusterId }: TimelineProps) {
 
   useEffect(() => { loadData(); }, [clusterId]);
 
-  // Boundary adjustments only apply when the cycle has a DB-backed override
-  // row (synthetic computed-* ids cannot be persisted). When the user edits
-  // a computed cycle we'd need to insert a new override row first; that
-  // flow is out of scope for this stabilization pass.
-  const adjustCycleBoundary = (cycleId: string, days: number) => {
-    const cycleIndex = cycles.findIndex(c => c.id === cycleId);
-    if (cycleIndex === -1) return;
-    const cycle = cycles[cycleIndex];
-    if (!cycle.isOverride) return;
-    const newEnd = new Date(cycle.endDate);
-    newEnd.setDate(newEnd.getDate() + days);
-    const minEnd = new Date(cycle.startDate);
-    minEnd.setDate(minEnd.getDate() + 7);
-    if (newEnd < minEnd) return;
+  // Persist a single cycle's edited boundary. If the cycle has never been
+  // edited (still computed) we INSERT a new override row; subsequent edits
+  // UPDATE that row by id. Callers handle previous/next coordination.
+  const persistCycleEdit = async (
+    cycle: ComputedCycle,
+    patch: { startDate?: Date; endDate?: Date },
+  ): Promise<TimelineCycleOverride> => {
+    const startDate = patch.startDate ?? cycle.startDate;
+    const endDate = patch.endDate ?? cycle.endDate;
+    if (cycle.isOverride) {
+      await updateCycleBoundary(cycle.id, patch.startDate, patch.endDate);
+      return { id: cycle.id, label: cycle.label, startDate, endDate };
+    }
+    return insertCycleOverride({
+      label: cycle.label,
+      startDate,
+      endDate,
+      clusterId: clusterId ?? null,
+    });
+  };
 
-    setOverrides(prev => prev.map(o => {
-      if (o.id === cycle.id) return { ...o, endDate: newEnd };
-      const next = cycles[cycleIndex + 1];
-      if (next && next.isOverride && o.id === next.id) {
-        const nextStart = new Date(newEnd);
-        nextStart.setDate(nextStart.getDate() + 1);
-        return { ...o, startDate: nextStart };
+  // Apply an edit to local override state without waiting for the network.
+  // Existing override rows are mutated in place; computed cycles get a
+  // synthetic-id override that the next refetch will replace.
+  const applyOverrideLocally = (
+    list: TimelineCycleOverride[],
+    cycle: ComputedCycle,
+    patch: { startDate?: Date; endDate?: Date },
+  ): TimelineCycleOverride[] => {
+    if (cycle.isOverride) {
+      return list.map(o => (o.id === cycle.id ? { ...o, ...patch } : o));
+    }
+    return [
+      ...list,
+      {
+        id: cycle.id,
+        label: cycle.label,
+        startDate: patch.startDate ?? cycle.startDate,
+        endDate: patch.endDate ?? cycle.endDate,
+      },
+    ];
+  };
+
+  // Move the boundary that sits at `cycle.startDate` by ±1 day.
+  // This is a single boundary edit that must touch BOTH cycles so there are
+  // no gaps or overlaps:
+  //   • cycle.startDate += days
+  //   • prevCycle.endDate = cycle.startDate - 1
+  // If there's no previous cycle (very first cycle in the schedule) the
+  // boundary just slides without a partner to update.
+  const shiftCycleStart = async (cycle: ComputedCycle, days: number) => {
+    const idx = cycles.findIndex(c => c.id === cycle.id);
+    if (idx === -1) return;
+    const newStart = new Date(cycle.startDate);
+    newStart.setDate(newStart.getDate() + days);
+
+    // Don't squash this cycle below 7 days.
+    const maxStart = new Date(cycle.endDate);
+    maxStart.setDate(maxStart.getDate() - 7);
+    if (newStart > maxStart) return;
+
+    const prev = idx > 0 ? cycles[idx - 1] : null;
+    let newPrevEnd: Date | null = null;
+    if (prev) {
+      newPrevEnd = new Date(newStart);
+      newPrevEnd.setDate(newPrevEnd.getDate() - 1);
+      // Don't squash the previous cycle below 7 days either.
+      const prevMinEnd = new Date(prev.startDate);
+      prevMinEnd.setDate(prevMinEnd.getDate() + 7);
+      if (newPrevEnd < prevMinEnd) return;
+    }
+
+    // Optimistic local update.
+    setOverrides(curr => {
+      let next = applyOverrideLocally(curr, cycle, { startDate: newStart });
+      if (prev && newPrevEnd) {
+        next = applyOverrideLocally(next, prev, { endDate: newPrevEnd });
       }
-      return o;
-    }));
+      return next;
+    });
 
-    updateCycleBoundary(cycleId, undefined, newEnd).catch(console.error);
-    const next = cycles[cycleIndex + 1];
-    if (next && next.isOverride) {
-      const nextStart = new Date(newEnd);
-      nextStart.setDate(nextStart.getDate() + 1);
-      updateCycleBoundary(next.id, nextStart, undefined).catch(console.error);
+    // Persist, then refetch so synthetic ids are replaced with real DB ids.
+    try {
+      await persistCycleEdit(cycle, { startDate: newStart });
+      if (prev && newPrevEnd) {
+        await persistCycleEdit(prev, { endDate: newPrevEnd });
+      }
+      const fresh = await fetchTimelineCycles({ clusterId: clusterId ?? undefined });
+      setOverrides(fresh);
+    } catch (err) {
+      console.error('Failed to adjust cycle boundary:', err);
+      // Recover by reloading from server.
+      fetchTimelineCycles({ clusterId: clusterId ?? undefined })
+        .then(setOverrides)
+        .catch(() => {});
     }
   };
 
-  // Distinct Gregorian years touched by the schedule, ascending. Each year
-  // contains at most 4 cycles in chronological order (Cycle 4 → 1 → 2 → 3
-  // when fully populated, since Cycle 4 belongs to the prior Bahá’í year).
+  // Distinct Gregorian years between TIMELINE_START_YEAR and TIMELINE_END_YEAR
+  // that any cycle starts in. Each year contains at most 4 cycles in
+  // chronological order (Cycle 4 → 1 → 2 → 3 when fully populated, since
+  // Cycle 4 belongs to the prior Bahá’í year).
   const years = useMemo(() => {
     const set = new Set<number>();
     for (const c of cycles) {
-      const y0 = c.startDate.getFullYear();
-      const y1 = c.endDate.getFullYear();
-      for (let y = y0; y <= y1; y++) {
-        if (y <= TIMELINE_END_YEAR) set.add(y);
-      }
+      const y = c.startDate.getFullYear();
+      if (y >= TIMELINE_START_YEAR && y <= TIMELINE_END_YEAR) set.add(y);
     }
     return [...set].sort((a, b) => a - b);
   }, [cycles]);
@@ -298,35 +359,69 @@ export function Timeline({ clusterId }: TimelineProps) {
             );
           })}
 
-          {/* YEAR VIEW */}
-          {zoomLevel === 'year' && selectedYear && cycles
-            .filter(c => c.startDate.getFullYear() === selectedYear)
-            .map((cycle) => (
-              <div key={cycle.id} className="flex-1 min-w-[250px] relative h-full flex flex-col justify-center group">
-                <div className="absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-6 bg-gray-400" />
-                <div className="absolute top-1/2 mt-4 left-0 -translate-x-1/2 text-xs font-medium text-gray-500">{formatShortDate(cycle.startDate)}</div>
-                <div className="absolute top-1/2 -translate-y-1/2 right-0 w-0.5 h-6 bg-gray-400 z-20" />
-                <div className="absolute top-1/2 mt-4 right-0 translate-x-[-50%] flex flex-col items-center gap-1 z-20">
-                  <div className="text-xs font-medium text-gray-500">{formatShortDate(cycle.endDate)}</div>
-                  {cycle.isOverride && (
-                    <div className="flex items-center gap-0.5">
-                      <button onClick={e => { e.stopPropagation(); adjustCycleBoundary(cycle.id, -1); }} className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-600 transition-colors" title="Shorten by 1 day">
-                        <MinusIcon className="w-3 h-3" />
-                      </button>
-                      <button onClick={e => { e.stopPropagation(); adjustCycleBoundary(cycle.id, 1); }} className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-blue-100 text-gray-500 hover:text-blue-600 transition-colors" title="Extend by 1 day">
-                        <PlusIcon className="w-3 h-3" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 flex justify-center cursor-pointer" onClick={() => { setSelectedCycle(cycle); setZoomLevel('cycle'); }}>
-                  <div className="bg-white px-3 py-1 text-sm font-bold text-gray-900 group-hover:text-blue-600 z-10 border border-transparent group-hover:border-blue-100 rounded-full transition-all">
-                    {cycle.label}
+          {/* YEAR VIEW
+              Each cycle gets a single date label at its LEFT boundary —
+              this is the cycle's start date. The right-pointing chevron and
+              the label being anchored flush-left of the tick make it visually
+              clear that "Apr 20" belongs to the cycle to the right, not the
+              cycle to the left. The +/- buttons shift this same boundary,
+              which means cycle.startDate AND prevCycle.endDate move together
+              so cycles stay contiguous (no gaps, no overlaps). The very last
+              cycle in the year also gets an end-date marker on its right
+              edge so the year visually closes. */}
+          {zoomLevel === 'year' && selectedYear && (() => {
+            const yearCycles = cycles.filter(c => c.startDate.getFullYear() === selectedYear);
+            return yearCycles.map((cycle, i) => {
+              const isLast = i === yearCycles.length - 1;
+              return (
+                <div key={cycle.id} className="flex-1 min-w-[250px] relative h-full flex flex-col justify-center group">
+                  {/* Boundary tick at the cycle start */}
+                  <div className="absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-6 bg-gray-400" />
+                  {/* Start-date label, anchored flush-left of the tick with a
+                      right-pointing chevron, so it reads as the START of the
+                      cycle to its right. */}
+                  <div className="absolute top-1/2 mt-3 left-0 ml-1 flex items-center gap-0.5 text-xs font-medium text-gray-600 whitespace-nowrap">
+                    <ChevronRightIcon className="w-3 h-3 text-gray-400" />
+                    <span>{formatShortDate(cycle.startDate)}</span>
                   </div>
+                  {/* Boundary +/- buttons under the start date — shift the
+                      whole boundary, updating both this cycle's start and
+                      the previous cycle's end. */}
+                  <div className="absolute top-1/2 mt-9 left-0 ml-1 flex items-center gap-0.5 z-20">
+                    <button
+                      onClick={e => { e.stopPropagation(); shiftCycleStart(cycle, -1); }}
+                      className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-red-100 text-gray-500 hover:text-red-600 transition-colors"
+                      title="Move boundary 1 day earlier"
+                    >
+                      <MinusIcon className="w-3 h-3" />
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); shiftCycleStart(cycle, 1); }}
+                      className="w-5 h-5 flex items-center justify-center rounded bg-gray-100 hover:bg-blue-100 text-gray-500 hover:text-blue-600 transition-colors"
+                      title="Move boundary 1 day later"
+                    >
+                      <PlusIcon className="w-3 h-3" />
+                    </button>
+                  </div>
+                  {/* Closing end-date marker on the last cycle of the year */}
+                  {isLast && (
+                    <>
+                      <div className="absolute top-1/2 -translate-y-1/2 right-0 w-0.5 h-6 bg-gray-400 z-20" />
+                      <div className="absolute top-1/2 mt-3 right-0 mr-1 text-xs font-medium text-gray-500 whitespace-nowrap">
+                        ends {formatShortDate(cycle.endDate)}
+                      </div>
+                    </>
+                  )}
+                  <div className="absolute top-1/2 -translate-y-1/2 left-0 right-0 flex justify-center cursor-pointer" onClick={() => { setSelectedCycle(cycle); setZoomLevel('cycle'); }}>
+                    <div className="bg-white px-3 py-1 text-sm font-bold text-gray-900 group-hover:text-blue-600 z-10 border border-transparent group-hover:border-blue-100 rounded-full transition-all">
+                      {cycle.label}
+                    </div>
+                  </div>
+                  {renderEvents(cycle.startDate, cycle.endDate)}
                 </div>
-                {renderEvents(cycle.startDate, cycle.endDate)}
-              </div>
-            ))}
+              );
+            });
+          })()}
 
           {/* CYCLE VIEW */}
           {zoomLevel === 'cycle' && selectedCycle && (() => {
