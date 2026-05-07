@@ -44,11 +44,12 @@ create type event_log_type_enum as enum (
 
 -- profiles extends auth.users (auto-created on signup via trigger below)
 create table profiles (
-  id          uuid references auth.users(id) on delete cascade primary key,
-  name        text not null,
-  is_admin    boolean not null default false,
-  person_id   uuid,  -- FK to persons added after persons table is created
-  created_at  timestamptz not null default now()
+  id                 uuid references auth.users(id) on delete cascade primary key,
+  name               text not null,
+  is_admin           boolean not null default false,
+  person_id          uuid,  -- FK to persons added after persons table is created
+  profile_image_url  text,
+  created_at         timestamptz not null default now()
 );
 
 create table clusters (

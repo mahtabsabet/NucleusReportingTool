@@ -217,3 +217,38 @@ export async function changeUserRole(params: ChangeRoleParams): Promise<void> {
 
 // Convenience re-export for UIs.
 export { highestRole };
+
+// Returns the signed-in user's profile_image_url, or null if not set.
+export async function fetchOwnProfileImageUrl(userId: string): Promise<string | null> {
+  const { data } = await supabase
+    .from('profiles')
+    .select('profile_image_url')
+    .eq('id', userId)
+    .single();
+  return ((data as any)?.profile_image_url as string | null) ?? null;
+}
+
+// Uploads a profile photo for the signed-in user, reusing the `profile-photos`
+// bucket used by persons. Files are stored under `users/{userId}.{ext}` to
+// avoid colliding with person photos at the bucket root, and the resulting
+// public URL is written to profiles.profile_image_url.
+export async function uploadOwnProfilePhoto(userId: string, file: File): Promise<string> {
+  const ext = file.name.split('.').pop() ?? 'jpg';
+  const path = `users/${userId}.${ext}`;
+  const { error: uploadError } = await supabase.storage
+    .from('profile-photos')
+    .upload(path, file, { upsert: true });
+  if (uploadError) throw uploadError;
+  const { data } = supabase.storage.from('profile-photos').getPublicUrl(path);
+  // Append a cache-busting query so the browser refreshes after re-upload
+  // (the path is stable across uploads of the same extension).
+  const url = `${data.publicUrl}?v=${Date.now()}`;
+  const { data: updated, error: updateError } = await supabase
+    .from('profiles')
+    .update({ profile_image_url: url })
+    .eq('id', userId)
+    .select('id');
+  if (updateError) throw updateError;
+  if (!updated?.length) throw new Error('profile_image_url update matched 0 rows — check profiles RLS update policy');
+  return url;
+}

@@ -1,24 +1,38 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOutIcon, UserIcon } from 'lucide-react';
+import { LogOutIcon, UserIcon, CameraIcon } from 'lucide-react';
 import { useAuth } from '../lib/auth';
-import { getCallerContext, type CallerContext } from '../lib/db/users';
+import {
+  getCallerContext,
+  fetchOwnProfileImageUrl,
+  uploadOwnProfilePhoto,
+  type CallerContext,
+} from '../lib/db/users';
 import { primaryRole, roleLabel, ROLE_BADGE_CLASSES } from '../lib/permissions';
 
 // Floating account chip available on every authenticated page.
 // Shows the signed-in user's name, email, role, and a logout button.
 // Mounted globally from App.tsx so we don't need to touch each page header.
+//
+// z-index note: the wrapper sits at z-[2000] so the dropdown stays above
+// Leaflet's map controls (which use z-index: 1000); a lower value caused
+// the menu to be hidden behind the map on the cluster map view.
 export function AccountMenu() {
   const { user, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const [ctx, setCtx] = useState<CallerContext | null>(null);
   const [profileName, setProfileName] = useState<string | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!user) return;
     let cancelled = false;
     getCallerContext().then(c => { if (!cancelled) setCtx(c); });
+    fetchOwnProfileImageUrl(user.id).then(url => { if (!cancelled) setPhotoUrl(url); });
     // Display name from user_metadata if present, otherwise fall back to
     // email prefix.  Profile name is loaded lazily inside getCallerContext's
     // calls, but we don't have it here — derive a friendly fallback.
@@ -53,16 +67,37 @@ export function AccountMenu() {
   const role = ctx ? primaryRole(ctx) : null;
   const initial = (profileName ?? user.email ?? '?').charAt(0).toUpperCase();
 
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const url = await uploadOwnProfilePhoto(user.id, file);
+      setPhotoUrl(url);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      // Reset so picking the same file again still triggers onChange.
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
   return (
-    <div className="fixed top-3 right-3 z-40">
+    <div className="fixed top-3 right-3 z-[2000]">
       <button
         ref={buttonRef}
         onClick={() => setOpen(o => !o)}
-        className="w-10 h-10 rounded-full bg-white shadow-md border border-gray-200 flex items-center justify-center text-sm font-bold text-gray-700 hover:shadow-lg hover:border-gray-300 transition-all"
+        className="w-10 h-10 rounded-full bg-white shadow-md border border-gray-200 flex items-center justify-center text-sm font-bold text-gray-700 hover:shadow-lg hover:border-gray-300 transition-all overflow-hidden"
         aria-label="Account menu"
         title="Account"
       >
-        {initial}
+        {photoUrl ? (
+          <img src={photoUrl} alt="" className="w-full h-full object-cover" />
+        ) : (
+          initial
+        )}
       </button>
 
       {open && (
@@ -71,8 +106,28 @@ export function AccountMenu() {
           className="absolute right-0 mt-2 w-72 bg-white rounded-2xl shadow-2xl border border-gray-200 p-4 animate-in fade-in zoom-in-95 duration-150"
         >
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center flex-shrink-0">
-              <UserIcon className="w-5 h-5 text-gray-500" />
+            <div className="relative w-12 h-12 flex-shrink-0">
+              <div className="w-12 h-12 rounded-full bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center overflow-hidden">
+                {photoUrl ? (
+                  <img src={photoUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <UserIcon className="w-6 h-6 text-gray-500" />
+                )}
+              </div>
+              <label
+                className={`absolute inset-0 flex items-center justify-center rounded-full bg-black/40 text-white opacity-0 hover:opacity-100 transition-opacity ${uploading ? 'opacity-100' : ''} cursor-pointer`}
+                title={photoUrl ? 'Change photo' : 'Add photo'}
+              >
+                <CameraIcon className="w-4 h-4" />
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleFileChange}
+                  disabled={uploading}
+                />
+              </label>
             </div>
             <div className="min-w-0">
               <p className="font-semibold text-gray-900 truncate">{profileName ?? '—'}</p>
@@ -81,6 +136,19 @@ export function AccountMenu() {
               )}
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 mb-3 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 font-medium rounded-xl text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <CameraIcon className="w-4 h-4" />
+            {uploading ? 'Uploading…' : photoUrl ? 'Change Profile Photo' : 'Add Profile Photo'}
+          </button>
+          {uploadError && (
+            <p className="text-xs text-red-600 mb-3">{uploadError}</p>
+          )}
 
           {role && (
             <div className="mb-4">

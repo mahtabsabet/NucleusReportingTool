@@ -18,12 +18,14 @@ export interface Database {
           is_super_admin: boolean;
           is_regional_viewer: boolean;
           person_id: string | null;
+          profile_image_url: string | null;
           created_at: string;
         };
-        Insert: Omit<Database['public']['Tables']['profiles']['Row'], 'created_at' | 'is_super_admin' | 'is_regional_viewer'> & {
+        Insert: Omit<Database['public']['Tables']['profiles']['Row'], 'created_at' | 'is_super_admin' | 'is_regional_viewer' | 'profile_image_url'> & {
           created_at?: string;
           is_super_admin?: boolean;
           is_regional_viewer?: boolean;
+          profile_image_url?: string | null;
         };
         Update: Partial<Database['public']['Tables']['profiles']['Insert']>;
       };
