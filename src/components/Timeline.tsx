@@ -57,7 +57,12 @@ const TIMELINE_END_YEAR = 2030;
 // always visible; the rest fade in as the user zooms past the listed
 // pxPerDay values. Numbers picked so adjacent layers' labels never
 // visually compete for the same horizontal space.
-const CYCLE_FADE = [0.3, 0.5] as const;
+// Cycles fade in well above the fit-all floor (~0.66 ppd for a 5-year
+// span in a typical viewport) so the fully-zoomed-out view stays clean —
+// at fit-all, 20+ cycle labels and 20+ start-date chips would crowd the
+// strip. They reach full opacity around 1.6 ppd, which is comfortably
+// less than the default 1-year view's ~3.3 ppd.
+const CYCLE_FADE = [0.9, 1.6] as const;
 const MONTH_FADE = [1.4, 2.4] as const;
 const WEEK_FADE = [5, 9] as const;
 const DAY_FADE = [15, 22] as const;
@@ -192,14 +197,30 @@ export function Timeline({ clusterId }: TimelineProps) {
     return () => ro.disconnect();
   }, []);
 
-  // First-time initialization: once we know the container width and the
-  // cycle range, fit the entire timeline into the viewport.
+  // First-time initialization: open at a 1-year view starting on today
+  // (so the user lands somewhere relevant to right-now). If today falls
+  // outside the timeline's range — past the last cycle, or before the
+  // first one — fall back to the first calendar year that intersects the
+  // range.
   useEffect(() => {
     if (initializedRef.current) return;
     if (containerWidth <= 0 || totalDays <= 0) return;
-    setPxPerDay(containerWidth / totalDays);
+    const ppd = clampPxPerDay(containerWidth / 365, containerWidth, totalDays);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const oneYearOut = new Date(today);
+    oneYearOut.setFullYear(oneYearOut.getFullYear() + 1);
+    let initStart: Date;
+    if (today >= minDate && oneYearOut <= maxDate) {
+      initStart = today;
+    } else {
+      const firstYearStart = new Date(minDate.getFullYear(), 0, 1);
+      initStart = firstYearStart < minDate ? minDate : firstYearStart;
+    }
+    pendingScrollLeftRef.current = pixelAtDate(initStart, minDate, ppd);
+    setPxPerDay(ppd);
     initializedRef.current = true;
-  }, [containerWidth, totalDays]);
+  }, [containerWidth, totalDays, minDate, maxDate]);
 
   // If the viewport shrinks below the current "fit-all" minimum (e.g. user
   // shrinks the window), bump pxPerDay back up to the floor so we don't
