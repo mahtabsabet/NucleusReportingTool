@@ -46,6 +46,7 @@ import {
 } from '../lib/permissions';
 
 type TimelineCycleOverride = TimelineCycle;
+type Orientation = 'horizontal' | 'vertical';
 
 // Cluster timelines display calendar years 2026..2030. Nucleus / regional
 // timelines will reuse buildCycleSchedule with their own scope-specific
@@ -73,13 +74,20 @@ const CYCLE_EDIT_MIN_PX = 140;
 
 interface TimelineProps {
   clusterId: string | null;
+  // 'horizontal' (default): time runs left→right, panel sits at the
+  // bottom of the screen with a resize handle. 'vertical': time runs
+  // top→bottom, panel fills its parent's height — used by the mobile
+  // page so the timeline can use the full screen height.
+  orientation?: Orientation;
 }
 
 type EventModalState =
   | { mode: 'add' }
   | { mode: 'edit'; event: TimelineEvent };
 
-export function Timeline({ clusterId }: TimelineProps) {
+export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProps) {
+  const isVertical = orientation === 'vertical';
+
   const [overrides, setOverrides] = useState<TimelineCycleOverride[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [callerCtx, setCallerCtx] = useState<CallerContext | null>(null);
@@ -153,10 +161,12 @@ export function Timeline({ clusterId }: TimelineProps) {
   const hasPendingShifts = Object.keys(pendingShifts).length > 0;
 
   // ───── Continuous-zoom viewport ───────────────────────────────────────
-  // The whole timeline lives on a single horizontal axis: an inner div
-  // whose width is `totalDays * pxPerDay`. Panning is just the browser's
-  // scrollLeft on the outer container; zooming changes pxPerDay and
-  // adjusts scrollLeft to keep the cursor anchored on the same date.
+  // The timeline lives on a single axis (horizontal or vertical). The inner
+  // div's "main" dimension is `totalDays * pxPerDay`; positions along the
+  // axis are computed by `pixelAtDate`. Panning is the browser's scroll
+  // offset on the outer container; zooming changes pxPerDay and adjusts
+  // the scroll offset to keep the cursor / pinch midpoint anchored on the
+  // same date.
   const minDate = useMemo(
     () =>
       displayedCycles.length > 0
@@ -176,14 +186,37 @@ export function Timeline({ clusterId }: TimelineProps) {
     [minDate, maxDate],
   );
 
+  // Per-orientation accessors for "main axis" (= time axis) pixel ops on
+  // the scrollable container. Defined in a ref so the touch/wheel
+  // listeners read live values without re-binding.
+  const getMainScroll = useCallback(
+    (el: HTMLElement) => (isVertical ? el.scrollTop : el.scrollLeft),
+    [isVertical],
+  );
+  const setMainScroll = useCallback(
+    (el: HTMLElement, v: number) => {
+      if (isVertical) el.scrollTop = v;
+      else el.scrollLeft = v;
+    },
+    [isVertical],
+  );
+  const getMainLength = useCallback(
+    (el: HTMLElement) => (isVertical ? el.clientHeight : el.clientWidth),
+    [isVertical],
+  );
+  const getMainScrollSize = useCallback(
+    (el: HTMLElement) => (isVertical ? el.scrollHeight : el.scrollWidth),
+    [isVertical],
+  );
+
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerWidth, setContainerWidth] = useState(0);
+  const [containerLength, setContainerLength] = useState(0);
   const [pxPerDay, setPxPerDay] = useState(0);
-  const [scrollLeft, setScrollLeft] = useState(0);
-  // Cursor-anchored zoom needs to set scrollLeft to a precise value AFTER
-  // React applies the new inner width. Stash the target here; useLayoutEffect
-  // applies it as soon as the new width is in the DOM.
-  const pendingScrollLeftRef = useRef<number | null>(null);
+  const [scrollOffset, setScrollOffset] = useState(0);
+  // Cursor-anchored zoom needs to set scroll offset to a precise value AFTER
+  // React applies the new inner width/height. Stash the target here;
+  // useLayoutEffect applies it as soon as the new size is in the DOM.
+  const pendingScrollRef = useRef<number | null>(null);
   const initializedRef = useRef(false);
   // Wheel and touch handlers read the live pxPerDay through this ref so we
   // don't have to re-attach the listeners on every zoom step. Re-attaching
@@ -194,16 +227,23 @@ export function Timeline({ clusterId }: TimelineProps) {
     pxPerDayRef.current = pxPerDay;
   }, [pxPerDay]);
 
-  // Track container width via ResizeObserver.
+  // Track container's main-axis length via ResizeObserver.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const update = () => setContainerWidth(el.clientWidth);
+    const update = () => setContainerLength(getMainLength(el));
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [getMainLength]);
+
+  // Reset the "have we picked an initial zoom" flag if orientation flips,
+  // so the new layout opens at its own 1-year default rather than reusing
+  // a scroll/zoom tuned for the other axis length.
+  useEffect(() => {
+    initializedRef.current = false;
+  }, [isVertical]);
 
   // First-time initialization: open at a 1-year view starting on today
   // (so the user lands somewhere relevant to right-now). If today falls
@@ -212,8 +252,8 @@ export function Timeline({ clusterId }: TimelineProps) {
   // range.
   useEffect(() => {
     if (initializedRef.current) return;
-    if (containerWidth <= 0 || totalDays <= 0) return;
-    const ppd = clampPxPerDay(containerWidth / 365, containerWidth, totalDays);
+    if (containerLength <= 0 || totalDays <= 0) return;
+    const ppd = clampPxPerDay(containerLength / 365, containerLength, totalDays);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const oneYearOut = new Date(today);
@@ -225,32 +265,32 @@ export function Timeline({ clusterId }: TimelineProps) {
       const firstYearStart = new Date(minDate.getFullYear(), 0, 1);
       initStart = firstYearStart < minDate ? minDate : firstYearStart;
     }
-    pendingScrollLeftRef.current = pixelAtDate(initStart, minDate, ppd);
+    pendingScrollRef.current = pixelAtDate(initStart, minDate, ppd);
     setPxPerDay(ppd);
     initializedRef.current = true;
-  }, [containerWidth, totalDays, minDate, maxDate]);
+  }, [containerLength, totalDays, minDate, maxDate]);
 
   // If the viewport shrinks below the current "fit-all" minimum (e.g. user
   // shrinks the window), bump pxPerDay back up to the floor so we don't
-  // leave dead space at the right.
+  // leave dead space at the end.
   useEffect(() => {
     if (!initializedRef.current || pxPerDay <= 0) return;
-    const clamped = clampPxPerDay(pxPerDay, containerWidth, totalDays);
+    const clamped = clampPxPerDay(pxPerDay, containerLength, totalDays);
     if (clamped !== pxPerDay) setPxPerDay(clamped);
-  }, [containerWidth, totalDays, pxPerDay]);
+  }, [containerLength, totalDays, pxPerDay]);
 
-  // Apply pending scrollLeft synchronously after the new inner width is
+  // Apply pending scroll offset synchronously after the new inner size is
   // in the DOM, so the cursor-anchored zoom never "skips" a frame.
   useLayoutEffect(() => {
     const el = containerRef.current;
-    if (!el || pendingScrollLeftRef.current === null) return;
-    const max = el.scrollWidth - el.clientWidth;
-    el.scrollLeft = Math.max(0, Math.min(max, pendingScrollLeftRef.current));
-    pendingScrollLeftRef.current = null;
-    setScrollLeft(el.scrollLeft);
-  }, [pxPerDay]);
+    if (!el || pendingScrollRef.current === null) return;
+    const max = getMainScrollSize(el) - getMainLength(el);
+    setMainScroll(el, Math.max(0, Math.min(max, pendingScrollRef.current)));
+    pendingScrollRef.current = null;
+    setScrollOffset(getMainScroll(el));
+  }, [pxPerDay, getMainScroll, setMainScroll, getMainLength, getMainScrollSize]);
 
-  // Track scrollLeft so visible-window memos recompute on pan.
+  // Track scroll offset so visible-window memos recompute on pan.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -259,7 +299,7 @@ export function Timeline({ clusterId }: TimelineProps) {
       if (raf) return;
       raf = requestAnimationFrame(() => {
         raf = 0;
-        setScrollLeft(el.scrollLeft);
+        setScrollOffset(getMainScroll(el));
       });
     };
     el.addEventListener('scroll', onScroll, { passive: true });
@@ -267,40 +307,42 @@ export function Timeline({ clusterId }: TimelineProps) {
       el.removeEventListener('scroll', onScroll);
       if (raf) cancelAnimationFrame(raf);
     };
-  }, []);
+  }, [getMainScroll]);
 
   // Wheel: plain wheel zooms (anchored on cursor); shift+wheel pans
-  // horizontally. Attached via addEventListener so we can preventDefault —
-  // React's onWheel is passive. Reads the live pxPerDay through a ref to
-  // avoid re-binding the listener on every zoom step.
+  // along the main axis. Attached via addEventListener so we can
+  // preventDefault — React's onWheel is passive. Reads the live pxPerDay
+  // through a ref to avoid re-binding on every zoom step.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const handler = (e: WheelEvent) => {
       if (e.shiftKey) {
         e.preventDefault();
-        el.scrollLeft += e.deltaY;
+        setMainScroll(el, getMainScroll(el) + e.deltaY);
         return;
       }
       e.preventDefault();
       const ppd = pxPerDayRef.current;
       if (ppd <= 0) return;
       const rect = el.getBoundingClientRect();
-      const cursorViewportX = e.clientX - rect.left;
-      const cursorContentX = el.scrollLeft + cursorViewportX;
-      const cursorDate = dateAtPixel(cursorContentX, minDate, ppd);
+      const cursorViewportMain = isVertical
+        ? e.clientY - rect.top
+        : e.clientX - rect.left;
+      const cursorContentMain = getMainScroll(el) + cursorViewportMain;
+      const cursorDate = dateAtPixel(cursorContentMain, minDate, ppd);
       // Exponential zoom — a single wheel "notch" (deltaY = 100) gives a
       // ~1.35× zoom step.
       const factor = Math.exp(-e.deltaY * 0.003);
-      const newPpd = clampPxPerDay(ppd * factor, el.clientWidth, totalDays);
+      const newPpd = clampPxPerDay(ppd * factor, getMainLength(el), totalDays);
       if (newPpd === ppd) return;
-      const newCursorContentX = pixelAtDate(cursorDate, minDate, newPpd);
-      pendingScrollLeftRef.current = newCursorContentX - cursorViewportX;
+      const newCursorContentMain = pixelAtDate(cursorDate, minDate, newPpd);
+      pendingScrollRef.current = newCursorContentMain - cursorViewportMain;
       setPxPerDay(newPpd);
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, [minDate, totalDays]);
+  }, [minDate, totalDays, isVertical, getMainScroll, setMainScroll, getMainLength]);
 
   // Touch handling: 1 finger pans, 2 fingers pinch-zoom anchored on the
   // midpoint. The container has `touch-action: none` so the browser
@@ -313,13 +355,16 @@ export function Timeline({ clusterId }: TimelineProps) {
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    let pan: { startX: number; startScrollLeft: number } | null = null;
+    let pan: { startMain: number; startScroll: number } | null = null;
     let pinch:
-      | { d0: number; ppd0: number; midViewportX: number; midDate: Date }
+      | { d0: number; ppd0: number; midViewportMain: number; midDate: Date }
       | null = null;
 
-    const startPan = (clientX: number) => {
-      pan = { startX: clientX, startScrollLeft: el.scrollLeft };
+    const mainOf = (t: { clientX: number; clientY: number }) =>
+      isVertical ? t.clientY : t.clientX;
+
+    const startPan = (t: Touch) => {
+      pan = { startMain: mainOf(t), startScroll: getMainScroll(el) };
       pinch = null;
     };
 
@@ -328,19 +373,20 @@ export function Timeline({ clusterId }: TimelineProps) {
       const ppd = pxPerDayRef.current;
       if (ppd <= 0) return;
       const rect = el.getBoundingClientRect();
-      const midViewportX = (t1.clientX + t2.clientX) / 2 - rect.left;
-      const midContentX = el.scrollLeft + midViewportX;
+      const rectStart = isVertical ? rect.top : rect.left;
+      const midViewportMain = (mainOf(t1) + mainOf(t2)) / 2 - rectStart;
+      const midContentMain = getMainScroll(el) + midViewportMain;
       pinch = {
         d0: Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY),
         ppd0: ppd,
-        midViewportX,
-        midDate: dateAtPixel(midContentX, minDate, ppd),
+        midViewportMain,
+        midDate: dateAtPixel(midContentMain, minDate, ppd),
       };
     };
 
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 1) {
-        startPan(e.touches[0].clientX);
+        startPan(e.touches[0]);
       } else if (e.touches.length === 2) {
         e.preventDefault();
         startPinch(e.touches[0], e.touches[1]);
@@ -350,7 +396,7 @@ export function Timeline({ clusterId }: TimelineProps) {
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length === 1 && pan) {
         e.preventDefault();
-        el.scrollLeft = pan.startScrollLeft - (e.touches[0].clientX - pan.startX);
+        setMainScroll(el, pan.startScroll - (mainOf(e.touches[0]) - pan.startMain));
       } else if (e.touches.length === 2 && pinch) {
         e.preventDefault();
         const t1 = e.touches[0];
@@ -359,12 +405,12 @@ export function Timeline({ clusterId }: TimelineProps) {
         if (d < 10 || pinch.d0 < 10) return;
         const newPpd = clampPxPerDay(
           pinch.ppd0 * (d / pinch.d0),
-          el.clientWidth,
+          getMainLength(el),
           totalDays,
         );
         if (newPpd === pxPerDayRef.current) return;
-        const newMidContentX = pixelAtDate(pinch.midDate, minDate, newPpd);
-        pendingScrollLeftRef.current = newMidContentX - pinch.midViewportX;
+        const newMidContentMain = pixelAtDate(pinch.midDate, minDate, newPpd);
+        pendingScrollRef.current = newMidContentMain - pinch.midViewportMain;
         setPxPerDay(newPpd);
       }
     };
@@ -377,7 +423,7 @@ export function Timeline({ clusterId }: TimelineProps) {
         // Lifting one finger off a pinch — re-anchor pan on the
         // remaining finger so it doesn't jump.
         pinch = null;
-        startPan(e.touches[0].clientX);
+        startPan(e.touches[0]);
       }
     };
 
@@ -391,15 +437,15 @@ export function Timeline({ clusterId }: TimelineProps) {
       el.removeEventListener('touchend', onTouchEnd);
       el.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [minDate, totalDays]);
+  }, [minDate, totalDays, isVertical, getMainScroll, setMainScroll, getMainLength]);
 
   const fitAll = useCallback(() => {
     const el = containerRef.current;
     if (!el) return;
-    const ppd = el.clientWidth / totalDays;
-    pendingScrollLeftRef.current = 0;
+    const ppd = getMainLength(el) / totalDays;
+    pendingScrollRef.current = 0;
     setPxPerDay(ppd);
-  }, [totalDays]);
+  }, [totalDays, getMainLength]);
 
   // ───── Visible window ────────────────────────────────────────────────
   // A small buffer keeps tick labels from popping in/out at the edges
@@ -407,16 +453,16 @@ export function Timeline({ clusterId }: TimelineProps) {
   const visibleStart = useMemo(
     () =>
       pxPerDay > 0
-        ? dateAtPixel(scrollLeft - 200, minDate, pxPerDay)
+        ? dateAtPixel(scrollOffset - 200, minDate, pxPerDay)
         : minDate,
-    [scrollLeft, pxPerDay, minDate],
+    [scrollOffset, pxPerDay, minDate],
   );
   const visibleEnd = useMemo(
     () =>
       pxPerDay > 0
-        ? dateAtPixel(scrollLeft + containerWidth + 200, minDate, pxPerDay)
+        ? dateAtPixel(scrollOffset + containerLength + 200, minDate, pxPerDay)
         : maxDate,
-    [scrollLeft, containerWidth, pxPerDay, minDate, maxDate],
+    [scrollOffset, containerLength, pxPerDay, minDate, maxDate],
   );
 
   // ───── Tick computations ──────────────────────────────────────────────
@@ -676,39 +722,175 @@ export function Timeline({ clusterId }: TimelineProps) {
   const weekOpacity = fadeIn(pxPerDay, WEEK_FADE[0], WEEK_FADE[1]);
   const dayOpacity = fadeIn(pxPerDay, DAY_FADE[0], DAY_FADE[1]);
 
-  const innerWidthPx = pxPerDay > 0 ? totalDays * pxPerDay : 0;
-  const ready = pxPerDay > 0 && containerWidth > 0;
+  const innerMainPx = pxPerDay > 0 ? totalDays * pxPerDay : 0;
+  const ready = pxPerDay > 0 && containerLength > 0;
+
+  // ───── Axis-aware style helpers ───────────────────────────────────────
+  // Position something at `offset` along the time axis (and optionally
+  // size it along the same axis). Translates to {left,width} for
+  // horizontal, {top,height} for vertical.
+  const mainPos = (offset: number, length?: number): React.CSSProperties => {
+    if (isVertical) {
+      return length !== undefined
+        ? { top: `${offset}px`, height: `${length}px` }
+        : { top: `${offset}px` };
+    }
+    return length !== undefined
+      ? { left: `${offset}px`, width: `${length}px` }
+      : { left: `${offset}px` };
+  };
+  // CSS class that makes a positioned child span the full extent of its
+  // parent on the cross axis (so a year-tick wrapper, e.g., reaches from
+  // top to bottom in horizontal mode, or left to right in vertical).
+  const crossSpanClass = isVertical ? 'left-0 right-0' : 'top-0 bottom-0';
+  const centerLineClass = isVertical
+    ? 'absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-0.5 bg-gray-300'
+    : 'absolute left-0 right-0 top-1/2 -translate-y-1/2 h-0.5 bg-gray-300';
+  const innerWrapperStyle: React.CSSProperties = isVertical
+    ? { height: `${innerMainPx}px`, minHeight: '100%' }
+    : { width: `${innerMainPx}px`, minWidth: '100%' };
+  const innerWrapperSizeClass = isVertical ? 'w-full' : 'h-full';
+  const containerScrollClass = isVertical
+    ? 'overflow-y-auto overflow-x-hidden'
+    : 'overflow-x-auto overflow-y-hidden';
+
+  // Render a tick marker (small line on the center axis). `length` is the
+  // tick's extent along the cross axis (perpendicular to the time axis);
+  // `thickness` is the line's stroke width (always 1px in practice).
+  // Inline styles avoid Tailwind JIT issues — the swapped horizontal /
+  // vertical class names wouldn't appear literally in source so they
+  // wouldn't be generated.
+  const tickMarker = (length: number, colorClass: string) => {
+    const style: React.CSSProperties = isVertical
+      ? { width: `${length}px`, height: '1px' }
+      : { width: '1px', height: `${length}px` };
+    return (
+      <div
+        className={`absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 ${colorClass}`}
+        style={style}
+      />
+    );
+  };
+
+  // Position a label relative to the center axis, at a given cross-axis
+  // offset (px). `centerSide` is 'before' (above-or-left of center) or
+  // 'after' (below-or-right of center) — used for horizontal layouts that
+  // historically positioned labels with `top: calc(50% - X)` etc.
+  const labelOnCross = (
+    crossPx: number,
+    side: 'before' | 'after',
+  ): React.CSSProperties => {
+    if (isVertical) {
+      // Cross axis = X. "Before" = left, "After" = right. Center on Y
+      // (the time axis position) via parent's mainPos already; here we
+      // only set the cross offset and a translate so the label is
+      // vertically centered on the tick.
+      const css: React.CSSProperties = { transform: 'translateY(-50%)' };
+      if (side === 'before') {
+        css.right = `calc(50% + ${crossPx}px)`;
+      } else {
+        css.left = `calc(50% + ${crossPx}px)`;
+      }
+      return css;
+    }
+    // Horizontal: cross = Y. "Before" = above center, "After" = below.
+    const css: React.CSSProperties = { transform: 'translateX(-50%)' };
+    if (side === 'before') {
+      css.bottom = `calc(50% + ${crossPx}px)`;
+    } else {
+      css.top = `calc(50% + ${crossPx}px)`;
+    }
+    return css;
+  };
+
+  // Event lane container. Events sit on the "before" side of the center
+  // axis (above in horizontal, left in vertical) and lanes stack outward
+  // from the center.
+  const eventLanesContainerStyle: React.CSSProperties = isVertical
+    ? { right: '55%', width: `${eventLayout.laneCount * 14 + 4}px` }
+    : { bottom: '55%', height: `${eventLayout.laneCount * 14 + 4}px` };
+  const eventLanesContainerSpanClass = isVertical
+    ? 'absolute top-0 bottom-0'
+    : 'absolute left-0 right-0';
+
+  // Position an event bar/dot on the timeline.
+  const eventBarStyle = (
+    offsetMain: number,
+    lengthMain: number,
+    laneOffsetCross: number,
+  ): React.CSSProperties => {
+    if (isVertical) {
+      return {
+        top: `${offsetMain}px`,
+        height: `${Math.max(lengthMain, 4)}px`,
+        right: `${laneOffsetCross}px`,
+        width: '10px',
+      };
+    }
+    return {
+      left: `${offsetMain}px`,
+      width: `${Math.max(lengthMain, 4)}px`,
+      bottom: `${laneOffsetCross}px`,
+      height: '10px',
+    };
+  };
+  const eventDotStyle = (
+    offsetMain: number,
+    laneOffsetCross: number,
+  ): React.CSSProperties => {
+    if (isVertical) {
+      return {
+        top: `${offsetMain}px`,
+        right: `${laneOffsetCross}px`,
+        transform: 'translateY(-50%)',
+      };
+    }
+    return {
+      left: `${offsetMain}px`,
+      bottom: `${laneOffsetCross}px`,
+      transform: 'translateX(-50%)',
+    };
+  };
 
   // ───── Render ────────────────────────────────────────────────────────
+  // Root container chrome differs by orientation: horizontal sits as a
+  // bottom-of-screen panel with a resize handle and a fixed pixel height;
+  // vertical fills its parent (used by the mobile full-screen page).
+  const rootStyle: React.CSSProperties = isVertical
+    ? { height: '100%' }
+    : { height: `${panelHeight}px` };
+  const rootClass = isVertical
+    ? 'bg-white flex flex-col font-sans relative z-40 h-full'
+    : 'bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex flex-col font-sans relative z-40';
+
   return (
-    <div
-      className="bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex flex-col font-sans relative z-40"
-      style={{ height: `${panelHeight}px` }}
-    >
-      {/* Resize handle */}
-      <div
-        className="flex items-center justify-center gap-2 py-1 border-b border-gray-100 bg-gray-50/30 cursor-row-resize select-none"
-        onMouseDown={e => {
-          e.preventDefault();
-          const startY = e.clientY;
-          const startH = panelHeight;
-          const onMove = (ev: MouseEvent) =>
-            setPanelHeight(
-              Math.max(150, Math.min(500, startH - (ev.clientY - startY))),
-            );
-          const onUp = () => {
-            window.removeEventListener('mousemove', onMove);
-            window.removeEventListener('mouseup', onUp);
-          };
-          window.addEventListener('mousemove', onMove);
-          window.addEventListener('mouseup', onUp);
-        }}
-      >
-        <div className="w-8 h-1 rounded-full bg-gray-300" />
-      </div>
+    <div className={rootClass} style={rootStyle}>
+      {/* Resize handle — desktop-only. */}
+      {!isVertical && (
+        <div
+          className="flex items-center justify-center gap-2 py-1 border-b border-gray-100 bg-gray-50/30 cursor-row-resize select-none"
+          onMouseDown={e => {
+            e.preventDefault();
+            const startY = e.clientY;
+            const startH = panelHeight;
+            const onMove = (ev: MouseEvent) =>
+              setPanelHeight(
+                Math.max(150, Math.min(500, startH - (ev.clientY - startY))),
+              );
+            const onUp = () => {
+              window.removeEventListener('mousemove', onMove);
+              window.removeEventListener('mouseup', onUp);
+            };
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+          }}
+        >
+          <div className="w-8 h-1 rounded-full bg-gray-300" />
+        </div>
+      )}
 
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-2 border-b border-gray-100 bg-gray-50/50 gap-3">
+      <div className="flex items-center justify-between px-4 md:px-6 py-2 border-b border-gray-100 bg-gray-50/50 gap-3 flex-shrink-0">
         <div className="flex items-center gap-2 text-sm font-semibold text-gray-600 min-w-0">
           <span className="text-gray-900 whitespace-nowrap">
             {ready
@@ -723,9 +905,11 @@ export function Timeline({ clusterId }: TimelineProps) {
             <MaximizeIcon className="w-3 h-3" />
             Fit all
           </button>
-          <span className="hidden md:inline text-xs font-normal text-gray-400 ml-2">
-            Scroll to zoom · shift+scroll to pan
-          </span>
+          {!isVertical && (
+            <span className="hidden md:inline text-xs font-normal text-gray-400 ml-2">
+              Scroll to zoom · shift+scroll to pan
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {hasPendingShifts && (
@@ -766,15 +950,15 @@ export function Timeline({ clusterId }: TimelineProps) {
       {/* Timeline Content */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-x-auto overflow-y-hidden relative touch-none"
+        className={`flex-1 ${containerScrollClass} relative touch-none`}
       >
         {ready ? (
           <div
-            className="relative h-full"
-            style={{ width: `${innerWidthPx}px`, minWidth: '100%' }}
+            className={`relative ${innerWrapperSizeClass}`}
+            style={innerWrapperStyle}
           >
-            {/* Center horizontal axis */}
-            <div className="absolute left-0 right-0 h-0.5 bg-gray-300 top-1/2 -translate-y-1/2" />
+            {/* Center axis line (horizontal in horizontal mode, vertical in vertical mode) */}
+            <div className={centerLineClass} />
 
             {displayedCycles.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center text-sm text-gray-400 italic">
@@ -784,15 +968,22 @@ export function Timeline({ clusterId }: TimelineProps) {
 
             {/* YEAR layer — always visible */}
             {yearTicks.map(({ date, label }) => {
-              const x = pixelAtDate(date, minDate, pxPerDay);
+              const offset = pixelAtDate(date, minDate, pxPerDay);
               return (
                 <div
                   key={`y-${label}`}
-                  className="absolute top-0 bottom-0 pointer-events-none"
-                  style={{ left: `${x}px` }}
+                  className={`absolute ${crossSpanClass} pointer-events-none`}
+                  style={mainPos(offset)}
                 >
-                  <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-8 bg-gray-400" />
-                  <div className="absolute top-2 -translate-x-1/2 font-bold text-gray-900 text-base whitespace-nowrap bg-white/80 px-1 rounded">
+                  {tickMarker(32, 'bg-gray-400')}
+                  <div
+                    className="absolute font-bold text-gray-900 text-base whitespace-nowrap bg-white/80 px-1 rounded"
+                    style={
+                      isVertical
+                        ? { left: '8px', transform: 'translateY(-50%)' }
+                        : { top: '8px', transform: 'translateX(-50%)' }
+                    }
+                  >
                     {label}
                   </div>
                 </div>
@@ -802,35 +993,70 @@ export function Timeline({ clusterId }: TimelineProps) {
             {/* CYCLE layer */}
             {cycleOpacity > 0 &&
               visibleCycles.map(cycle => {
-                const startX = pixelAtDate(cycle.startDate, minDate, pxPerDay);
-                const endX = pixelAtDate(
+                const startMain = pixelAtDate(cycle.startDate, minDate, pxPerDay);
+                const endMain = pixelAtDate(
                   addDays(cycle.endDate, 1),
                   minDate,
                   pxPerDay,
                 );
-                const widthPx = endX - startX;
+                const lengthPx = endMain - startMain;
                 const pending = (pendingShifts[cycle.id] ?? 0) !== 0;
                 const showEdit =
-                  callerCtx?.isAdmin && widthPx >= CYCLE_EDIT_MIN_PX;
-                const showLabel = widthPx >= 50;
+                  callerCtx?.isAdmin && lengthPx >= CYCLE_EDIT_MIN_PX;
+                const showLabel = lengthPx >= 50;
+                // Boundary tick: a short stripe across the center axis,
+                // on the start (leading) edge of the cycle.
+                const boundaryTickStyle: React.CSSProperties = isVertical
+                  ? {
+                      left: '50%',
+                      top: 0,
+                      transform: 'translateX(-50%)',
+                      width: '24px',
+                      height: '2px',
+                    }
+                  : {
+                      top: '50%',
+                      left: 0,
+                      transform: 'translateY(-50%)',
+                      width: '2px',
+                      height: '24px',
+                    };
+                // Date chip sits just past the boundary tick, on the
+                // "after" side of the center axis (below in horizontal,
+                // right of center in vertical).
+                const dateChipStyle: React.CSSProperties = isVertical
+                  ? { left: 'calc(50% + 14px)', top: '4px' }
+                  : { top: 'calc(50% + 12px)', left: '4px' };
+                const editButtonsStyle: React.CSSProperties = isVertical
+                  ? { left: 'calc(50% + 14px)', top: '24px' }
+                  : { top: 'calc(50% + 36px)', left: '4px' };
+                const cycleLabelStyle: React.CSSProperties = isVertical
+                  ? {
+                      left: '50%',
+                      top: '50%',
+                      transform: 'translate(-50%, -50%)',
+                    }
+                  : {
+                      left: '50%',
+                      top: '50%',
+                      transform: 'translate(-50%, -50%)',
+                    };
                 return (
                   <div
                     key={`c-${cycle.id}`}
-                    className="absolute top-0 bottom-0"
-                    style={{
-                      left: `${startX}px`,
-                      width: `${widthPx}px`,
-                      opacity: cycleOpacity,
-                    }}
+                    className={`absolute ${crossSpanClass}`}
+                    style={{ ...mainPos(startMain, lengthPx), opacity: cycleOpacity }}
                   >
-                    {/* Boundary tick at the left edge */}
                     <div
-                      className={`absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-6 ${
+                      className={`absolute ${
                         pending ? 'bg-amber-400' : 'bg-gray-400'
                       }`}
+                      style={boundaryTickStyle}
                     />
-                    {/* Start-date chip below the boundary */}
-                    <div className="absolute top-1/2 mt-3 left-0 ml-1 flex items-center gap-0.5 text-xs font-medium whitespace-nowrap">
+                    <div
+                      className="absolute flex items-center gap-0.5 text-xs font-medium whitespace-nowrap"
+                      style={dateChipStyle}
+                    >
                       <span
                         className={
                           pending
@@ -842,7 +1068,10 @@ export function Timeline({ clusterId }: TimelineProps) {
                       </span>
                     </div>
                     {showEdit && (
-                      <div className="absolute top-1/2 mt-9 left-0 ml-1 flex items-center gap-0.5 z-20">
+                      <div
+                        className="absolute flex items-center gap-0.5 z-20"
+                        style={editButtonsStyle}
+                      >
                         <button
                           onClick={ev => {
                             ev.stopPropagation();
@@ -866,7 +1095,10 @@ export function Timeline({ clusterId }: TimelineProps) {
                       </div>
                     )}
                     {showLabel && (
-                      <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 bg-white px-2 text-xs font-bold text-gray-900 z-10 whitespace-nowrap">
+                      <div
+                        className="absolute bg-white px-2 text-xs font-bold text-gray-900 z-10 whitespace-nowrap"
+                        style={cycleLabelStyle}
+                      >
                         {cycle.label}
                       </div>
                     )}
@@ -877,16 +1109,18 @@ export function Timeline({ clusterId }: TimelineProps) {
             {/* MONTH layer */}
             {monthOpacity > 0 &&
               monthTicks.map(({ date, label }) => {
-                const x = pixelAtDate(date, minDate, pxPerDay);
+                const offset = pixelAtDate(date, minDate, pxPerDay);
                 return (
                   <div
                     key={`m-${date.toISOString()}`}
-                    className="absolute top-0 bottom-0 pointer-events-none"
-                    style={{ left: `${x}px`, opacity: monthOpacity }}
+                    className={`absolute ${crossSpanClass} pointer-events-none`}
+                    style={{ ...mainPos(offset), opacity: monthOpacity }}
                   >
-                    <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-4 bg-gray-300" />
-                    <div className="absolute -translate-x-1/2 text-[11px] font-semibold text-gray-500 whitespace-nowrap bg-white px-1 rounded"
-                         style={{ top: 'calc(50% - 28px)' }}>
+                    {tickMarker(16, 'bg-gray-300')}
+                    <div
+                      className="absolute text-[11px] font-semibold text-gray-500 whitespace-nowrap bg-white px-1 rounded"
+                      style={labelOnCross(28, 'before')}
+                    >
                       {label}
                     </div>
                   </div>
@@ -896,14 +1130,14 @@ export function Timeline({ clusterId }: TimelineProps) {
             {/* WEEK layer */}
             {weekOpacity > 0 &&
               weekTicks.map(date => {
-                const x = pixelAtDate(date, minDate, pxPerDay);
+                const offset = pixelAtDate(date, minDate, pxPerDay);
                 return (
                   <div
                     key={`w-${date.toISOString()}`}
-                    className="absolute top-0 bottom-0 pointer-events-none"
-                    style={{ left: `${x}px`, opacity: weekOpacity }}
+                    className={`absolute ${crossSpanClass} pointer-events-none`}
+                    style={{ ...mainPos(offset), opacity: weekOpacity }}
                   >
-                    <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-2 bg-gray-300" />
+                    {tickMarker(8, 'bg-gray-300')}
                   </div>
                 );
               })}
@@ -911,19 +1145,21 @@ export function Timeline({ clusterId }: TimelineProps) {
             {/* DAY layer */}
             {dayOpacity > 0 &&
               dayTicks.map(date => {
-                const x = pixelAtDate(date, minDate, pxPerDay);
+                const offset = pixelAtDate(date, minDate, pxPerDay);
                 const isMonthStart = date.getDate() === 1;
                 if (isMonthStart) return null;
                 return (
                   <div
                     key={`d-${date.toISOString()}`}
-                    className="absolute top-0 bottom-0 pointer-events-none"
-                    style={{ left: `${x}px`, opacity: dayOpacity }}
+                    className={`absolute ${crossSpanClass} pointer-events-none`}
+                    style={{ ...mainPos(offset), opacity: dayOpacity }}
                   >
-                    <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-px h-1.5 bg-gray-200" />
+                    {tickMarker(6, 'bg-gray-200')}
                     {pxPerDay > 25 && (
-                      <div className="absolute -translate-x-1/2 text-[9px] font-medium text-gray-400 whitespace-nowrap"
-                           style={{ top: 'calc(50% + 18px)' }}>
+                      <div
+                        className="absolute text-[9px] font-medium text-gray-400 whitespace-nowrap"
+                        style={labelOnCross(18, 'after')}
+                      >
                         {date.getDate()}
                       </div>
                     )}
@@ -932,21 +1168,15 @@ export function Timeline({ clusterId }: TimelineProps) {
               })}
 
             {/* EVENT layer */}
-            <div
-              className="absolute left-0 right-0"
-              style={{
-                bottom: '55%',
-                height: `${eventLayout.laneCount * 14 + 4}px`,
-              }}
-            >
+            <div className={eventLanesContainerSpanClass} style={eventLanesContainerStyle}>
               {sortedVisibleEvents.map((e, i) => {
                 const isBar = e.endDate && e.endDate.getTime() > e.startDate.getTime();
-                const leftPx = pixelAtDate(e.startDate, minDate, pxPerDay);
-                const rightPx = isBar
+                const startMain = pixelAtDate(e.startDate, minDate, pxPerDay);
+                const endMain = isBar
                   ? pixelAtDate(e.endDate!, minDate, pxPerDay)
-                  : leftPx;
+                  : startMain;
                 const row = eventLayout.lanes[i] ?? 0;
-                const bottomOffset = row * 14 + 2;
+                const laneOffset = row * 14 + 2;
                 const onMouseEnter = (ev: React.MouseEvent) => {
                   const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
                   setHoveredEvent({
@@ -965,12 +1195,7 @@ export function Timeline({ clusterId }: TimelineProps) {
                     <div
                       key={e.id}
                       className={`absolute ${interactionClass}`}
-                      style={{
-                        left: `${leftPx}px`,
-                        width: `${Math.max(rightPx - leftPx, 4)}px`,
-                        bottom: `${bottomOffset}px`,
-                        height: '10px',
-                      }}
+                      style={eventBarStyle(startMain, endMain - startMain, laneOffset)}
                       onMouseEnter={onMouseEnter}
                       onMouseLeave={onMouseLeave}
                       onClick={onClick}
@@ -983,11 +1208,7 @@ export function Timeline({ clusterId }: TimelineProps) {
                   <div
                     key={e.id}
                     className={`absolute w-2.5 h-2.5 rounded-full bg-blue-500 hover:bg-blue-600 transition-colors ${interactionClass}`}
-                    style={{
-                      left: `${leftPx}px`,
-                      bottom: `${bottomOffset}px`,
-                      transform: 'translateX(-50%)',
-                    }}
+                    style={eventDotStyle(startMain, laneOffset)}
                     onMouseEnter={onMouseEnter}
                     onMouseLeave={onMouseLeave}
                     onClick={onClick}

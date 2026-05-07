@@ -38,8 +38,8 @@ export function MobileTimeline() {
           </p>
         </div>
       </header>
-      <div className="flex-1 min-h-0 overflow-auto">
-        <Timeline clusterId={cluster} />
+      <div className="flex-1 min-h-0">
+        <Timeline clusterId={cluster} orientation="vertical" />
       </div>
     </div>
   );
