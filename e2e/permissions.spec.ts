@@ -102,13 +102,15 @@ test.describe('admin', () => {
     await expect(page.getByRole('button', { name: /create user/i })).toBeVisible();
   });
 
-  test('Create User modal offers all roles including Administrator', async ({ page }) => {
+  test('Create User modal offers subordinate roles but not Administrator (super_admin only)', async ({ page }) => {
     await page.goto('/users');
     await page.waitForLoadState('networkidle');
     await page.getByRole('button', { name: /create user/i }).click();
     const roleSelect = page.locator('select').first();
     await expect(roleSelect).toBeVisible();
-    await expect(roleSelect.locator('option', { hasText: 'Administrator' })).toHaveCount(1);
+    // Administrator requires super_admin; perm-admin is a regular admin, so it must not appear.
+    await expect(roleSelect.locator('option', { hasText: 'Administrator' })).toHaveCount(0);
+    await expect(roleSelect.locator('option', { hasText: 'Regional (View-Only)' })).toHaveCount(1);
     await expect(roleSelect.locator('option', { hasText: 'Cluster Coordinator' })).toHaveCount(1);
     await expect(roleSelect.locator('option', { hasText: 'Nucleus Coordinator' })).toHaveCount(1);
     await expect(roleSelect.locator('option', { hasText: 'Activity Lead' })).toHaveCount(1);

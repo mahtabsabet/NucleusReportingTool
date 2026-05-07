@@ -1,5 +1,5 @@
 import { supabase } from '../supabase';
-import { actionPermission } from '../permissions';
+import { actionPermission, activityLeadActivityIds } from '../permissions';
 import { getCallerContext } from './users';
 
 export interface PersonDetail {
@@ -203,6 +203,27 @@ export async function personDeletePermission(personId: string): Promise<'direct'
       nucleusId: p.activities?.nucleus_id,
       activityId: p.activity_id,
     });
+  }
+
+  // Activity leads see nucleus-enrolled persons via the NC's nucleus, but their
+  // activityId is never in `parts` for persons who have no activity_participants
+  // row yet. Add synthetic checks so inOwnActivity can fire for them.
+  const alActivityIds = activityLeadActivityIds(ctx);
+  if (alActivityIds.length > 0 && (enrollments ?? []).length > 0) {
+    const enrolledNucleusIds = (enrollments as any[]).map((e: any) => e.nucleus_id);
+    const { data: alActivities } = await supabase
+      .from('activities')
+      .select('id, nucleus_id, nuclei(cluster_id)')
+      .in('id', alActivityIds)
+      .in('nucleus_id', enrolledNucleusIds)
+      .is('deleted_at', null);
+    for (const a of (alActivities ?? []) as any[]) {
+      checks.push({
+        clusterId: a.nuclei?.cluster_id,
+        nucleusId: a.nucleus_id,
+        activityId: a.id,
+      });
+    }
   }
 
   // Aggregate: pick the strongest permission across scopes.

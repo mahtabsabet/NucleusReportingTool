@@ -526,11 +526,18 @@ export async function fetchNucleusEnrollmentsWithNames(nucleusId: string): Promi
 
   if (rows.length === 0) return [];
 
-  // Fetch person names and photos in a separate query — avoids PostgREST FK-join ambiguity
+  // Fetch person names and photos in a separate query — avoids PostgREST FK-join ambiguity.
+  // Fall back to name-only if profile_image_url column hasn't been added to the live DB yet.
   const personIds = rows.map((e: any) => e.person_id);
-  const { data: persons } = await supabase.from('persons').select('id, name, profile_image_url').in('id', personIds);
-  const nameMap = Object.fromEntries(((persons ?? []) as any[]).map(p => [p.id, p.name]));
-  const photoMap = Object.fromEntries(((persons ?? []) as any[]).map(p => [p.id, p.profile_image_url ?? null]));
+  const { data: persons, error: personsErr } = await supabase
+    .from('persons')
+    .select('id, name, profile_image_url')
+    .in('id', personIds);
+  const personData = personsErr
+    ? ((await supabase.from('persons').select('id, name').in('id', personIds)).data ?? [])
+    : (persons ?? []);
+  const nameMap = Object.fromEntries(((personData) as any[]).map(p => [p.id, p.name]));
+  const photoMap = Object.fromEntries(((personData) as any[]).map(p => [p.id, (p as any).profile_image_url ?? null]));
 
   return rows.map((e: any) => ({
     personId: e.person_id,
