@@ -1,11 +1,22 @@
 import { supabase } from '../supabase';
 import type { TimelineCycle, TimelineEvent } from '../../types';
 
-export async function fetchTimelineCycles(): Promise<TimelineCycle[]> {
-  const { data, error } = await supabase
+// Returns DB-backed cycle overrides for the given cluster. The schema treats
+// rows with cluster_id IS NULL as "applies to all clusters", so those are
+// always included as a fallback. Callers merge this with the computed
+// schedule via buildCycleSchedule (see lib/timeline/cycles.ts) — empty DB
+// state must NOT block the timeline from rendering.
+export async function fetchTimelineCycles(params: { clusterId?: string } = {}): Promise<TimelineCycle[]> {
+  let query = supabase
     .from('timeline_cycles')
-    .select('id, label, start_date, end_date')
+    .select('id, label, start_date, end_date, cluster_id')
     .order('start_date');
+  if (params.clusterId) {
+    query = query.or(`cluster_id.eq.${params.clusterId},cluster_id.is.null`);
+  } else {
+    query = query.is('cluster_id', null);
+  }
+  const { data, error } = await query;
   if (error) throw error;
   return ((data ?? []) as any[]).map(c => ({
     id: c.id,
