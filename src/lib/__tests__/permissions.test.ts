@@ -154,6 +154,20 @@ describe('actionPermission', () => {
     expect(actionPermission(NC, 'change_user_permissions')).toBe('request');
     expect(actionPermission(AL, 'delete_user')).toBe('none');
   });
+
+  it('Timeline cycle dates and events: SuperAdmin / Admin / CC only', () => {
+    // Globally allowed
+    expect(actionPermission(SUPER, 'edit_timeline_cycles')).toBe('direct');
+    expect(actionPermission(ADMIN, 'manage_timeline_events')).toBe('direct');
+    // CC only within own cluster
+    expect(actionPermission(CC, 'edit_timeline_cycles', { clusterId: 'C1' })).toBe('direct');
+    expect(actionPermission(CC, 'edit_timeline_cycles', { clusterId: 'OTHER' })).toBe('none');
+    expect(actionPermission(CC, 'manage_timeline_events', { clusterId: 'C1' })).toBe('direct');
+    // NC, AL, Regional: never
+    expect(actionPermission(NC, 'edit_timeline_cycles', { clusterId: 'C1' })).toBe('none');
+    expect(actionPermission(AL, 'manage_timeline_events', { clusterId: 'C1' })).toBe('none');
+    expect(actionPermission(REGIONAL, 'edit_timeline_cycles')).toBe('none');
+  });
 });
 
 // ---- User-management safeguards ---------------------------------------

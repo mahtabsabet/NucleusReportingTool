@@ -7,7 +7,9 @@ import { TEST_USERS } from '../scripts/seed';
 // These sessions are consumed by permissions.spec.ts via test.use({ storageState }).
 
 const PERM_USERS: Array<{ key: keyof typeof TEST_USERS; file: string }> = [
+  { key: 'superAdmin',  file: 'e2e/.auth/perm-super-admin.json' },
   { key: 'admin',       file: 'e2e/.auth/perm-admin.json' },
+  { key: 'regional',    file: 'e2e/.auth/perm-regional.json' },
   { key: 'coordinator', file: 'e2e/.auth/perm-coordinator.json' },
   { key: 'collaborator',file: 'e2e/.auth/perm-collaborator.json' },
   { key: 'lead',        file: 'e2e/.auth/perm-lead.json' },

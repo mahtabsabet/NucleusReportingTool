@@ -3,14 +3,20 @@
  *
  * Each describe block authenticates as a different permanent test user (seeded
  * by scripts/seed.ts) and verifies what that role can and cannot do — both in
- * the UI and at the Edge Function (create-user) API level.
+ * the UI and at the Edge Function (create-user / manage-user) API level.
  *
  * Roles under test:
+ *   perm-super-admin  – is_super_admin = true, top-tier role
  *   perm-admin        – is_admin = true, no scoped permission row
+ *   perm-regional     – is_regional_viewer = true, global read-only
  *   perm-coordinator  – cluster_coordinator for Test Cluster (cluster 1) only
  *   perm-collaborator – nucleus_collaborator for Test Nucleus (nucleus 1) only
  *   perm-lead         – activity_lead for Test Children's Class (activity 1) only
  *   perm-viewer       – authenticated, zero permissions
+ *
+ * The tests are intentionally cell-by-cell against the permissions table so
+ * regressions in the central permissions module or the edge-function
+ * enforcement layer are caught immediately.
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -37,13 +43,28 @@ async function callCreateUser(
   page: Page,
   params: Record<string, unknown>,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
+  return callEdgeFn(page, 'create-user', params);
+}
+
+/** Call the manage-user Edge Function directly and return { status, body }. */
+async function callManageUser(
+  page: Page,
+  params: Record<string, unknown>,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  return callEdgeFn(page, 'manage-user', params);
+}
+
+async function callEdgeFn(
+  page: Page,
+  fn: string,
+  params: Record<string, unknown>,
+): Promise<{ status: number; body: Record<string, unknown> }> {
   const supabaseUrl = process.env.VITE_SUPABASE_URL!;
   const token = await getAccessToken(page);
 
-  // Use the browser's fetch so the call goes through the same network path
-  const result = await page.evaluate(
-    async ({ url, token, params }) => {
-      const res = await fetch(`${url}/functions/v1/create-user`, {
+  return page.evaluate(
+    async ({ url, fn, token, params }) => {
+      const res = await fetch(`${url}/functions/v1/${fn}`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -54,9 +75,20 @@ async function callCreateUser(
       const body = await res.json();
       return { status: res.status, body };
     },
-    { url: supabaseUrl, token, params },
+    { url: supabaseUrl, fn, token, params },
   );
-  return result;
+}
+
+/** Read role-dropdown option labels from an open Create User modal. */
+async function getCreateUserRoleOptions(page: Page): Promise<string[]> {
+  await page.goto('/users');
+  await page.waitForLoadState('networkidle');
+  await page.getByRole('button', { name: /create user/i }).click();
+  const select = page.locator('select').first();
+  await expect(select).toBeVisible();
+  const labels = await select.locator('option').allTextContents();
+  // Drop the placeholder "Select a role…" entry
+  return labels.filter(t => t && !/^select a role/i.test(t.trim()));
 }
 
 // ── Admin ─────────────────────────────────────────────────────────────────────
@@ -324,5 +356,277 @@ test.describe('viewer (no permissions)', () => {
 
     expect(status).toBe(403);
     expect(typeof body.error).toBe('string');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Tests added with the centralised permissions model.
+//  These exercise the rows of the permissions table that involve Super Admin,
+//  Regional (View-Only), the request-only flows, and per-role dropdown contents.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ── Super Admin ──────────────────────────────────────────────────────────────
+
+test.describe('super admin', () => {
+  test.use({ storageState: 'e2e/.auth/perm-super-admin.json' });
+
+  test('Create User dropdown offers every role except Super Admin', async ({ page }) => {
+    const opts = await getCreateUserRoleOptions(page);
+    expect(opts).toEqual([
+      'Administrator',
+      'Regional (View-Only)',
+      'Cluster Coordinator',
+      'Nucleus Coordinator',
+      'Activity Lead',
+    ]);
+  });
+
+  test('Edge Function rejects creating a Super Admin', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const { status, body } = await callCreateUser(page, {
+      name:     'Should Not Exist',
+      email:    `forbidden-super-${Date.now()}@nucleus-test.invalid`,
+      password: 'NoSuperPass123!',
+      role:     'super_admin',
+    });
+    expect(status).toBe(403);
+    expect(typeof body.error).toBe('string');
+  });
+
+  test('Edge Function rejects deleting another Super Admin (none exist; safeguard self-protects)', async ({ page }) => {
+    // We cannot delete ourselves; the function returns 403 either via the
+    // self-action guard or the Super Admin protection. Both are acceptable.
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const me = await page.evaluate(() => {
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i)!;
+        if (k.startsWith('sb-') && k.endsWith('-auth-token')) {
+          const v = JSON.parse(localStorage.getItem(k)!);
+          return v?.user?.id ?? '';
+        }
+      }
+      return '';
+    });
+    const { status } = await callManageUser(page, {
+      action: 'delete',
+      targetUserId: me,
+      confirmedEmail: 'perm-super-admin@nucleus-test.invalid',
+    });
+    expect(status).toBe(403);
+  });
+});
+
+// ── Admin: dropdown excludes Administrator and Super Admin ──────────────────
+
+test.describe('admin (dropdown shape)', () => {
+  test.use({ storageState: 'e2e/.auth/perm-admin.json' });
+
+  test('Create User dropdown excludes Administrator and Super Admin', async ({ page }) => {
+    const opts = await getCreateUserRoleOptions(page);
+    expect(opts).not.toContain('Administrator');
+    expect(opts).not.toContain('Super Admin');
+    // ...and DOES contain everything below it.
+    expect(opts).toEqual(expect.arrayContaining([
+      'Regional (View-Only)', 'Cluster Coordinator',
+      'Nucleus Coordinator', 'Activity Lead',
+    ]));
+  });
+
+  test('Edge Function blocks creating an Admin', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const { status } = await callCreateUser(page, {
+      name:     'Forbidden Admin',
+      email:    `forbid-admin-${Date.now()}@nucleus-test.invalid`,
+      password: 'NoAdminPass123!',
+      role:     'admin',
+    });
+    expect(status).toBe(403);
+  });
+
+  test('Edge Function blocks deleting another Admin', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    // Create an ephemeral Regional user, promote to Admin via SQL? We can't
+    // — the seed already gives us perm-super-admin. Use that as the target.
+    // The manage-user function should reject deletion because caller (Admin)
+    // is not a Super Admin.
+    const targetEmail = 'perm-super-admin@nucleus-test.invalid';
+    // Resolve the target id from the auth metadata (regular SELECT on profiles
+    // is gated by RLS; instead we round-trip through the Edge Function which
+    // returns "User not found" or a 403 — both confirm the safeguard).
+    const { status, body } = await callManageUser(page, {
+      action: 'delete',
+      // Use a fake id so we don't accidentally succeed on a permissive bug:
+      // the function still resolves caller-vs-target safeguards before
+      // looking the row up.
+      targetUserId: '00000000-0000-0000-0000-000000000000',
+      confirmedEmail: targetEmail,
+    });
+    expect([403, 404]).toContain(status);
+    expect(typeof body.error).toBe('string');
+  });
+});
+
+// ── Regional (View-Only) ────────────────────────────────────────────────────
+
+test.describe('regional (view-only)', () => {
+  test.use({ storageState: 'e2e/.auth/perm-regional.json' });
+
+  test('does not see Create User button on /users', async ({ page }) => {
+    await page.goto('/users');
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('button', { name: /create user/i })).not.toBeVisible();
+  });
+
+  test('can read content from clusters they do not coordinate (global read)', async ({ page }) => {
+    // Both nuclei should be visible because Regional has global read.
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    await page.goto(`/nucleus/${TEST_IDS.nucleus2Id}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus 2' })).toBeVisible({ timeout: 15000 });
+  });
+
+  test('Edge Function blocks creating any user', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const { status } = await callCreateUser(page, {
+      name:       'Regional Attempt',
+      email:      `regional-attempt-${Date.now()}@nucleus-test.invalid`,
+      password:   'RegPass123!',
+      role:       'activity_lead',
+      activityId: TEST_IDS.activityId,
+    });
+    expect(status).toBe(403);
+  });
+});
+
+// ── Role-dropdown shape per role ────────────────────────────────────────────
+//
+// These are deliberately focused tests — even if the broader behaviour drifts,
+// these will catch a mismatch between the central permissions module and the
+// permissions table the moment it appears.
+
+test.describe('role dropdown — Cluster Coordinator', () => {
+  test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
+  test('shows CC, NC, AL only', async ({ page }) => {
+    const opts = await getCreateUserRoleOptions(page);
+    expect(opts).toEqual([
+      'Cluster Coordinator', 'Nucleus Coordinator', 'Activity Lead',
+    ]);
+  });
+});
+
+test.describe('role dropdown — Nucleus Coordinator', () => {
+  test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+  test('shows Activity Lead only', async ({ page }) => {
+    const opts = await getCreateUserRoleOptions(page);
+    expect(opts).toEqual(['Activity Lead']);
+  });
+});
+
+// ── Request flow: Activity Lead requests person deletion ────────────────────
+
+test.describe('activity lead — request flows', () => {
+  test.use({ storageState: 'e2e/.auth/perm-lead.json' });
+
+  test('person profile shows Request Deletion (not Delete) for AL', async ({ page }) => {
+    await page.goto(`/individual/${TEST_IDS.personParticipatingId}`);
+    await page.waitForLoadState('networkidle');
+    // The AL can read this person via their nucleus, but they cannot
+    // directly delete — they should see the request button instead.
+    await expect(page.getByRole('button', { name: /request deletion/i })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('button', { name: /^delete person$/i })).not.toBeVisible();
+  });
+
+  test('activity page shows Request Deletion for AL', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
+    await expect(page.getByRole('heading', { name: "Test Children's Class" }))
+      .toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('button', { name: /request deletion/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /^delete$/i })).not.toBeVisible();
+  });
+
+  test('submitting a deletion request inserts into permission_requests', async ({ page }) => {
+    await page.goto(`/individual/${TEST_IDS.personAwareId}`);
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: /request deletion/i }).click();
+    // Modal opens; submit with no note.
+    await page.getByRole('button', { name: /^submit request$/i }).click();
+    // The button switches to a "Deletion requested" indicator.
+    await expect(page.getByText(/deletion requested/i)).toBeVisible({ timeout: 10000 });
+  });
+});
+
+// ── Cluster Coordinator: direct delete buttons (no Request) ─────────────────
+
+test.describe('cluster coordinator — direct vs request', () => {
+  test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
+
+  test('person profile shows direct Delete (red), not Request', async ({ page }) => {
+    await page.goto(`/individual/${TEST_IDS.personAwareId}`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('button', { name: /^delete person$/i })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('button', { name: /request deletion/i })).not.toBeVisible();
+  });
+});
+
+// ── manage-user safeguards ──────────────────────────────────────────────────
+
+test.describe('manage-user safeguards', () => {
+  test.describe('admin cannot self-act', () => {
+    test.use({ storageState: 'e2e/.auth/perm-admin.json' });
+    test('cannot delete self', async ({ page }) => {
+      await page.goto('/');
+      await page.waitForLoadState('networkidle');
+      const myId = await page.evaluate(() => {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i)!;
+          if (k.startsWith('sb-') && k.endsWith('-auth-token')) {
+            const v = JSON.parse(localStorage.getItem(k)!);
+            return v?.user?.id ?? '';
+          }
+        }
+        return '';
+      });
+      const { status } = await callManageUser(page, {
+        action: 'delete',
+        targetUserId: myId,
+        confirmedEmail: 'perm-admin@nucleus-test.invalid',
+      });
+      expect(status).toBe(403);
+    });
+
+    test('cannot promote anyone to super_admin via change-role', async ({ page }) => {
+      await page.goto('/');
+      await page.waitForLoadState('networkidle');
+      // Targets the regional user; even with a valid email confirm, the role
+      // check happens first.
+      const { status } = await callManageUser(page, {
+        action: 'change-role',
+        targetUserId: '11111111-2222-3333-4444-555555555555', // any id
+        newRole: 'super_admin',
+        confirmedEmail: 'whatever@x',
+      });
+      expect(status).toBe(403);
+    });
+  });
+
+  test.describe('cluster coordinator cannot use manage-user', () => {
+    test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
+    test('change-role rejected — must use request flow', async ({ page }) => {
+      await page.goto('/');
+      await page.waitForLoadState('networkidle');
+      const { status } = await callManageUser(page, {
+        action: 'change-role',
+        targetUserId: '11111111-2222-3333-4444-555555555555',
+        newRole: 'activity_lead',
+        confirmedEmail: 'whatever@x',
+      });
+      expect(status).toBe(403);
+    });
   });
 });

@@ -18,10 +18,20 @@ export const TEST_IDS = {
 // Permanent test users created (and kept) in dev for permission integration tests.
 // Credentials are fixed so permissions.setup.ts can log in without reading the DB.
 export const TEST_USERS = {
+  superAdmin: {
+    email:    'perm-super-admin@nucleus-test.invalid',
+    password: 'TestSuper123!',
+    name:     'Perm Super Admin',
+  },
   admin: {
     email:    'perm-admin@nucleus-test.invalid',
     password: 'TestAdmin123!',
     name:     'Perm Admin',
+  },
+  regional: {
+    email:    'perm-regional@nucleus-test.invalid',
+    password: 'TestRegional123!',
+    name:     'Perm Regional',
   },
   coordinator: {
     email:    'perm-coordinator@nucleus-test.invalid',
@@ -89,7 +99,9 @@ export async function seed() {
   }
 
   const permIds = {
+    superAdmin:  await ensurePermUser(TEST_USERS.superAdmin.email,  TEST_USERS.superAdmin.password,  TEST_USERS.superAdmin.name),
     admin:       await ensurePermUser(TEST_USERS.admin.email,       TEST_USERS.admin.password,       TEST_USERS.admin.name),
+    regional:    await ensurePermUser(TEST_USERS.regional.email,    TEST_USERS.regional.password,    TEST_USERS.regional.name),
     coordinator: await ensurePermUser(TEST_USERS.coordinator.email, TEST_USERS.coordinator.password, TEST_USERS.coordinator.name),
     collaborator:await ensurePermUser(TEST_USERS.collaborator.email,TEST_USERS.collaborator.password,TEST_USERS.collaborator.name),
     lead:        await ensurePermUser(TEST_USERS.lead.email,        TEST_USERS.lead.password,        TEST_USERS.lead.name),
@@ -215,11 +227,27 @@ export async function seed() {
   });
   if (permErr) throw new Error(`Seed user_permissions: ${permErr.message}`);
 
-  // perm-admin: system administrator, no scoped permission row needed
-  await supabase.from('profiles').update({ is_admin: true }).eq('id', permIds.admin);
+  // perm-super-admin: top-tier role, both flags set, no scoped row.
+  await supabase.from('profiles')
+    .update({ is_admin: true, is_super_admin: true, is_regional_viewer: false })
+    .eq('id', permIds.superAdmin);
+
+  // perm-admin: system administrator, no scoped permission row needed.
+  // Explicitly clear is_super_admin/is_regional_viewer so re-seeds put the
+  // user back in a known state regardless of prior runs.
+  await supabase.from('profiles')
+    .update({ is_admin: true, is_super_admin: false, is_regional_viewer: false })
+    .eq('id', permIds.admin);
+
+  // perm-regional: read-only across all clusters.
+  await supabase.from('profiles')
+    .update({ is_admin: false, is_super_admin: false, is_regional_viewer: true })
+    .eq('id', permIds.regional);
 
   // perm-coordinator: cluster coordinator for cluster 1 only (not admin)
-  await supabase.from('profiles').update({ is_admin: false }).eq('id', permIds.coordinator);
+  await supabase.from('profiles')
+    .update({ is_admin: false, is_super_admin: false, is_regional_viewer: false })
+    .eq('id', permIds.coordinator);
   await supabase.from('user_permissions').insert({
     user_id: permIds.coordinator,
     role: 'cluster_coordinator',
@@ -227,7 +255,9 @@ export async function seed() {
   });
 
   // perm-collaborator: nucleus collaborator for nucleus 1 (not admin, not coordinator)
-  await supabase.from('profiles').update({ is_admin: false }).eq('id', permIds.collaborator);
+  await supabase.from('profiles')
+    .update({ is_admin: false, is_super_admin: false, is_regional_viewer: false })
+    .eq('id', permIds.collaborator);
   await supabase.from('user_permissions').insert({
     user_id: permIds.collaborator,
     role: 'nucleus_collaborator',
@@ -235,7 +265,9 @@ export async function seed() {
   });
 
   // perm-lead: activity lead for activity 1 (not admin, not coordinator, not collaborator)
-  await supabase.from('profiles').update({ is_admin: false }).eq('id', permIds.lead);
+  await supabase.from('profiles')
+    .update({ is_admin: false, is_super_admin: false, is_regional_viewer: false })
+    .eq('id', permIds.lead);
   await supabase.from('user_permissions').insert({
     user_id: permIds.lead,
     role: 'activity_lead',
@@ -243,7 +275,14 @@ export async function seed() {
   });
 
   // perm-viewer: authenticated but no permissions at all
-  await supabase.from('profiles').update({ is_admin: false }).eq('id', permIds.viewer);
+  await supabase.from('profiles')
+    .update({ is_admin: false, is_super_admin: false, is_regional_viewer: false })
+    .eq('id', permIds.viewer);
+
+  // Clean up any leftover pending requests submitted by previous test runs.
+  // Only those tied to our seeded ids — leaves real requests alone.
+  await supabase.from('permission_requests').delete()
+    .or(`requested_by.eq.${permIds.collaborator},requested_by.eq.${permIds.lead},requested_by.eq.${permIds.coordinator}`);
 
   // ── Verify ───────────────────────────────────────────────────────────────────
 

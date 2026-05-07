@@ -231,6 +231,8 @@ export type ManagedAction =
   | 'edit_person'
   | 'edit_concentric_circles'
   | 'edit_network_structure'
+  | 'edit_timeline_cycles'      // Edit Cluster Cycle Dates (timeline view)
+  | 'manage_timeline_events'    // Add / Edit Cluster events (timeline view)
   | 'create_user'
   | 'delete_user'
   | 'change_user_permissions';
@@ -338,6 +340,15 @@ export function actionPermission(
       if (inOwnCluster(ctx, target)) return 'direct';
       if (inOwnNucleus(ctx, target)) return 'direct';
       // Activity Lead: forbidden.
+      return 'none';
+
+    case 'edit_timeline_cycles':
+    case 'manage_timeline_events':
+      // Table: Super Admin / Admin / Cluster Coordinator only.
+      // CCs are scoped to their own cluster; the timeline UI must filter
+      // displayed cycles/events to the caller's cluster scope before
+      // offering edits — handled in the Timeline component.
+      if (inOwnCluster(ctx, target)) return 'direct';
       return 'none';
 
     case 'create_user':
