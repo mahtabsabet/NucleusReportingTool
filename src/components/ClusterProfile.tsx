@@ -12,9 +12,11 @@ import { fetchCourses, fetchPersonsForCluster } from '../lib/db/clusterProfile';
 import type { CourseRow, PersonProfile } from '../lib/db/clusterProfile';
 import { fetchClusters } from '../lib/db/clusters';
 import { GlobalSearch } from './GlobalSearch';
+import { useIsMobile } from '../lib/useIsMobile';
 
 export function ClusterProfile() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [searchParams] = useSearchParams();
   const clusterId = searchParams.get('cluster');
 
@@ -65,7 +67,7 @@ export function ClusterProfile() {
               onClick={() => navigate('/')}
               className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors">
               <ChevronLeftIcon className="w-4 h-4" />
-              Back to Map
+              {isMobile ? 'Back to Home' : 'Back to Map'}
             </button>
             <div className="flex-1 max-w-sm">
               <GlobalSearch />

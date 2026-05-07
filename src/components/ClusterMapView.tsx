@@ -23,8 +23,10 @@ import {
   CalendarIcon,
   HelpCircleIcon,
   NetworkIcon,
-  UserPlusIcon } from
+  UserPlusIcon,
+  ArrowLeftIcon } from
 'lucide-react';
+import { useIsMobile } from '../lib/useIsMobile';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
@@ -75,6 +77,7 @@ function MapClickHandler({
 export function ClusterMapView() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const isMobile = useIsMobile();
   const [clusters, setClusters] = useState<ClusterRow[]>([]);
   const [nuclei, setNuclei] = useState<NucleusRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -188,21 +191,29 @@ export function ClusterMapView() {
   return (
     <div className="flex flex-col h-screen bg-gray-50 font-sans">
       <header className="bg-white border-b border-gray-200 px-4 sm:px-8 py-4 sm:py-5 flex items-center justify-between z-10 relative shadow-sm">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="lg:hidden w-10 h-10 bg-gray-100 text-gray-600 rounded-xl flex items-center justify-center hover:bg-gray-200 transition-colors">
-            
-            <MenuIcon className="w-5 h-5" />
-          </button>
+        <div className="flex items-center gap-3 min-w-0">
+          {isMobile ? (
+            <button
+              onClick={() => navigate('/')}
+              aria-label="Back to home"
+              className="w-10 h-10 bg-gray-100 text-gray-600 rounded-xl flex items-center justify-center hover:bg-gray-200 transition-colors flex-shrink-0">
+              <ArrowLeftIcon className="w-5 h-5" />
+            </button>
+          ) : (
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="lg:hidden w-10 h-10 bg-gray-100 text-gray-600 rounded-xl flex items-center justify-center hover:bg-gray-200 transition-colors">
+              <MenuIcon className="w-5 h-5" />
+            </button>
+          )}
           <div className="w-10 h-10 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-md hidden sm:flex">
             <MapPinIcon className="w-5 h-5" />
           </div>
-          <div>
-            <h1 className="text-lg sm:text-2xl font-bold text-gray-900 tracking-tight">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-2xl font-bold text-gray-900 tracking-tight truncate">
               {currentClusterName ?
               `${currentClusterName} Cluster` :
-              'Nucleus Reporting Tool'}
+              isMobile ? 'Map View' : 'Nucleus Reporting Tool'}
             </h1>
             <p className="text-xs sm:text-sm font-medium text-gray-500 hidden sm:block">
               {currentClusterName ?
@@ -211,38 +222,39 @@ export function ClusterMapView() {
             </p>
           </div>
         </div>
-        <div className="hidden md:block flex-1 max-w-md mx-4">
-          <GlobalSearch />
-        </div>
+        {!isMobile && (
+          <div className="hidden md:block flex-1 max-w-md mx-4">
+            <GlobalSearch />
+          </div>
+        )}
         <div className="flex items-center gap-2 sm:gap-3">
-          <button
-            onClick={() => setShowNetwork(!showNetwork)}
-            className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${showNetwork ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
-            
-            <NetworkIcon
-              className={`w-4 h-4 sm:w-5 sm:h-5 ${showNetwork ? 'text-indigo-600' : 'text-gray-500'}`} />
-            
-            <span className="hidden sm:inline">Network</span>
-          </button>
+          {!isMobile && (
+            <>
+              <button
+                onClick={() => setShowNetwork(!showNetwork)}
+                className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${showNetwork ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
+                <NetworkIcon
+                  className={`w-4 h-4 sm:w-5 sm:h-5 ${showNetwork ? 'text-indigo-600' : 'text-gray-500'}`} />
+                <span className="hidden sm:inline">Network</span>
+              </button>
 
-          <button
-            onClick={() => setTimelineOpen(!timelineOpen)}
-            className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${timelineOpen ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
-            
-            <CalendarIcon
-              className={`w-4 h-4 sm:w-5 sm:h-5 ${timelineOpen ? 'text-indigo-600' : 'text-gray-500'}`} />
-            
-            <span className="hidden sm:inline">Timeline</span>
-          </button>
+              <button
+                onClick={() => setTimelineOpen(!timelineOpen)}
+                className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${timelineOpen ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
+                <CalendarIcon
+                  className={`w-4 h-4 sm:w-5 sm:h-5 ${timelineOpen ? 'text-indigo-600' : 'text-gray-500'}`} />
+                <span className="hidden sm:inline">Timeline</span>
+              </button>
 
-          <button
-            onClick={() => navigate('/guide')}
-            className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-            title="User Guide">
-            
-            <HelpCircleIcon className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
-            <span className="hidden sm:inline">Guide</span>
-          </button>
+              <button
+                onClick={() => navigate('/guide')}
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                title="User Guide">
+                <HelpCircleIcon className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
+                <span className="hidden sm:inline">Guide</span>
+              </button>
+            </>
+          )}
 
           {!isPlacing && canCreate &&
           <button
@@ -253,7 +265,7 @@ export function ClusterMapView() {
             'Select a cluster first to add a nucleus' :
             ''
             }
-            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 text-xs sm:text-sm">
+            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 text-xs sm:text-sm flex-shrink-0">
 
               <PlusIcon className="w-4 h-4" />
               <span className="hidden sm:inline">New Nucleus</span>
@@ -262,19 +274,22 @@ export function ClusterMapView() {
         </div>
       </header>
 
-      <div className="md:hidden bg-white border-b border-gray-200 px-4 py-2">
-        <GlobalSearch />
-      </div>
+      {!isMobile && (
+        <div className="md:hidden bg-white border-b border-gray-200 px-4 py-2">
+          <GlobalSearch />
+        </div>
+      )}
 
       <div className="flex flex-1 overflow-hidden relative flex-col lg:flex-row">
-        {/* Mobile sidebar overlay */}
-        {sidebarOpen &&
+        {/* Mobile sidebar overlay (desktop-narrow viewports only — hidden on the
+            mobile breakpoint since the mobile landing replaces this navigation). */}
+        {sidebarOpen && !isMobile &&
         <div
           className="fixed inset-0 bg-black/30 z-20 lg:hidden"
           onClick={() => setSidebarOpen(false)} />
 
         }
-        <aside
+        {!isMobile && <aside
           className={`bg-white border-r border-gray-200 overflow-y-auto shadow-sm flex flex-col transition-transform duration-300 ease-in-out z-30 fixed lg:relative inset-y-0 left-0 w-80 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
           
           {/* Close button for mobile */}
@@ -484,12 +499,12 @@ export function ClusterMapView() {
               )}
             </div>
           </div>
-        </aside>
+        </aside>}
 
         <main className="flex-1 relative flex flex-col min-w-0">
           {/* Placing Mode Banner */}
           {isPlacing &&
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-blue-200/60 p-5 w-[480px] animate-in slide-in-from-top-4 duration-300">
+          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-blue-200/60 p-5 w-[min(480px,calc(100vw-2rem))] animate-in slide-in-from-top-4 duration-300">
               <div className="flex items-center gap-4 mb-4">
                 <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 shadow-inner">
                   <MapPinIcon className="w-5 h-5 text-blue-600" />

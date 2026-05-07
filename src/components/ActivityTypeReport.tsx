@@ -4,6 +4,7 @@ import { ChevronLeftIcon, ChevronRightIcon, UsersIcon } from 'lucide-react';
 import { fetchActivitiesByType, fetchClusterName, type ActivityReportRow } from '../lib/db/reports';
 import type { Activity } from '../types';
 import { GlobalSearch } from './GlobalSearch';
+import { useIsMobile } from '../lib/useIsMobile';
 
 const TYPE_LABELS: Record<string, string> = {
   'children-class': "Children's Classes",
@@ -23,6 +24,7 @@ const TYPE_ROLES: Record<string, string> = {
 export function ActivityTypeReport() {
   const { type } = useParams<{ type: string }>();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [searchParams] = useSearchParams();
   const clusterId = searchParams.get('cluster');
 
@@ -73,7 +75,7 @@ export function ActivityTypeReport() {
               className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
             >
               <ChevronLeftIcon className="w-4 h-4" />
-              Back to Map
+              {isMobile ? 'Back to Home' : 'Back to Map'}
             </button>
             <div className="flex-1 max-w-sm">
               <GlobalSearch />

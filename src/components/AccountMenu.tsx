@@ -94,7 +94,7 @@ export function AccountMenu({ inline = false, buttonClassName }: AccountMenuProp
     }
   }
 
-  const wrapperClass = inline ? 'relative' : 'fixed top-3 right-3 z-[2000]';
+  const wrapperClass = inline ? 'relative z-50' : 'fixed top-3 right-3 z-[2000]';
   const triggerClass = buttonClassName
     ?? 'w-10 h-10 rounded-full bg-white shadow-md border border-gray-200 flex items-center justify-center text-sm font-bold text-gray-700 hover:shadow-lg hover:border-gray-300 transition-all overflow-hidden';
 

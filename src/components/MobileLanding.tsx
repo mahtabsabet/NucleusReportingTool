@@ -63,12 +63,14 @@ export function MobileLanding() {
   function navigateToWorkspace(key: WorkspaceKey) {
     const params = new URLSearchParams();
     if (selectedCluster) params.set('cluster', selectedCluster);
-    if (key === 'reports') {
-      navigate(`/m/reports${params.toString() ? `?${params}` : ''}`);
-      return;
-    }
-    if (key === 'timeline' || key === 'network') params.set('view', key);
-    navigate(`/map${params.toString() ? `?${params}` : ''}`);
+    const qs = params.toString() ? `?${params}` : '';
+    const target = {
+      map: `/map${qs}`,
+      timeline: `/m/timeline${qs}`,
+      network: `/m/network${qs}`,
+      reports: `/m/reports${qs}`,
+    }[key];
+    navigate(target);
   }
 
   return (

@@ -21,6 +21,7 @@ import {
 } from '../lib/db/reports';
 import { fetchNucleus } from '../lib/db/nucleus';
 import { GlobalSearch } from './GlobalSearch';
+import { useIsMobile } from '../lib/useIsMobile';
 
 const EVENT_ICONS: Record<string, React.ReactNode> = {
   activity_created: <PlusCircleIcon className="w-4 h-4 text-emerald-600" />,
@@ -65,6 +66,7 @@ const EMPTY_SUMMARY: EventSummary = {
 };
 
 export function GrowthReport() {
+  const isMobile = useIsMobile();
   const { nucleusId } = useParams<{ nucleusId?: string }>();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -132,7 +134,9 @@ export function GrowthReport() {
     : 'Regional Growth Report';
 
   const backPath = nucleusId ? `/nucleus/${nucleusId}` : '/';
-  const backLabel = nucleusName ? `Back to ${nucleusName}` : 'Back to Map';
+  const backLabel = nucleusName
+    ? `Back to ${nucleusName}`
+    : isMobile ? 'Back to Home' : 'Back to Map';
 
   const statCards = [
     { label: 'New Activities', count: summary.activitiesCreated.length, icon: <ActivityIcon className="w-5 h-5" />, color: 'text-emerald-700 bg-emerald-100' },
