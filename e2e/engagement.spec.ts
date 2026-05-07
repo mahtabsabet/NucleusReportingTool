@@ -6,6 +6,8 @@ test.describe('Engagement levels', () => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
 
     await expect(page.getByText('Overall Participation')).toBeVisible();
+    // Open the circles module so individual person nodes (with aria-labels) are rendered
+    await page.getByText('Overall Participation').click();
     // ConcentricCircles has its own fetch after the nucleus loads — give it extra time
     await expect(page.locator('[aria-label="Alice Test"]')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('[aria-label="Bob Test"]')).toBeVisible({ timeout: 15000 });
@@ -16,6 +18,8 @@ test.describe('Engagement levels', () => {
 
     // Alice is seeded at 'aware' — she should still be there after a hard reload
     await page.reload();
+    // Re-open the circles module after reload (page state resets to default card view)
+    await page.getByText('Overall Participation').click();
     await expect(page.locator('[aria-label="Alice Test"]')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('[aria-label="Bob Test"]')).toBeVisible({ timeout: 15000 });
   });

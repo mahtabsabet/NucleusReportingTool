@@ -7,6 +7,8 @@ test.describe('Activity flow', () => {
 
     await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible();
     await expect(page.getByText("Test Children's Class")).toBeVisible({ timeout: 15000 });
+    // Open the circles module so individual person nodes (with aria-labels) are rendered
+    await page.getByText('Overall Participation').click();
     // ConcentricCircles fires its own fetch after the nucleus loads
     await expect(page.locator('[aria-label="Alice Test"]')).toBeVisible({ timeout: 15000 });
     await expect(page.locator('[aria-label="Bob Test"]')).toBeVisible({ timeout: 15000 });
@@ -28,6 +30,8 @@ test.describe('Activity flow', () => {
   test('person added to activity appears in nucleus enrollment', async ({ page }) => {
     // Charlie was added in the previous test; they should now be enrolled in the nucleus
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    // Open the circles module so individual person nodes are visible
+    await page.getByText('Overall Participation').click();
     await expect(page.locator('[aria-label="Charlie Test"]').first()).toBeVisible({ timeout: 15000 });
   });
 });
