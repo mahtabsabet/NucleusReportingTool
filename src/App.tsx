@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth';
 import { LoginPage } from './components/LoginPage';
 import { ClusterMapView } from './components/ClusterMapView';
@@ -13,9 +13,14 @@ import { GrowthReport } from './components/GrowthReport';
 import { UserGuide } from './components/UserGuide';
 import { UserManagement } from './components/UserManagement';
 import { AccountMenu } from './components/AccountMenu';
+import { MobileLanding } from './components/MobileLanding';
+import { MobileReports } from './components/MobileReports';
+import { useIsMobile } from './lib/useIsMobile';
 
 function AppRoutes() {
   const { user, loading } = useAuth();
+  const isMobile = useIsMobile();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -27,11 +32,17 @@ function AppRoutes() {
 
   if (!user) return <LoginPage />;
 
+  // The mobile landing renders its own inline account avatar, so the global
+  // floating one would double up. Hide it only on that screen.
+  const onMobileLanding = isMobile && location.pathname === '/';
+
   return (
     <>
-      <AccountMenu />
+      {!onMobileLanding && <AccountMenu />}
       <Routes>
-      <Route path="/" element={<ClusterMapView />} />
+      <Route path="/" element={isMobile ? <MobileLanding /> : <ClusterMapView />} />
+      <Route path="/map" element={<ClusterMapView />} />
+      <Route path="/m/reports" element={<MobileReports />} />
       <Route path="/guide" element={<UserGuide />} />
       <Route path="/nucleus/:id" element={<NucleusDashboard />} />
       <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />

@@ -7,7 +7,7 @@ import {
   useMap,
   useMapEvents } from
 'react-leaflet';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   MapPinIcon,
   XIcon,
@@ -74,6 +74,7 @@ function MapClickHandler({
 }
 export function ClusterMapView() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [clusters, setClusters] = useState<ClusterRow[]>([]);
   const [nuclei, setNuclei] = useState<NucleusRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -91,13 +92,27 @@ export function ClusterMapView() {
   const [canManageUsers, setCanManageUsers] = useState(false);
 
   useEffect(() => {
+    const initialClusterId = searchParams.get('cluster');
+    const initialView = searchParams.get('view');
     Promise.all([fetchClusters(), fetchNuclei(), getCallerContext()])
       .then(([c, n, ctx]) => {
         setClusters(c);
         setNuclei(n);
         if (ctx) setCanManageUsers(canCreateUsers(ctx));
+        if (initialClusterId) {
+          const cluster = c.find(cl => cl.id === initialClusterId);
+          if (cluster) {
+            setSelectedCluster(cluster.id);
+            setMapCenter([cluster.center.lat, cluster.center.lng]);
+            setMapZoom(cluster.zoom);
+            canCreateNucleusInCluster(cluster.id).then(setCanCreate);
+          }
+        }
+        if (initialView === 'timeline') setTimelineOpen(true);
+        if (initialView === 'network') setShowNetwork(true);
       })
       .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredNuclei = selectedCluster

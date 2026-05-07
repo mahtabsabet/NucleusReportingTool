@@ -16,7 +16,17 @@ import { primaryRole, roleLabel, ROLE_BADGE_CLASSES } from '../lib/permissions';
 // z-index note: the wrapper sits at z-[2000] so the dropdown stays above
 // Leaflet's map controls (which use z-index: 1000); a lower value caused
 // the menu to be hidden behind the map on the cluster map view.
-export function AccountMenu() {
+//
+// `inline` renders the menu in document flow (used by the mobile landing
+// header) instead of as a floating chip. `buttonClassName` overrides the
+// avatar trigger styling so callers can match local design (e.g. the blue
+// avatar in the mobile landing header).
+export interface AccountMenuProps {
+  inline?: boolean;
+  buttonClassName?: string;
+}
+
+export function AccountMenu({ inline = false, buttonClassName }: AccountMenuProps = {}) {
   const { user, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const [ctx, setCtx] = useState<CallerContext | null>(null);
@@ -84,12 +94,16 @@ export function AccountMenu() {
     }
   }
 
+  const wrapperClass = inline ? 'relative' : 'fixed top-3 right-3 z-[2000]';
+  const triggerClass = buttonClassName
+    ?? 'w-10 h-10 rounded-full bg-white shadow-md border border-gray-200 flex items-center justify-center text-sm font-bold text-gray-700 hover:shadow-lg hover:border-gray-300 transition-all overflow-hidden';
+
   return (
-    <div className="fixed top-3 right-3 z-[2000]">
+    <div className={wrapperClass}>
       <button
         ref={buttonRef}
         onClick={() => setOpen(o => !o)}
-        className="w-10 h-10 rounded-full bg-white shadow-md border border-gray-200 flex items-center justify-center text-sm font-bold text-gray-700 hover:shadow-lg hover:border-gray-300 transition-all overflow-hidden"
+        className={triggerClass}
         aria-label="Account menu"
         title="Account"
       >
