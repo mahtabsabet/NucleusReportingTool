@@ -12,6 +12,7 @@ import { ClusterProfile } from './components/ClusterProfile';
 import { GrowthReport } from './components/GrowthReport';
 import { UserGuide } from './components/UserGuide';
 import { UserManagement } from './components/UserManagement';
+import { AccountMenu } from './components/AccountMenu';
 
 function AppRoutes() {
   const { user, loading } = useAuth();
@@ -27,7 +28,9 @@ function AppRoutes() {
   if (!user) return <LoginPage />;
 
   return (
-    <Routes>
+    <>
+      <AccountMenu />
+      <Routes>
       <Route path="/" element={<ClusterMapView />} />
       <Route path="/guide" element={<UserGuide />} />
       <Route path="/nucleus/:id" element={<NucleusDashboard />} />
@@ -38,7 +41,8 @@ function AppRoutes() {
       <Route path="/growth-report" element={<GrowthReport />} />
       <Route path="/nucleus/:nucleusId/growth-report" element={<GrowthReport />} />
       <Route path="/users" element={<UserManagement />} />
-    </Routes>
+      </Routes>
+    </>
   );
 }
 
