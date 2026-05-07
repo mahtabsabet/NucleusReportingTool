@@ -291,52 +291,76 @@ export function Timeline({ clusterId }: TimelineProps) {
     return () => el.removeEventListener('wheel', handler);
   }, [pxPerDay, minDate, totalDays]);
 
-  // Pinch zoom on touch devices. Two fingers → zoom anchored on midpoint.
-  // Single-finger pan is left to native horizontal scroll on the container.
+  // Touch handling: 1 finger pans, 2 fingers pinch-zoom anchored on the
+  // midpoint. The container has `touch-action: none` so the browser
+  // doesn't claim gestures for native scroll/zoom — we drive both here.
   useEffect(() => {
     const el = containerRef.current;
     if (!el || pxPerDay <= 0) return;
+    let pan: { startX: number; startScrollLeft: number } | null = null;
     let pinch:
       | { d0: number; ppd0: number; midViewportX: number; midDate: Date }
       | null = null;
 
+    const startPan = (clientX: number) => {
+      pan = { startX: clientX, startScrollLeft: el.scrollLeft };
+      pinch = null;
+    };
+
+    const startPinch = (t1: Touch, t2: Touch) => {
+      pan = null;
+      const rect = el.getBoundingClientRect();
+      const midViewportX = (t1.clientX + t2.clientX) / 2 - rect.left;
+      const midContentX = el.scrollLeft + midViewportX;
+      pinch = {
+        d0: Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY),
+        ppd0: pxPerDay,
+        midViewportX,
+        midDate: dateAtPixel(midContentX, minDate, pxPerDay),
+      };
+    };
+
     const onTouchStart = (e: TouchEvent) => {
-      if (e.touches.length === 2) {
+      if (e.touches.length === 1) {
+        startPan(e.touches[0].clientX);
+      } else if (e.touches.length === 2) {
         e.preventDefault();
-        const rect = el.getBoundingClientRect();
-        const t1 = e.touches[0];
-        const t2 = e.touches[1];
-        const midViewportX = (t1.clientX + t2.clientX) / 2 - rect.left;
-        const midContentX = el.scrollLeft + midViewportX;
-        pinch = {
-          d0: Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY),
-          ppd0: pxPerDay,
-          midViewportX,
-          midDate: dateAtPixel(midContentX, minDate, pxPerDay),
-        };
+        startPinch(e.touches[0], e.touches[1]);
       }
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (!pinch || e.touches.length !== 2) return;
-      e.preventDefault();
-      const t1 = e.touches[0];
-      const t2 = e.touches[1];
-      const d = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
-      if (d < 10 || pinch.d0 < 10) return;
-      const newPpd = clampPxPerDay(
-        pinch.ppd0 * (d / pinch.d0),
-        el.clientWidth,
-        totalDays,
-      );
-      if (newPpd === pxPerDay) return;
-      const newMidContentX = pixelAtDate(pinch.midDate, minDate, newPpd);
-      pendingScrollLeftRef.current = newMidContentX - pinch.midViewportX;
-      setPxPerDay(newPpd);
+      if (e.touches.length === 1 && pan) {
+        e.preventDefault();
+        el.scrollLeft = pan.startScrollLeft - (e.touches[0].clientX - pan.startX);
+      } else if (e.touches.length === 2 && pinch) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const d = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        if (d < 10 || pinch.d0 < 10) return;
+        const newPpd = clampPxPerDay(
+          pinch.ppd0 * (d / pinch.d0),
+          el.clientWidth,
+          totalDays,
+        );
+        if (newPpd === pxPerDay) return;
+        const newMidContentX = pixelAtDate(pinch.midDate, minDate, newPpd);
+        pendingScrollLeftRef.current = newMidContentX - pinch.midViewportX;
+        setPxPerDay(newPpd);
+      }
     };
 
-    const onTouchEnd = () => {
-      pinch = null;
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        pan = null;
+        pinch = null;
+      } else if (e.touches.length === 1) {
+        // Lifting one finger off a pinch — re-anchor pan on the
+        // remaining finger so it doesn't jump.
+        pinch = null;
+        startPan(e.touches[0].clientX);
+      }
     };
 
     el.addEventListener('touchstart', onTouchStart, { passive: false });
@@ -724,7 +748,7 @@ export function Timeline({ clusterId }: TimelineProps) {
       {/* Timeline Content */}
       <div
         ref={containerRef}
-        className="flex-1 overflow-x-auto overflow-y-hidden relative touch-pan-x"
+        className="flex-1 overflow-x-auto overflow-y-hidden relative touch-none"
       >
         {ready ? (
           <div
