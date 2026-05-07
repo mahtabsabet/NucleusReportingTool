@@ -21,10 +21,10 @@ import { TimelineCycle, TimelineEvent } from '../types';
 import { buildCycleSchedule, ComputedCycle } from '../lib/timeline/cycles';
 import {
   addDays,
+  continuousWeeksInMonth,
   formatShortDate,
   getDatePercent,
   monthsInRange,
-  weeksInRange,
 } from '../lib/timeline/dateRange';
 import { assignLanes } from '../lib/timeline/lanes';
 import { getCallerContext } from '../lib/db/users';
@@ -779,34 +779,104 @@ export function Timeline({ clusterId }: TimelineProps) {
             })()}
 
           {/* MONTH VIEW
-              weeksInRange labels each chunk by its week-of-month, so a
-              cycle that starts mid-month (e.g. Jan 20) shows "Week 3" /
-              "Week 4" for the partial January, while full months still
-              read 1..N as before. */}
+              Real chronological Sunday-Saturday weeks projected onto the
+              visible window (the cycle's clip of one calendar month).
+              Weeks are NOT reset at the 1st of the month — calendar weeks
+              are globally continuous and the month-view is just a window
+              onto them. So the partial week that wraps from May into June
+              shows as Week 1 of June with only Jun 1–6 visible (its May
+              31 portion is faded out at the left edge), and the partial
+              week wrapping from June into July shows as Week 5 with only
+              Jun 28–30 visible (faded at the right). The same week
+              continues naturally as Week 1 in July's view. Column widths
+              are proportional to visibleDays / 7, so a 3-day partial does
+              NOT occupy a full week's worth of horizontal space. */}
           {zoomLevel === 'month' &&
             selectedMonth &&
             (() => {
-              const weeks = weeksInRange(selectedMonth.start, selectedMonth.end);
-              return weeks.map((week, index) => (
-                <div
-                  key={index}
-                  className="flex-1 min-w-[150px] relative h-full flex flex-col justify-center"
-                >
-                  <div className="absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-3 bg-gray-400" />
-                  <div className="absolute top-1/2 mt-2 left-0 -translate-x-1/2 text-[10px] font-medium text-gray-400">
-                    {formatShortDate(week.start)}
-                  </div>
-                  {index === weeks.length - 1 && (
-                    <div className="absolute top-1/2 mt-2 right-0 translate-x-1/2 text-[10px] font-medium text-gray-400">
-                      {formatShortDate(week.end)}
+              const weeks = continuousWeeksInMonth(
+                selectedMonth.start,
+                selectedMonth.end,
+              );
+              return weeks.map((week, index) => {
+                const isPartialStart =
+                  week.partialAt === 'start' || week.partialAt === 'both';
+                const isPartialEnd =
+                  week.partialAt === 'end' || week.partialAt === 'both';
+                const isPartial = week.partialAt !== 'none';
+                // Width proportional to visible portion. Full week = factor
+                // 7 (≈140px floor); a 1-day partial = factor 1 (≈40px).
+                const minWidth = Math.max(40, 22 * week.visibleDays);
+                return (
+                  <div
+                    key={index}
+                    className="relative h-full flex flex-col justify-center"
+                    style={{
+                      flex: `${week.visibleDays} 0 0%`,
+                      minWidth: `${minWidth}px`,
+                    }}
+                  >
+                    {/* Tick at the LEFT edge: solid for a true Sunday
+                        boundary, faded gradient for a clipped week start
+                        (the rest of the week lives in the previous month
+                        view). */}
+                    {isPartialStart ? (
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 left-0 h-3 pointer-events-none"
+                        style={{
+                          width: '14px',
+                          background:
+                            'linear-gradient(to right, transparent 0%, #d1d5db 100%)',
+                        }}
+                      />
+                    ) : (
+                      <div className="absolute top-1/2 -translate-y-1/2 left-0 w-0.5 h-3 bg-gray-400" />
+                    )}
+                    {/* Right edge fade-out for clipped week ends. Only the
+                        last week of the month gets a date label on the
+                        right; the gradient is purely visual. */}
+                    {isPartialEnd && (
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 right-0 h-3 pointer-events-none"
+                        style={{
+                          width: '14px',
+                          background:
+                            'linear-gradient(to left, transparent 0%, #d1d5db 100%)',
+                        }}
+                      />
+                    )}
+                    <div
+                      className={`absolute top-1/2 mt-2 left-0 -translate-x-1/2 text-[10px] font-medium ${
+                        isPartialStart ? 'text-gray-300' : 'text-gray-400'
+                      }`}
+                    >
+                      {formatShortDate(week.visibleStart)}
                     </div>
-                  )}
-                  <div className="absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 bg-white px-2 text-xs font-semibold text-gray-700 z-10">
-                    {week.label}
+                    {index === weeks.length - 1 && (
+                      <div
+                        className={`absolute top-1/2 mt-2 right-0 translate-x-1/2 text-[10px] font-medium ${
+                          isPartialEnd ? 'text-gray-300' : 'text-gray-400'
+                        }`}
+                      >
+                        {formatShortDate(week.visibleEnd)}
+                      </div>
+                    )}
+                    <div
+                      className={`absolute top-1/2 -translate-y-1/2 left-1/2 -translate-x-1/2 bg-white px-2 text-xs font-semibold z-10 ${
+                        isPartial ? 'text-gray-400 italic' : 'text-gray-700'
+                      }`}
+                      title={
+                        isPartial
+                          ? `${formatShortDate(week.weekStart)} – ${formatShortDate(week.weekEnd)} (continues into the adjacent month)`
+                          : undefined
+                      }
+                    >
+                      {week.label}
+                    </div>
+                    {renderEvents(week.visibleStart, week.visibleEnd)}
                   </div>
-                  {renderEvents(week.start, week.end)}
-                </div>
-              ));
+                );
+              });
             })()}
         </div>
       </div>
