@@ -22,7 +22,7 @@ export function MobileTimeline() {
   }, [cluster]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50 font-sans">
+    <div className="h-screen flex flex-col bg-gray-50 font-sans">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-20 px-4 py-4 flex items-center gap-3 flex-shrink-0">
         <button
           onClick={() => navigate('/')}
