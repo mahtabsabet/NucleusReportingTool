@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   type CallerContext,
+  type ManagedAction,
   type ManagedUserSummary,
   type PermissionGrant,
   actionPermission,
@@ -147,6 +148,51 @@ describe('actionPermission', () => {
     expect(actionPermission(AL, 'delete_person', { activityId: 'A1' })).toBe('request');
     expect(actionPermission(AL, 'delete_activity', { activityId: 'A1' })).toBe('request');
     expect(actionPermission(AL, 'delete_activity', { activityId: 'OTHER' })).toBe('none');
+  });
+
+  it('CC: full coverage of cluster-scoped write actions', () => {
+    expect(actionPermission(CC, 'create_nucleus', { clusterId: 'C1' })).toBe('direct');
+    expect(actionPermission(CC, 'create_nucleus', { clusterId: 'OTHER' })).toBe('none');
+    expect(actionPermission(CC, 'delete_activity', { clusterId: 'C1' })).toBe('direct');
+    expect(actionPermission(CC, 'delete_activity', { clusterId: 'OTHER' })).toBe('none');
+    expect(actionPermission(CC, 'create_person', { clusterId: 'C1' })).toBe('direct');
+    expect(actionPermission(CC, 'edit_person', { clusterId: 'C1' })).toBe('direct');
+    expect(actionPermission(CC, 'edit_person', { clusterId: 'OTHER' })).toBe('none');
+    expect(actionPermission(CC, 'edit_concentric_circles', { clusterId: 'C1' })).toBe('direct');
+    expect(actionPermission(CC, 'edit_concentric_circles', { clusterId: 'OTHER' })).toBe('none');
+    expect(actionPermission(CC, 'edit_network_structure', { clusterId: 'C1' })).toBe('direct');
+    expect(actionPermission(CC, 'edit_network_structure', { clusterId: 'OTHER' })).toBe('none');
+  });
+
+  it('NC: full coverage of nucleus-scoped write actions', () => {
+    expect(actionPermission(NC, 'delete_activity', { nucleusId: 'N1' })).toBe('direct');
+    expect(actionPermission(NC, 'delete_activity', { nucleusId: 'OTHER' })).toBe('none');
+    expect(actionPermission(NC, 'create_person', { nucleusId: 'N1' })).toBe('direct');
+    expect(actionPermission(NC, 'edit_person', { nucleusId: 'N1' })).toBe('direct');
+    expect(actionPermission(NC, 'edit_person', { nucleusId: 'OTHER' })).toBe('none');
+    expect(actionPermission(NC, 'edit_network_structure', { nucleusId: 'N1' })).toBe('direct');
+    expect(actionPermission(NC, 'edit_network_structure', { nucleusId: 'OTHER' })).toBe('none');
+    expect(actionPermission(NC, 'create_nucleus', { clusterId: 'C1' })).toBe('none');
+  });
+
+  it('AL: edit_person direct in own activity only; edit_network_structure and create_nucleus always none', () => {
+    expect(actionPermission(AL, 'edit_person', { activityId: 'A1' })).toBe('direct');
+    expect(actionPermission(AL, 'edit_person', { activityId: 'OTHER' })).toBe('none');
+    expect(actionPermission(AL, 'edit_person', { nucleusId: 'N1' })).toBe('none');
+    expect(actionPermission(AL, 'edit_network_structure', { activityId: 'A1' })).toBe('none');
+    expect(actionPermission(AL, 'create_nucleus', { clusterId: 'C1' })).toBe('none');
+  });
+
+  it('Regional Viewer: all write actions return none regardless of scope', () => {
+    const write: ManagedAction[] = [
+      'create_nucleus', 'delete_nucleus', 'create_activity', 'delete_activity',
+      'create_person', 'delete_person', 'edit_person',
+      'edit_concentric_circles', 'edit_network_structure',
+    ];
+    const scope = { clusterId: 'X', nucleusId: 'X', activityId: 'X' };
+    for (const action of write) {
+      expect(actionPermission(REGIONAL, action, scope)).toBe('none');
+    }
   });
 
   it('CC/NC use request flow for delete_user / change_user_permissions', () => {
