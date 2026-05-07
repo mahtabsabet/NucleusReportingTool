@@ -631,4 +631,182 @@ test.describe('manage-user safeguards', () => {
       expect(status).toBe(403);
     });
   });
+
+  test.describe('nucleus collaborator cannot use manage-user', () => {
+    test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+    test('change-role rejected — must use request flow', async ({ page }) => {
+      await page.goto('/');
+      await page.waitForLoadState('networkidle');
+      const { status } = await callManageUser(page, {
+        action: 'change-role',
+        targetUserId: '11111111-2222-3333-4444-555555555555',
+        newRole: 'activity_lead',
+        confirmedEmail: 'whatever@x',
+      });
+      expect(status).toBe(403);
+    });
+  });
+});
+
+// ── Helpers for map / timeline tests ─────────────────────────────────────────
+
+/** Navigate to the map and select Test Cluster in the sidebar. */
+async function selectTestCluster(page: Page): Promise<void> {
+  await page.goto('/');
+  await page.waitForLoadState('networkidle');
+  // "Test Cluster" and "Test Cluster 2" both appear; negative-lookahead picks the right one.
+  await page.locator('button').filter({ hasText: /Test Cluster(?! 2)/ }).first().click();
+  await page.waitForLoadState('networkidle');
+}
+
+/** Select Test Cluster then open the Timeline panel. */
+async function openTimelineForTestCluster(page: Page): Promise<void> {
+  await selectTestCluster(page);
+  await page.getByRole('button', { name: /timeline/i }).click();
+  await page.waitForLoadState('networkidle');
+}
+
+// ── Positive creation tests ──────────────────────────────────────────────────
+
+test.describe('cluster coordinator — positive creation', () => {
+  test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
+
+  test('can create a Cluster Coordinator within own cluster via Edge Function', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const { status, body } = await callCreateUser(page, {
+      name:      'Ephemeral Coordinator',
+      email:     `ephemeral-coord-${Date.now()}@nucleus-test.invalid`,
+      password:  'EphemPass123!',
+      role:      'cluster_coordinator',
+      clusterId: TEST_IDS.clusterId,
+    });
+    expect(status).toBe(200);
+    expect(body.success).toBe(true);
+  });
+
+  test('can create a Nucleus Coordinator within own cluster via Edge Function', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const { status, body } = await callCreateUser(page, {
+      name:      'Ephemeral NC',
+      email:     `ephemeral-nc-${Date.now()}@nucleus-test.invalid`,
+      password:  'EphemPass123!',
+      role:      'nucleus_collaborator',
+      nucleusId: TEST_IDS.nucleusId,
+    });
+    expect(status).toBe(200);
+    expect(body.success).toBe(true);
+  });
+});
+
+test.describe('nucleus collaborator — positive creation', () => {
+  test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+
+  test('can create an Activity Lead within own nucleus via Edge Function', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const { status, body } = await callCreateUser(page, {
+      name:       'Ephemeral Lead',
+      email:      `ephemeral-lead-${Date.now()}@nucleus-test.invalid`,
+      password:   'EphemPass123!',
+      role:       'activity_lead',
+      activityId: TEST_IDS.activityId,
+    });
+    expect(status).toBe(200);
+    expect(body.success).toBe(true);
+  });
+});
+
+// ── Nucleus Collaborator: request flows ──────────────────────────────────────
+
+test.describe('nucleus collaborator — request flows', () => {
+  test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+
+  test('person profile shows Request Deletion (not Delete) for NC', async ({ page }) => {
+    await page.goto(`/individual/${TEST_IDS.personAwareId}`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('button', { name: /request deletion/i })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('button', { name: /^delete person$/i })).not.toBeVisible();
+  });
+
+  test('submitting a deletion request inserts into permission_requests', async ({ page }) => {
+    await page.goto(`/individual/${TEST_IDS.personParticipatingId}`);
+    await page.waitForLoadState('networkidle');
+    await page.getByRole('button', { name: /request deletion/i }).click();
+    await page.getByRole('button', { name: /^submit request$/i }).click();
+    await expect(page.getByText(/deletion requested/i)).toBeVisible({ timeout: 10000 });
+  });
+});
+
+// ── Map: New Nucleus button visibility ───────────────────────────────────────
+
+test.describe('map — New Nucleus button', () => {
+  test.describe('cluster coordinator sees New Nucleus button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
+    test('button appears after selecting own cluster', async ({ page }) => {
+      await selectTestCluster(page);
+      await expect(page.getByRole('button', { name: /new nucleus/i })).toBeVisible({ timeout: 10000 });
+    });
+  });
+
+  test.describe('nucleus collaborator does not see New Nucleus button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+    test('button absent — NC cannot create nuclei', async ({ page }) => {
+      await selectTestCluster(page);
+      await expect(page.getByRole('button', { name: /new nucleus/i })).not.toBeVisible();
+    });
+  });
+
+  test.describe('activity lead does not see New Nucleus button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-lead.json' });
+    test('button absent — AL cannot create nuclei', async ({ page }) => {
+      await selectTestCluster(page);
+      await expect(page.getByRole('button', { name: /new nucleus/i })).not.toBeVisible();
+    });
+  });
+
+  test.describe('regional viewer does not see New Nucleus button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-regional.json' });
+    test('button absent — Regional is view-only', async ({ page }) => {
+      await selectTestCluster(page);
+      await expect(page.getByRole('button', { name: /new nucleus/i })).not.toBeVisible();
+    });
+  });
+});
+
+// ── Timeline: Add Event button visibility ────────────────────────────────────
+
+test.describe('timeline — Add Event button', () => {
+  test.describe('cluster coordinator sees Add Event button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
+    test('Add Event visible in own cluster timeline', async ({ page }) => {
+      await openTimelineForTestCluster(page);
+      await expect(page.getByRole('button', { name: /add event/i })).toBeVisible({ timeout: 10000 });
+    });
+  });
+
+  test.describe('nucleus collaborator does not see Add Event button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+    test('Add Event absent — NC cannot manage timeline events', async ({ page }) => {
+      await openTimelineForTestCluster(page);
+      await expect(page.getByRole('button', { name: /add event/i })).not.toBeVisible();
+    });
+  });
+
+  test.describe('activity lead does not see Add Event button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-lead.json' });
+    test('Add Event absent — AL cannot manage timeline events', async ({ page }) => {
+      await openTimelineForTestCluster(page);
+      await expect(page.getByRole('button', { name: /add event/i })).not.toBeVisible();
+    });
+  });
+
+  test.describe('regional viewer does not see Add Event button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-regional.json' });
+    test('Add Event absent — Regional is view-only', async ({ page }) => {
+      await openTimelineForTestCluster(page);
+      await expect(page.getByRole('button', { name: /add event/i })).not.toBeVisible();
+    });
+  });
 });
