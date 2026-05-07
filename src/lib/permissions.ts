@@ -241,6 +241,19 @@ export interface ActionTarget {
   activityId?: string | null;
 }
 
+// Cluster-level timeline events: super_admins, admins, and the cluster's
+// coordinator(s) can create/edit/delete events. This mirrors the RLS policy
+// "Cluster coordinators manage timeline events" in supabase/schema.sql.
+// Nucleus-level timelines will get their own helper when that scope ships.
+export function canManageClusterTimelineEvents(
+  ctx: CallerContext,
+  clusterId: string | null,
+): boolean {
+  if (ctx.isAdmin || ctx.isSuperAdmin) return true;
+  if (!clusterId) return false;
+  return coordinatorClusterIds(ctx).includes(clusterId);
+}
+
 // In-scope helpers.
 function inOwnCluster(ctx: CallerContext, t: ActionTarget): boolean {
   if (!t.clusterId) return false;

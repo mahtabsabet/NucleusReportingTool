@@ -7,6 +7,7 @@ import {
   canAssignRole,
   canChangeUserRoleDirectly,
   canDeleteUserDirectly,
+  canManageClusterTimelineEvents,
   canRequestChangeUserRole,
   canRequestDeleteUser,
   creatableRoles,
@@ -225,5 +226,25 @@ describe('misc', () => {
     expect(roleLabel('cluster_coordinator')).toBe('Cluster Coordinator');
     expect(roleLabel('nucleus_collaborator')).toBe('Nucleus Coordinator');
     expect(roleLabel('activity_lead')).toBe('Activity Lead');
+  });
+});
+
+describe('canManageClusterTimelineEvents', () => {
+  it('allows super admins and admins for any cluster', () => {
+    expect(canManageClusterTimelineEvents(SUPER, 'C1')).toBe(true);
+    expect(canManageClusterTimelineEvents(ADMIN, 'C2')).toBe(true);
+    expect(canManageClusterTimelineEvents(SUPER, null)).toBe(true);
+  });
+
+  it('allows the cluster coordinator only for their own cluster', () => {
+    expect(canManageClusterTimelineEvents(CC, 'C1')).toBe(true);
+    expect(canManageClusterTimelineEvents(CC, 'C2')).toBe(false);
+    expect(canManageClusterTimelineEvents(CC, null)).toBe(false);
+  });
+
+  it('denies regional viewers, nucleus coordinators, and activity leads', () => {
+    expect(canManageClusterTimelineEvents(REGIONAL, 'C1')).toBe(false);
+    expect(canManageClusterTimelineEvents(NC, 'C1')).toBe(false);
+    expect(canManageClusterTimelineEvents(AL, 'C1')).toBe(false);
   });
 });

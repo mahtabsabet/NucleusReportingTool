@@ -90,6 +90,7 @@ export async function insertCycleOverride(params: {
 export async function addTimelineEvent(params: {
   name: string;
   startDate: Date;
+  endDate?: Date;
   clusterId?: string;
   location?: string;
 }): Promise<TimelineEvent> {
@@ -98,6 +99,7 @@ export async function addTimelineEvent(params: {
     .insert({
       name: params.name,
       start_date: params.startDate.toISOString().split('T')[0],
+      end_date: params.endDate ? params.endDate.toISOString().split('T')[0] : null,
       cluster_id: params.clusterId ?? null,
       location: params.location ?? null,
     })
@@ -114,4 +116,37 @@ export async function addTimelineEvent(params: {
     nucleusId: e.nucleus_id ?? undefined,
     location: e.location ?? undefined,
   };
+}
+
+export async function updateTimelineEvent(
+  id: string,
+  params: { name: string; startDate: Date; endDate: Date | null; location: string | null },
+): Promise<TimelineEvent> {
+  const { data, error } = await supabase
+    .from('timeline_events')
+    .update({
+      name: params.name,
+      start_date: params.startDate.toISOString().split('T')[0],
+      end_date: params.endDate ? params.endDate.toISOString().split('T')[0] : null,
+      location: params.location,
+    })
+    .eq('id', id)
+    .select('id, name, start_date, end_date, cluster_id, nucleus_id, location')
+    .single();
+  if (error) throw error;
+  const e = data as any;
+  return {
+    id: e.id,
+    name: e.name,
+    startDate: new Date(e.start_date),
+    endDate: e.end_date ? new Date(e.end_date) : undefined,
+    clusterId: e.cluster_id ?? undefined,
+    nucleusId: e.nucleus_id ?? undefined,
+    location: e.location ?? undefined,
+  };
+}
+
+export async function deleteTimelineEvent(id: string): Promise<void> {
+  const { error } = await supabase.from('timeline_events').delete().eq('id', id);
+  if (error) throw error;
 }
