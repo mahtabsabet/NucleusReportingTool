@@ -9,6 +9,9 @@ import {
   RefreshCwIcon,
   Trash2Icon,
   PencilIcon,
+  ClockIcon,
+  CheckIcon,
+  XIcon,
 } from 'lucide-react';
 import {
   fetchManagedUsers,
@@ -16,27 +19,38 @@ import {
   deleteUser,
   changeUserRole,
   getCallerContext,
-  canCreateUsers,
-  roleLabel,
+  toUserSummary,
   type ManagedUser,
-  type CallerContext,
   type UserPermissionRow,
-  type CreatableRole,
 } from '../lib/db/users';
+import {
+  type CallerContext,
+  type CreatableRole,
+  ROLE_BADGE_CLASSES,
+  canCreateUsers,
+  canDeleteUserDirectly,
+  canRequestDeleteUser,
+  canChangeUserRoleDirectly,
+  canRequestChangeUserRole,
+  creatableRoles,
+  highestRole,
+  primaryRole,
+  roleLabel,
+} from '../lib/permissions';
+import {
+  fetchVisiblePermissionRequests,
+  resolvePermissionRequest,
+  submitPermissionRequest,
+  type PermissionRequestRow,
+} from '../lib/db/requests';
 import { CreateUserModal } from './CreateUserModal';
 import { GlobalSearch } from './GlobalSearch';
 
 function RoleBadge({ role }: { role: string }) {
-  const styles: Record<string, string> = {
-    admin: 'bg-purple-100 text-purple-800',
-    cluster_coordinator: 'bg-blue-100 text-blue-800',
-    nucleus_collaborator: 'bg-emerald-100 text-emerald-800',
-    activity_lead: 'bg-amber-100 text-amber-800',
-    viewer: 'bg-gray-100 text-gray-600',
-  };
+  const cls = ROLE_BADGE_CLASSES[role] ?? 'bg-gray-100 text-gray-600';
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${styles[role] ?? 'bg-gray-100 text-gray-600'}`}>
-      {roleLabel(role as any)}
+    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
+      {roleLabel(role)}
     </span>
   );
 }
@@ -51,25 +65,49 @@ function permissionDescription(perm: UserPermissionRow): string {
   return '';
 }
 
-function rolesForPermission(perm: UserPermissionRow): CreatableRole[] {
-  if (perm.clusterId) return ['cluster_coordinator', 'viewer'];
-  if (perm.nucleusId) return ['nucleus_collaborator', 'viewer'];
-  return ['activity_lead', 'viewer'];
+// Roles offered when changing a user's role.  The list is filtered by:
+//   1. Roles the caller is allowed to assign (creatableRoles)
+//   2. Roles compatible with the existing permission's scope (if any)
+function roleOptionsForChange(
+  ctx: CallerContext,
+  user: ManagedUser
+): CreatableRole[] {
+  const callerCan = creatableRoles(ctx);
+  const perm = user.permissions[0];
+  if (!perm) {
+    // Global-only user — Admin or Regional Viewer.
+    return callerCan.filter(r => r === 'admin' || r === 'regional_viewer');
+  }
+  let scopeCompatible: CreatableRole[];
+  if (perm.clusterId) scopeCompatible = ['cluster_coordinator'];
+  else if (perm.nucleusId) scopeCompatible = ['nucleus_collaborator'];
+  else scopeCompatible = ['activity_lead'];
+  // Admin / Regional Viewer can replace a scoped permission entirely.
+  return callerCan.filter(r => scopeCompatible.includes(r) || r === 'admin' || r === 'regional_viewer');
 }
 
 interface UserCardProps {
   user: ManagedUser;
-  callerCtx: CallerContext | null;
+  callerCtx: CallerContext;
   onDelete: (user: ManagedUser) => void;
   onChangeRole: (user: ManagedUser) => void;
+  onRequestDelete: (user: ManagedUser) => void;
+  onRequestChangeRole: (user: ManagedUser) => void;
 }
 
-function UserCard({ user, callerCtx, onDelete, onChangeRole }: UserCardProps) {
-  const isAdmin = callerCtx?.isAdmin ?? false;
-  const isSelf = callerCtx?.userId === user.id;
-  const canAct = isAdmin && !isSelf;
-  // Change role only for non-admin users with exactly one permission
-  const canChangeRole = canAct && !user.isAdmin && user.permissions.length === 1;
+function UserCard({
+  user, callerCtx, onDelete, onChangeRole, onRequestDelete, onRequestChangeRole,
+}: UserCardProps) {
+  const summary = toUserSummary(user);
+  const directDelete = canDeleteUserDirectly(callerCtx, summary);
+  const requestDelete = !directDelete && canRequestDeleteUser(callerCtx, summary);
+  const directChange = canChangeUserRoleDirectly(callerCtx, summary, highestRole(summary) as CreatableRole)
+    // The "any" change is more permissive — surface the button if the caller
+    // can assign at least one valid replacement role.
+    || roleOptionsForChange(callerCtx, user).length > 0
+       && callerCtx.userId !== user.id
+       && (!summary.isAdmin || callerCtx.isSuperAdmin);
+  const requestChange = !directChange && canRequestChangeUserRole(callerCtx, summary);
 
   return (
     <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
@@ -91,32 +129,41 @@ function UserCard({ user, callerCtx, onDelete, onChangeRole }: UserCardProps) {
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          {user.isAdmin && (
+          {user.isSuperAdmin && (
+            <div className="flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-full px-3 py-1">
+              <ShieldIcon className="w-3.5 h-3.5" />
+              <span className="text-xs font-semibold">Super Admin</span>
+            </div>
+          )}
+          {!user.isSuperAdmin && user.isAdmin && (
             <div className="flex items-center gap-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-3 py-1">
               <ShieldIcon className="w-3.5 h-3.5" />
               <span className="text-xs font-semibold">Admin</span>
             </div>
           )}
-          {canAct && (
-            <div className="flex items-center gap-1">
-              {canChangeRole && (
-                <button
-                  onClick={() => onChangeRole(user)}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                  title="Change role"
-                >
-                  <PencilIcon className="w-3.5 h-3.5" />
-                </button>
-              )}
+          {!user.isAdmin && user.isRegionalViewer && (
+            <RoleBadge role="regional_viewer" />
+          )}
+          <div className="flex items-center gap-1">
+            {(directChange || requestChange) && (
               <button
-                onClick={() => onDelete(user)}
+                onClick={() => (directChange ? onChangeRole(user) : onRequestChangeRole(user))}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                title={directChange ? 'Change role' : 'Request role change'}
+              >
+                <PencilIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {(directDelete || requestDelete) && (
+              <button
+                onClick={() => (directDelete ? onDelete(user) : onRequestDelete(user))}
                 className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
-                title="Delete user"
+                title={directDelete ? 'Delete user' : 'Request user deletion'}
               >
                 <Trash2Icon className="w-3.5 h-3.5" />
               </button>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
@@ -136,7 +183,7 @@ function UserCard({ user, callerCtx, onDelete, onChangeRole }: UserCardProps) {
         </div>
       )}
 
-      {!user.isAdmin && user.permissions.length === 0 && (
+      {!user.isAdmin && !user.isRegionalViewer && user.permissions.length === 0 && (
         <p className="mt-3 text-xs text-gray-400 italic">No permissions assigned</p>
       )}
     </div>
@@ -220,21 +267,26 @@ function DeleteUserModal({ user, onClose, onDeleted }: DeleteModalProps) {
 
 interface ChangeRoleModalProps {
   user: ManagedUser;
+  callerCtx: CallerContext;
   onClose: () => void;
   onChanged: () => void;
 }
 
-function ChangeRoleModal({ user, onClose, onChanged }: ChangeRoleModalProps) {
+function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModalProps) {
   const perm = user.permissions[0];
-  const availableRoles: CreatableRole[] = perm
-    ? ([...rolesForPermission(perm), 'admin'] as CreatableRole[])
-    : ['admin'];
-  const [selectedRole, setSelectedRole] = useState<CreatableRole>(perm?.role ?? 'admin');
+  const availableRoles = roleOptionsForChange(callerCtx, user);
+  const initial: CreatableRole = (
+    user.isAdmin ? 'admin'
+    : user.isRegionalViewer ? 'regional_viewer'
+    : (perm?.role as CreatableRole | undefined) ?? availableRoles[0] ?? 'activity_lead'
+  );
+  const [selectedRole, setSelectedRole] = useState<CreatableRole>(initial);
   const [emailInput, setEmailInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const unchanged = selectedRole === perm?.role;
+  const currentRole = user.isAdmin ? 'admin' : user.isRegionalViewer ? 'regional_viewer' : perm?.role;
+  const unchanged = selectedRole === currentRole;
   const emailMatches = emailInput.trim().toLowerCase() === user.email.toLowerCase();
 
   async function handleConfirm() {
@@ -245,7 +297,11 @@ function ChangeRoleModal({ user, onClose, onChanged }: ChangeRoleModalProps) {
         targetUserId: user.id,
         newRole: selectedRole,
         confirmedEmail: emailInput.trim(),
-        permissionId: selectedRole !== 'admin' ? perm?.id : undefined,
+        // Only pass permissionId for scoped roles that update an
+        // existing user_permissions row in place.
+        permissionId: (selectedRole === 'admin' || selectedRole === 'regional_viewer')
+          ? undefined
+          : perm?.id,
       });
       onChanged();
     } catch (err: any) {
@@ -322,6 +378,204 @@ function ChangeRoleModal({ user, onClose, onChanged }: ChangeRoleModalProps) {
   );
 }
 
+// Lightweight "submit a request" modal used by Cluster/Nucleus Coordinators.
+// The reviewer's resolution UI is deliberately minimal here — the planned
+// Data Review / Hygiene interface is the eventual home for this flow.
+interface RequestModalProps {
+  user: ManagedUser;
+  action: 'delete' | 'change_role';
+  callerCtx: CallerContext;
+  onClose: () => void;
+  onSubmitted: () => void;
+}
+
+function RequestUserActionModal({ user, action, callerCtx, onClose, onSubmitted }: RequestModalProps) {
+  const [note, setNote] = useState('');
+  const [newRole, setNewRole] = useState<CreatableRole | ''>('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const availableRoles = action === 'change_role' ? roleOptionsForChange(callerCtx, user) : [];
+  const perm = user.permissions[0];
+
+  async function handleConfirm() {
+    setError(null);
+    setLoading(true);
+    try {
+      await submitPermissionRequest({
+        targetType: action === 'delete' ? 'user' : 'user_permission',
+        targetId: action === 'delete' ? user.id : (perm?.id ?? user.id),
+        action: action === 'delete' ? 'delete' : 'change_role',
+        note: note.trim() || undefined,
+        payload: action === 'change_role' && newRole
+          ? { newRole, targetUserId: user.id, permissionId: perm?.id }
+          : { targetUserId: user.id },
+        clusterId: perm?.clusterId ?? null,
+        nucleusId: perm?.nucleusId ?? null,
+        activityId: perm?.activityId ?? null,
+      });
+      onSubmitted();
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to submit request');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const valid = action === 'delete' ? true : newRole !== '';
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <ClockIcon className="w-5 h-5 text-amber-600" />
+          </div>
+          <h2 className="text-xl font-bold text-gray-900">
+            Request {action === 'delete' ? 'User Deletion' : 'Role Change'}
+          </h2>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          You don’t have permission to {action === 'delete' ? 'delete' : 'change the role of'} <strong>{user.name}</strong> directly.
+          Submit a request and an Administrator will review it.
+        </p>
+        {action === 'change_role' && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Requested new role</label>
+            <select
+              value={newRole}
+              onChange={e => setNewRole(e.target.value as CreatableRole | '')}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none"
+            >
+              <option value="">Select a role…</option>
+              {availableRoles.map(r => (
+                <option key={r} value={r}>{roleLabel(r)}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <label className="block text-sm font-medium text-gray-700 mb-1.5">Reason (optional)</label>
+        <textarea
+          value={note}
+          onChange={e => setNote(e.target.value)}
+          rows={3}
+          className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none mb-4"
+          placeholder="Add context for the reviewer…"
+        />
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+        <div className="flex gap-3 pt-2 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!valid || loading}
+            className="flex-1 px-4 py-2.5 bg-amber-600 text-white font-medium rounded-xl hover:bg-amber-700 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Submitting…' : 'Submit Request'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Pending-requests strip shown to reviewers (Admins / Super Admins / CCs
+// for their cluster). This is intentionally minimal — full review tools
+// live in the upcoming Data Review / Hygiene interface.
+function PendingRequestsPanel({ callerCtx, refreshKey }: { callerCtx: CallerContext; refreshKey: number }) {
+  const [requests, setRequests] = useState<PermissionRequestRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const rows = await fetchVisiblePermissionRequests({ status: 'pending', limit: 25 });
+      setRequests(rows);
+    } catch {
+      // RLS may legitimately return nothing — silent fail is acceptable for the panel.
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, [refreshKey]);
+
+  if (!callerCtx.isAdmin && !callerCtx.isSuperAdmin
+      && !callerCtx.grants.some(g => g.role === 'cluster_coordinator')) {
+    return null;
+  }
+
+  if (!loading && requests.length === 0) return null;
+
+  async function resolve(id: string, status: 'approved' | 'rejected') {
+    setBusyId(id);
+    try {
+      await resolvePermissionRequest(id, status);
+      await load();
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="mb-6 bg-amber-50 border border-amber-200 rounded-2xl p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <ClockIcon className="w-4 h-4 text-amber-700" />
+        <h2 className="text-sm font-semibold text-amber-900">Pending Requests</h2>
+        <span className="text-xs text-amber-700">({requests.length})</span>
+      </div>
+      <ul className="space-y-2">
+        {requests.map(r => (
+          <li key={r.id} className="flex items-center justify-between gap-3 bg-white rounded-xl border border-amber-100 px-3 py-2">
+            <div className="min-w-0 text-sm">
+              <p className="font-medium text-gray-900 truncate">
+                {r.requesterName ?? 'Someone'} requested <span className="font-semibold">{r.action.replace('_', ' ')}</span> on <span className="font-mono text-xs">{r.targetType}</span>
+              </p>
+              {r.note && (
+                <p className="text-xs text-gray-500 truncate">“{r.note}”</p>
+              )}
+              <p className="text-xs text-gray-400">
+                {new Date(r.requestedAt).toLocaleString('en-CA', { dateStyle: 'short', timeStyle: 'short' })}
+              </p>
+            </div>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              <button
+                onClick={() => resolve(r.id, 'approved')}
+                disabled={busyId === r.id}
+                className="w-7 h-7 flex items-center justify-center rounded-md text-emerald-700 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                title="Mark approved (action must still be taken manually)"
+              >
+                <CheckIcon className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={() => resolve(r.id, 'rejected')}
+                disabled={busyId === r.id}
+                className="w-7 h-7 flex items-center justify-center rounded-md text-red-700 hover:bg-red-50 transition-colors disabled:opacity-50"
+                title="Reject"
+              >
+                <XIcon className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-xs text-amber-700/80">
+        Marking a request approved/rejected only updates the request status. The actual change must still be made through the relevant action — full workflow lands with the Data Review interface.
+      </p>
+    </div>
+  );
+}
+
 export function UserManagement() {
   const navigate = useNavigate();
   const [users, setUsers] = useState<ManagedUser[]>([]);
@@ -331,6 +585,8 @@ export function UserManagement() {
   const [showCreate, setShowCreate] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<ManagedUser | null>(null);
   const [pendingChangeRole, setPendingChangeRole] = useState<ManagedUser | null>(null);
+  const [pendingRequest, setPendingRequest] = useState<{ user: ManagedUser; action: 'delete' | 'change_role' } | null>(null);
+  const [requestsRefreshKey, setRequestsRefreshKey] = useState(0);
 
   async function load() {
     setLoading(true);
@@ -342,11 +598,16 @@ export function UserManagement() {
       ]);
       setCallerCtx(ctx);
 
-      // Enrich with emails for admins (requires service role via edge function)
-      if (ctx?.isAdmin) {
-        const emails = await fetchUserEmails();
-        for (const u of userList) {
-          u.email = emails[u.id] ?? '';
+      // Email enrichment requires the service role.  Allowed for both
+      // admins and coordinators (the manage-user fn enforces the gate).
+      if (ctx) {
+        try {
+          const emails = await fetchUserEmails();
+          for (const u of userList) {
+            u.email = emails[u.id] ?? '';
+          }
+        } catch {
+          // Non-fatal — emails just won't render for users that can't fetch them.
         }
       }
 
@@ -360,34 +621,8 @@ export function UserManagement() {
 
   useEffect(() => { load(); }, []);
 
-  function handleCreated() {
-    setShowCreate(false);
-    load();
-  }
-
-  function handleDeleted() {
-    setPendingDelete(null);
-    load();
-  }
-
-  function handleRoleChanged() {
-    setPendingChangeRole(null);
-    load();
-  }
-
-  // Guard: enforce that self-actions are blocked even if UI is bypassed
-  function handleDeleteRequest(user: ManagedUser) {
-    if (!callerCtx?.isAdmin || user.id === callerCtx.userId) return;
-    setPendingDelete(user);
-  }
-
-  function handleChangeRoleRequest(user: ManagedUser) {
-    if (!callerCtx?.isAdmin || user.id === callerCtx.userId || user.isAdmin) return;
-    if (user.permissions.length !== 1) return;
-    setPendingChangeRole(user);
-  }
-
   const canCreate = callerCtx ? canCreateUsers(callerCtx) : false;
+  const callerRoleLabel = callerCtx ? roleLabel(primaryRole(callerCtx)) : '';
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans">
@@ -406,7 +641,7 @@ export function UserManagement() {
           <div>
             <h1 className="text-xl font-bold text-gray-900 tracking-tight">Manage Users</h1>
             <p className="text-xs font-medium text-gray-500 hidden sm:block">
-              Create and view system users
+              {callerRoleLabel ? `Signed in as ${callerRoleLabel}` : 'Create and view system users'}
             </p>
           </div>
         </div>
@@ -457,8 +692,10 @@ export function UserManagement() {
           </div>
         )}
 
-        {!loading && !error && (
+        {!loading && !error && callerCtx && (
           <>
+            <PendingRequestsPanel callerCtx={callerCtx} refreshKey={requestsRefreshKey} />
+
             <div className="mb-6 flex items-center justify-between">
               <p className="text-sm text-gray-500">
                 {users.length === 1 ? '1 user' : `${users.length} users`} visible to you
@@ -482,8 +719,10 @@ export function UserManagement() {
                     key={user.id}
                     user={user}
                     callerCtx={callerCtx}
-                    onDelete={handleDeleteRequest}
-                    onChangeRole={handleChangeRoleRequest}
+                    onDelete={u => setPendingDelete(u)}
+                    onChangeRole={u => setPendingChangeRole(u)}
+                    onRequestDelete={u => setPendingRequest({ user: u, action: 'delete' })}
+                    onRequestChangeRole={u => setPendingRequest({ user: u, action: 'change_role' })}
                   />
                 ))}
               </div>
@@ -496,7 +735,7 @@ export function UserManagement() {
         <CreateUserModal
           callerCtx={callerCtx}
           onClose={() => setShowCreate(false)}
-          onCreated={handleCreated}
+          onCreated={() => { setShowCreate(false); load(); }}
         />
       )}
 
@@ -504,15 +743,26 @@ export function UserManagement() {
         <DeleteUserModal
           user={pendingDelete}
           onClose={() => setPendingDelete(null)}
-          onDeleted={handleDeleted}
+          onDeleted={() => { setPendingDelete(null); load(); }}
         />
       )}
 
-      {pendingChangeRole && (
+      {pendingChangeRole && callerCtx && (
         <ChangeRoleModal
           user={pendingChangeRole}
+          callerCtx={callerCtx}
           onClose={() => setPendingChangeRole(null)}
-          onChanged={handleRoleChanged}
+          onChanged={() => { setPendingChangeRole(null); load(); }}
+        />
+      )}
+
+      {pendingRequest && callerCtx && (
+        <RequestUserActionModal
+          user={pendingRequest.user}
+          action={pendingRequest.action}
+          callerCtx={callerCtx}
+          onClose={() => setPendingRequest(null)}
+          onSubmitted={() => { setPendingRequest(null); setRequestsRefreshKey(k => k + 1); }}
         />
       )}
     </div>

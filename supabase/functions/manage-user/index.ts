@@ -5,6 +5,15 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Mirror of src/lib/permissions.ts.  Keep the two in sync.
+const ROLE_ASSIGNERS: Record<string, string[]> = {
+  admin:                ['super_admin'],
+  regional_viewer:      ['super_admin', 'admin'],
+  cluster_coordinator:  ['super_admin', 'admin', 'cluster_coordinator'],
+  nucleus_collaborator: ['super_admin', 'admin', 'cluster_coordinator'],
+  activity_lead:        ['super_admin', 'admin', 'cluster_coordinator', 'nucleus_collaborator'],
+};
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -18,9 +27,7 @@ Deno.serve(async (req) => {
     );
 
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return json({ error: 'Missing authorization header' }, 401);
-    }
+    if (!authHeader) return json({ error: 'Missing authorization header' }, 401);
 
     const supabaseUser = createClient(
       Deno.env.get('SUPABASE_URL')!,
@@ -33,19 +40,33 @@ Deno.serve(async (req) => {
 
     const { data: callerProfile } = await supabaseAdmin
       .from('profiles')
-      .select('is_admin')
+      .select('is_admin, is_super_admin')
       .eq('id', caller.id)
       .single();
 
-    if (!(callerProfile as any)?.is_admin) {
-      return json({ error: 'Admin access required' }, 403);
-    }
+    const callerIsSuperAdmin = (callerProfile as any)?.is_super_admin === true;
+    const callerIsAdmin = (callerProfile as any)?.is_admin === true || callerIsSuperAdmin;
 
     const body = await req.json();
     const { action } = body;
 
     // ── list-emails ──────────────────────────────────────────────
+    // Visible to any caller that has access to the User Management page.
+    // The page itself will filter the cards via RLS, but emails sit in
+    // auth.users and require the service role to read.
     if (action === 'list-emails') {
+      if (!callerIsAdmin) {
+        // CC/NC need emails too in order to render their managed users.
+        const { data: ccPerms } = await supabaseAdmin
+          .from('user_permissions')
+          .select('id')
+          .eq('user_id', caller.id)
+          .in('role', ['cluster_coordinator', 'nucleus_collaborator'])
+          .limit(1);
+        if (!ccPerms || ccPerms.length === 0) {
+          return json({ error: 'Insufficient permissions' }, 403);
+        }
+      }
       const { data: listData, error: listError } = await supabaseAdmin.auth.admin.listUsers({ perPage: 1000 });
       if (listError) return json({ error: listError.message }, 400);
       const emails: Record<string, string> = {};
@@ -54,6 +75,11 @@ Deno.serve(async (req) => {
       }
       return json({ emails });
     }
+
+    // For everything else the caller must be an Admin or Super Admin —
+    // CCs/NCs use the request-submission path (insert into permission_requests),
+    // which is gated by RLS, not this function.
+    if (!callerIsAdmin) return json({ error: 'Admin access required' }, 403);
 
     // ── delete ───────────────────────────────────────────────────
     if (action === 'delete') {
@@ -64,15 +90,36 @@ Deno.serve(async (req) => {
       const { data: { user: targetUser }, error: userErr } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
       if (userErr || !targetUser) return json({ error: 'User not found' }, 404);
 
+      const { data: targetProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('is_admin, is_super_admin')
+        .eq('id', targetUserId)
+        .single();
+      const targetIsSuper = (targetProfile as any)?.is_super_admin === true;
+      const targetIsAdmin = (targetProfile as any)?.is_admin === true || targetIsSuper;
+
+      if (targetIsSuper) {
+        return json({ error: 'Super Admins cannot be deleted through the application.' }, 403);
+      }
+      if (targetIsAdmin && !callerIsSuperAdmin) {
+        return json({ error: 'Only a Super Admin may delete an Administrator.' }, 403);
+      }
+
       if (!confirmedEmail || confirmedEmail.trim().toLowerCase() !== (targetUser.email ?? '').toLowerCase()) {
         return json({ error: 'Email confirmation does not match' }, 400);
       }
 
-      // Deleting auth user cascades: profiles → user_permissions (CASCADE),
-      // clusters.created_by and event_log.user_id become NULL (SET NULL).
-      // Person records are untouched.
       const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(targetUserId);
       if (deleteError) return json({ error: deleteError.message }, 400);
+
+      try {
+        await supabaseAdmin.from('event_log').insert({
+          type: 'user_deleted',
+          user_id: caller.id,
+          description: `Deleted user ${targetUser.email ?? targetUserId}`,
+          details: { targetUserId, email: targetUser.email },
+        });
+      } catch { /* ignore */ }
 
       return json({ success: true });
     }
@@ -84,46 +131,98 @@ Deno.serve(async (req) => {
       if (targetUserId === caller.id) return json({ error: 'Cannot change your own role' }, 403);
       if (!newRole) return json({ error: 'newRole required' }, 400);
 
+      // Block the unsupported / disallowed roles up front.
+      if (newRole === 'super_admin') {
+        return json({ error: 'Super Admin cannot be assigned through the application.' }, 403);
+      }
+      const allowed = ROLE_ASSIGNERS[newRole];
+      if (!allowed) return json({ error: `Unknown role: ${newRole}` }, 400);
+
+      const callerRoles: string[] = [];
+      if (callerIsSuperAdmin) callerRoles.push('super_admin');
+      if (callerIsAdmin) callerRoles.push('admin');
+      if (!allowed.some(r => callerRoles.includes(r))) {
+        return json({ error: `You are not allowed to assign the '${newRole}' role.` }, 403);
+      }
+
       const { data: { user: targetUser }, error: userErr } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
       if (userErr || !targetUser) return json({ error: 'User not found' }, 404);
+
+      const { data: targetProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('is_admin, is_super_admin, is_regional_viewer')
+        .eq('id', targetUserId)
+        .single();
+      const targetIsSuper = (targetProfile as any)?.is_super_admin === true;
+      const targetIsAdmin = (targetProfile as any)?.is_admin === true || targetIsSuper;
+
+      // Safeguards from the table.
+      if (targetIsSuper) {
+        return json({ error: 'Super Admins cannot be demoted through the application.' }, 403);
+      }
+      if (targetIsAdmin && !callerIsSuperAdmin) {
+        return json({ error: 'Only a Super Admin may change an Administrator’s role.' }, 403);
+      }
 
       if (!confirmedEmail || confirmedEmail.trim().toLowerCase() !== (targetUser.email ?? '').toLowerCase()) {
         return json({ error: 'Email confirmation does not match' }, 400);
       }
 
+      // Apply the change.
       if (newRole === 'admin') {
-        await supabaseAdmin.from('profiles').update({ is_admin: true }).eq('id', targetUserId);
+        await supabaseAdmin.from('profiles')
+          .update({ is_admin: true, is_regional_viewer: false })
+          .eq('id', targetUserId);
+        await supabaseAdmin.from('user_permissions').delete().eq('user_id', targetUserId);
+      } else if (newRole === 'regional_viewer') {
+        await supabaseAdmin.from('profiles')
+          .update({ is_admin: false, is_regional_viewer: true })
+          .eq('id', targetUserId);
         await supabaseAdmin.from('user_permissions').delete().eq('user_id', targetUserId);
       } else {
-        if (!permissionId) return json({ error: 'permissionId required for non-admin role change' }, 400);
-
+        // Scoped role.  Requires permissionId because we update the
+        // existing user_permissions row in place (preserving the scope).
+        if (!permissionId) {
+          return json({ error: 'permissionId required for scoped role change' }, 400);
+        }
         const { data: perm, error: permErr } = await supabaseAdmin
           .from('user_permissions')
           .select('id, cluster_id, nucleus_id, activity_id')
           .eq('id', permissionId)
           .eq('user_id', targetUserId)
           .single();
-
         if (permErr || !perm) return json({ error: 'Permission not found' }, 404);
 
         const p = perm as any;
         const validRoles = p.cluster_id
-          ? ['cluster_coordinator', 'viewer']
+          ? ['cluster_coordinator']
           : p.nucleus_id
-          ? ['nucleus_collaborator', 'viewer']
-          : ['activity_lead', 'viewer'];
-
+          ? ['nucleus_collaborator']
+          : ['activity_lead'];
         if (!validRoles.includes(newRole)) {
           return json({ error: `Role '${newRole}' is incompatible with this permission's scope` }, 400);
         }
+
+        // Ensure target loses any global flags that contradict the scoped role.
+        await supabaseAdmin.from('profiles')
+          .update({ is_admin: false, is_regional_viewer: false })
+          .eq('id', targetUserId);
 
         const { error: updateErr } = await supabaseAdmin
           .from('user_permissions')
           .update({ role: newRole })
           .eq('id', permissionId);
-
         if (updateErr) return json({ error: updateErr.message }, 400);
       }
+
+      try {
+        await supabaseAdmin.from('event_log').insert({
+          type: 'user_role_changed',
+          user_id: caller.id,
+          description: `Changed role of ${targetUser.email ?? targetUserId} to ${newRole}`,
+          details: { targetUserId, newRole, permissionId },
+        });
+      } catch { /* ignore */ }
 
       return json({ success: true });
     }

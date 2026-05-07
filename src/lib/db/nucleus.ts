@@ -1,6 +1,8 @@
 import { supabase } from '../supabase';
 import type { Activity } from '../../types';
 import type { PersonProfile, CourseRow } from './clusterProfile';
+import { actionPermission, canDirectly } from '../permissions';
+import { getCallerContext } from './users';
 
 export type { PersonProfile, CourseRow };
 
@@ -135,64 +137,37 @@ export async function renameNucleus(nucleusId: string, name: string): Promise<vo
   if (error) throw error;
 }
 
+// Renaming = network-structure edit. Allowed for cluster coordinators
+// (own cluster) and nucleus collaborators (own nucleus); request-only is
+// not in the table for renames so we just return a boolean.
 export async function canRenameNucleus(nucleusId: string): Promise<boolean> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return false;
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single();
-  if ((profile as any)?.is_admin) return true;
-
+  const ctx = await getCallerContext();
+  if (!ctx) return false;
   const { data: nucleus } = await supabase
     .from('nuclei')
     .select('cluster_id')
     .eq('id', nucleusId)
     .single();
   if (!nucleus) return false;
-
-  const { data: perm } = await supabase
-    .from('user_permissions')
-    .select('id')
-    .eq('user_id', user.id)
-    .or(`nucleus_id.eq.${nucleusId},cluster_id.eq.${(nucleus as any).cluster_id}`)
-    .in('role', ['nucleus_collaborator', 'cluster_coordinator'])
-    .limit(1)
-    .maybeSingle();
-
-  return perm !== null;
+  return canDirectly(ctx, 'edit_network_structure', {
+    clusterId: (nucleus as any).cluster_id,
+    nucleusId,
+  });
 }
 
 export async function canDeleteNucleus(nucleusId: string): Promise<boolean> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return false;
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single();
-  if ((profile as any)?.is_admin) return true;
-
+  const ctx = await getCallerContext();
+  if (!ctx) return false;
   const { data: nucleus } = await supabase
     .from('nuclei')
     .select('cluster_id')
     .eq('id', nucleusId)
     .single();
   if (!nucleus) return false;
-
-  const { data: perm } = await supabase
-    .from('user_permissions')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('cluster_id', (nucleus as any).cluster_id)
-    .eq('role', 'cluster_coordinator')
-    .limit(1)
-    .maybeSingle();
-
-  return perm !== null;
+  return canDirectly(ctx, 'delete_nucleus', {
+    clusterId: (nucleus as any).cluster_id,
+    nucleusId,
+  });
 }
 
 export async function deleteNucleus(nucleusId: string): Promise<void> {
@@ -445,37 +420,32 @@ export async function removeActivityParticipant(
   });
 }
 
-export async function canDeleteActivity(activityId: string): Promise<boolean> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return false;
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single();
-  if ((profile as any)?.is_admin) return true;
-
+// Returns one of 'direct' | 'request' | 'none'. Activity Leads may
+// request deletion of their own activity; CC/NC delete directly.
+export async function activityDeletePermission(activityId: string): Promise<'direct' | 'request' | 'none'> {
+  const ctx = await getCallerContext();
+  if (!ctx) return 'none';
   const { data: activity } = await supabase
     .from('activities')
     .select('nucleus_id, nuclei(cluster_id)')
     .eq('id', activityId)
     .single();
-  if (!activity) return false;
+  if (!activity) return 'none';
+  return actionPermission(ctx, 'delete_activity', {
+    clusterId: (activity as any).nuclei?.cluster_id,
+    nucleusId: (activity as any).nucleus_id,
+    activityId,
+  });
+}
 
-  const nucleusId = (activity as any).nucleus_id;
-  const clusterId = (activity as any).nuclei?.cluster_id;
+// Backwards-compatible boolean helper for existing call sites that only
+// care about the direct-delete case.
+export async function canDeleteActivity(activityId: string): Promise<boolean> {
+  return (await activityDeletePermission(activityId)) === 'direct';
+}
 
-  const { data: perm } = await supabase
-    .from('user_permissions')
-    .select('id')
-    .eq('user_id', user.id)
-    .or(`nucleus_id.eq.${nucleusId},cluster_id.eq.${clusterId}`)
-    .in('role', ['nucleus_collaborator', 'cluster_coordinator'])
-    .limit(1)
-    .maybeSingle();
-
-  return perm !== null;
+export async function canRequestDeleteActivity(activityId: string): Promise<boolean> {
+  return (await activityDeletePermission(activityId)) === 'request';
 }
 
 export async function deleteActivity(activityId: string): Promise<void> {

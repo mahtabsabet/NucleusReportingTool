@@ -1,4 +1,6 @@
 import { supabase } from '../supabase';
+import { actionPermission } from '../permissions';
+import { getCallerContext } from './users';
 
 export interface PersonDetail {
   id: string;
@@ -158,15 +160,59 @@ export async function searchPersonsByName(
   return (data ?? []) as Array<{ id: string; name: string }>;
 }
 
+// Direct-delete capability irrespective of person scope. Only Super Admin /
+// Admin / Cluster Coordinator (within their cluster) can delete directly.
+// Use personDeletePermission(personId) for scope-aware results including
+// the request-only path used by Nucleus Coordinators and Activity Leads.
 export async function canDeletePerson(): Promise<boolean> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return false;
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single();
-  return (profile as any)?.is_admin === true;
+  const ctx = await getCallerContext();
+  if (!ctx) return false;
+  return ctx.isSuperAdmin || ctx.isAdmin;
+}
+
+// Resolves direct vs. request-only delete capability for a specific person
+// by looking up their nucleus + activity scope and consulting the central
+// permissions module.
+export async function personDeletePermission(personId: string): Promise<'direct' | 'request' | 'none'> {
+  const ctx = await getCallerContext();
+  if (!ctx) return 'none';
+  if (ctx.isSuperAdmin || ctx.isAdmin) return 'direct';
+
+  // Pull all the scopes this person belongs to. The central module checks
+  // whether ANY of them sits within the caller's permitted scope.
+  const [{ data: enrollments }, { data: parts }] = await Promise.all([
+    supabase
+      .from('nucleus_enrollments')
+      .select('nucleus_id, nuclei(cluster_id)')
+      .eq('person_id', personId)
+      .is('deleted_at', null),
+    supabase
+      .from('activity_participants')
+      .select('activity_id, activities(nucleus_id, nuclei(cluster_id))')
+      .eq('person_id', personId)
+      .is('deleted_at', null),
+  ]);
+
+  const checks: Array<{ clusterId?: string; nucleusId?: string; activityId?: string }> = [];
+  for (const e of (enrollments ?? []) as any[]) {
+    checks.push({ clusterId: e.nuclei?.cluster_id, nucleusId: e.nucleus_id });
+  }
+  for (const p of (parts ?? []) as any[]) {
+    checks.push({
+      clusterId: p.activities?.nuclei?.cluster_id,
+      nucleusId: p.activities?.nucleus_id,
+      activityId: p.activity_id,
+    });
+  }
+
+  // Aggregate: pick the strongest permission across scopes.
+  let best: 'direct' | 'request' | 'none' = 'none';
+  for (const t of checks) {
+    const r = actionPermission(ctx, 'delete_person', t);
+    if (r === 'direct') return 'direct';
+    if (r === 'request') best = 'request';
+  }
+  return best;
 }
 
 export async function deletePerson(personId: string): Promise<void> {

@@ -3,7 +3,9 @@ export type ActivityType = 'children_class' | 'junior_youth' | 'study_circle' | 
 export type ParticipantRole = 'teacher' | 'animator' | 'tutor' | 'child' | 'junior_youth' | 'parent' | 'host' | 'attendee' | 'participant' | 'other';
 export type PermissionRole = 'cluster_coordinator' | 'nucleus_collaborator' | 'activity_lead' | 'viewer';
 export type CourseStatus = 'in_progress' | 'completed';
-export type EventLogType = 'activity_created' | 'participant_added' | 'participant_removed' | 'circle_movement' | 'course_completed' | 'course_started' | 'person_created' | 'nucleus_created' | 'session_logged' | 'profile_updated';
+export type EventLogType = 'activity_created' | 'participant_added' | 'participant_removed' | 'circle_movement' | 'course_completed' | 'course_started' | 'person_created' | 'person_deleted' | 'nucleus_created' | 'nucleus_deleted' | 'activity_deleted' | 'session_logged' | 'profile_updated' | 'permission_request_submitted' | 'permission_request_resolved' | 'user_role_changed' | 'user_deleted';
+
+export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
 export interface Database {
   public: {
@@ -13,10 +15,16 @@ export interface Database {
           id: string;
           name: string;
           is_admin: boolean;
+          is_super_admin: boolean;
+          is_regional_viewer: boolean;
           person_id: string | null;
           created_at: string;
         };
-        Insert: Omit<Database['public']['Tables']['profiles']['Row'], 'created_at'> & { created_at?: string };
+        Insert: Omit<Database['public']['Tables']['profiles']['Row'], 'created_at' | 'is_super_admin' | 'is_regional_viewer'> & {
+          created_at?: string;
+          is_super_admin?: boolean;
+          is_regional_viewer?: boolean;
+        };
         Update: Partial<Database['public']['Tables']['profiles']['Insert']>;
       };
       clusters: {
@@ -187,6 +195,34 @@ export interface Database {
         };
         Insert: Omit<Database['public']['Tables']['timeline_events']['Row'], 'id'> & { id?: string };
         Update: Partial<Database['public']['Tables']['timeline_events']['Insert']>;
+      };
+      permission_requests: {
+        Row: {
+          id: string;
+          target_type: string;
+          target_id: string | null;
+          action: string;
+          payload: Record<string, unknown> | null;
+          note: string | null;
+          cluster_id: string | null;
+          nucleus_id: string | null;
+          activity_id: string | null;
+          requested_by: string | null;
+          requested_at: string;
+          status: PermissionRequestStatus;
+          resolved_by: string | null;
+          resolved_at: string | null;
+          resolution_note: string | null;
+        };
+        Insert: Omit<Database['public']['Tables']['permission_requests']['Row'], 'id' | 'requested_at' | 'status' | 'resolved_by' | 'resolved_at' | 'resolution_note'> & {
+          id?: string;
+          requested_at?: string;
+          status?: PermissionRequestStatus;
+          resolved_by?: string | null;
+          resolved_at?: string | null;
+          resolution_note?: string | null;
+        };
+        Update: Partial<Database['public']['Tables']['permission_requests']['Insert']>;
       };
       event_log: {
         Row: {

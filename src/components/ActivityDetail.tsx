@@ -14,9 +14,10 @@ import {
   addPersonToActivity,
   removeActivityParticipant,
   updateActivityDetails,
-  canDeleteActivity,
+  activityDeletePermission,
   deleteActivity,
 } from '../lib/db/nucleus';
+import { submitPermissionRequest } from '../lib/db/requests';
 import { markPersonUnplaced } from '../lib/unplacedTracker';
 import { Activity } from '../types';
 import { PersonNameCombobox } from './PersonNameCombobox';
@@ -56,11 +57,16 @@ export function ActivityDetail() {
   const [saved, setSaved] = useState(false);
   const [schedule, setSchedule] = useState('');
   const [notes, setNotes] = useState('');
-  const [canDelete, setCanDelete] = useState(false);
+  const [deletePermission, setDeletePermission] = useState<'direct' | 'request' | 'none'>('none');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [showRequest, setShowRequest] = useState(false);
+  const [requestNote, setRequestNote] = useState('');
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [requestSubmitting, setRequestSubmitting] = useState(false);
+  const [requestSent, setRequestSent] = useState(false);
 
   useEffect(() => {
     if (!activityId) return;
@@ -82,7 +88,7 @@ export function ActivityDetail() {
       }
       setLoading(false);
     });
-    canDeleteActivity(activityId).then(setCanDelete);
+    activityDeletePermission(activityId).then(setDeletePermission);
   }, [activityId]);
 
   if (loading) {
@@ -200,7 +206,7 @@ export function ActivityDetail() {
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
               {activity.name}
             </h1>
-            {canDelete && (
+            {deletePermission === 'direct' && (
               <button
                 onClick={() => { setDeleteConfirmInput(''); setDeleteError(null); setShowDeleteConfirm(true); }}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
@@ -208,6 +214,18 @@ export function ActivityDetail() {
                 <Trash2Icon className="w-4 h-4" />
                 Delete
               </button>
+            )}
+            {deletePermission === 'request' && !requestSent && (
+              <button
+                onClick={() => { setRequestNote(''); setRequestError(null); setShowRequest(true); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-amber-700 border border-amber-200 rounded-lg hover:bg-amber-50 transition-colors"
+              >
+                <ClockIcon className="w-4 h-4" />
+                Request Deletion
+              </button>
+            )}
+            {deletePermission === 'request' && requestSent && (
+              <span className="text-xs text-amber-700 font-medium">Deletion requested</span>
             )}
           </div>
           {activity.currentBook && (
@@ -223,6 +241,69 @@ export function ActivityDetail() {
           )}
         </div>
       </header>
+
+      {showRequest && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <ClockIcon className="w-5 h-5 text-amber-600" />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">Request Activity Deletion</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              You don't have permission to delete <strong>{activity.name}</strong> directly. A coordinator will review your request.
+            </p>
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Reason (optional)</label>
+            <textarea
+              value={requestNote}
+              onChange={e => setRequestNote(e.target.value)}
+              rows={3}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none mb-4"
+              placeholder="Add context for the reviewer…"
+            />
+            {requestError && (
+              <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+                <p className="text-sm text-red-700">{requestError}</p>
+              </div>
+            )}
+            <div className="flex gap-3 pt-2 border-t border-gray-100">
+              <button
+                onClick={() => setShowRequest(false)}
+                disabled={requestSubmitting}
+                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setRequestError(null);
+                  setRequestSubmitting(true);
+                  try {
+                    await submitPermissionRequest({
+                      targetType: 'activity',
+                      targetId: activityId!,
+                      action: 'delete',
+                      note: requestNote.trim() || undefined,
+                      nucleusId: nucleusId!,
+                    });
+                    setRequestSent(true);
+                    setShowRequest(false);
+                  } catch (err: any) {
+                    setRequestError(err.message ?? 'Failed to submit request');
+                  } finally {
+                    setRequestSubmitting(false);
+                  }
+                }}
+                disabled={requestSubmitting}
+                className="flex-1 px-4 py-2.5 bg-amber-600 text-white font-medium rounded-xl hover:bg-amber-700 shadow-sm transition-all disabled:opacity-50"
+              >
+                {requestSubmitting ? 'Submitting…' : 'Submit Request'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showDeleteConfirm && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">

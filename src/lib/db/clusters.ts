@@ -1,4 +1,6 @@
 import { supabase } from '../supabase';
+import { canDirectly } from '../permissions';
+import { getCallerContext } from './users';
 
 export interface ClusterRow {
   id: string;
@@ -65,26 +67,9 @@ export async function fetchNuclei(clusterId?: string | null): Promise<NucleusRow
 }
 
 export async function canCreateNucleusInCluster(clusterId: string): Promise<boolean> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return false;
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('is_admin')
-    .eq('id', user.id)
-    .single();
-  if ((profile as any)?.is_admin) return true;
-
-  const { data: perm } = await supabase
-    .from('user_permissions')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('cluster_id', clusterId)
-    .eq('role', 'cluster_coordinator')
-    .limit(1)
-    .maybeSingle();
-
-  return perm !== null;
+  const ctx = await getCallerContext();
+  if (!ctx) return false;
+  return canDirectly(ctx, 'create_nucleus', { clusterId });
 }
 
 export async function createNucleus(params: {

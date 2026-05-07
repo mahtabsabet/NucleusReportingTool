@@ -1,7 +1,21 @@
 import { supabase } from '../supabase';
-import type { PermissionRole } from '../database.types';
+import {
+  type CallerContext,
+  type CreatableRole,
+  type ManagedUserSummary,
+  type PermissionGrant,
+  type ScopedRole,
+  canCreateUsers as canCreateUsersCentral,
+  creatableRoles as creatableRolesCentral,
+  scopeRequirementFor,
+  roleLabel as roleLabelCentral,
+  highestRole,
+} from '../permissions';
 
-export type CreatableRole = 'admin' | PermissionRole;
+// Re-export the central types/helpers so existing imports continue to work.
+export type { CallerContext, CreatableRole };
+export { creatableRolesCentral as creatableRoles, canCreateUsersCentral as canCreateUsers };
+export const roleLabel = (r: CreatableRole | string) => roleLabelCentral(r);
 
 export interface ScopeOption {
   id: string;
@@ -10,7 +24,7 @@ export interface ScopeOption {
 
 export interface UserPermissionRow {
   id: string;
-  role: PermissionRole;
+  role: ScopedRole;
   clusterId: string | null;
   clusterName: string | null;
   nucleusId: string | null;
@@ -24,17 +38,27 @@ export interface ManagedUser {
   name: string;
   email: string;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
+  isRegionalViewer: boolean;
   createdAt: string;
   permissions: UserPermissionRow[];
 }
 
-export interface CallerContext {
-  userId: string;
-  isAdmin: boolean;
-  isClusterCoordinator: boolean;
-  isNucleusCollaborator: boolean;
-  coordinatorClusterIds: string[];
-  collaboratorNucleusIds: string[];
+// Convert a ManagedUser into the lightweight summary the central
+// safeguards module accepts.
+export function toUserSummary(u: ManagedUser): ManagedUserSummary {
+  return {
+    id: u.id,
+    isSuperAdmin: u.isSuperAdmin,
+    isAdmin: u.isAdmin,
+    isRegionalViewer: u.isRegionalViewer,
+    grants: u.permissions.map<PermissionGrant>(p => ({
+      role: p.role,
+      clusterId: p.clusterId,
+      nucleusId: p.nucleusId,
+      activityId: p.activityId,
+    })),
+  };
 }
 
 export async function getCallerContext(): Promise<CallerContext | null> {
@@ -43,57 +67,37 @@ export async function getCallerContext(): Promise<CallerContext | null> {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('is_admin')
+    .select('is_admin, is_super_admin, is_regional_viewer')
     .eq('id', user.id)
     .single();
 
   const { data: perms } = await supabase
     .from('user_permissions')
-    .select('role, cluster_id, nucleus_id')
+    .select('role, cluster_id, nucleus_id, activity_id')
     .eq('user_id', user.id);
 
-  const permList = (perms as any[]) ?? [];
-  const isAdmin = (profile as any)?.is_admin ?? false;
-  const ccPerms = permList.filter(p => p.role === 'cluster_coordinator');
-  const ncPerms = permList.filter(p => p.role === 'nucleus_collaborator');
+  const p = (profile as any) ?? {};
+  const grants: PermissionGrant[] = ((perms as any[]) ?? []).map(r => ({
+    role: r.role as ScopedRole,
+    clusterId: r.cluster_id ?? null,
+    nucleusId: r.nucleus_id ?? null,
+    activityId: r.activity_id ?? null,
+  }));
 
   return {
     userId: user.id,
-    isAdmin,
-    isClusterCoordinator: ccPerms.length > 0,
-    isNucleusCollaborator: ncPerms.length > 0,
-    coordinatorClusterIds: ccPerms.map(p => p.cluster_id).filter(Boolean),
-    collaboratorNucleusIds: ncPerms.map(p => p.nucleus_id).filter(Boolean),
+    isSuperAdmin: p.is_super_admin === true,
+    isAdmin: p.is_admin === true || p.is_super_admin === true,
+    isRegionalViewer: p.is_regional_viewer === true,
+    grants,
   };
-}
-
-export function canCreateUsers(ctx: CallerContext): boolean {
-  return ctx.isAdmin || ctx.isClusterCoordinator || ctx.isNucleusCollaborator;
-}
-
-export function creatableRoles(ctx: CallerContext): CreatableRole[] {
-  if (ctx.isAdmin) return ['admin', 'cluster_coordinator', 'nucleus_collaborator', 'activity_lead'];
-  if (ctx.isClusterCoordinator) return ['cluster_coordinator', 'nucleus_collaborator', 'activity_lead'];
-  if (ctx.isNucleusCollaborator) return ['activity_lead'];
-  return [];
-}
-
-export function roleLabel(role: CreatableRole): string {
-  const labels: Record<CreatableRole, string> = {
-    admin: 'Administrator',
-    cluster_coordinator: 'Cluster Coordinator',
-    nucleus_collaborator: 'Nucleus Coordinator',
-    activity_lead: 'Activity Lead',
-    viewer: 'Viewer',
-  };
-  return labels[role] ?? role;
 }
 
 export async function fetchManagedUsers(): Promise<ManagedUser[]> {
   const { data, error } = await supabase
     .from('profiles')
     .select(`
-      id, name, is_admin, created_at,
+      id, name, is_admin, is_super_admin, is_regional_viewer, created_at,
       user_permissions(
         id, role, cluster_id, nucleus_id, activity_id,
         clusters(name),
@@ -108,11 +112,13 @@ export async function fetchManagedUsers(): Promise<ManagedUser[]> {
     id: p.id,
     name: p.name,
     email: '',
-    isAdmin: p.is_admin,
+    isAdmin: p.is_admin === true || p.is_super_admin === true,
+    isSuperAdmin: p.is_super_admin === true,
+    isRegionalViewer: p.is_regional_viewer === true,
     createdAt: p.created_at,
     permissions: ((p.user_permissions ?? []) as any[]).map((up: any) => ({
       id: up.id,
-      role: up.role as PermissionRole,
+      role: up.role as ScopedRole,
       clusterId: up.cluster_id,
       clusterName: up.clusters?.name ?? null,
       nucleusId: up.nucleus_id,
@@ -123,6 +129,7 @@ export async function fetchManagedUsers(): Promise<ManagedUser[]> {
   }));
 }
 
+// Loads activities visible to the caller within a given nucleus.
 export async function fetchActivitiesForScope(nucleusId: string): Promise<ScopeOption[]> {
   const { data, error } = await supabase
     .from('activities')
@@ -146,6 +153,14 @@ export interface CreateUserParams {
 }
 
 export async function createUser(params: CreateUserParams): Promise<void> {
+  // Client-side guard mirrors the table — the edge function performs
+  // the authoritative check, but failing here gives a faster + clearer
+  // error if the form ever gets out of sync with the central rules.
+  const need = scopeRequirementFor(params.role);
+  if (need === 'cluster' && !params.clusterId) throw new Error('A cluster must be selected.');
+  if (need === 'nucleus' && !params.nucleusId) throw new Error('A nucleus must be selected.');
+  if (need === 'activity' && !params.activityId) throw new Error('An activity must be selected.');
+
   const { data, error } = await supabase.functions.invoke('create-user', {
     body: {
       name: params.name,
@@ -199,3 +214,6 @@ export async function changeUserRole(params: ChangeRoleParams): Promise<void> {
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
 }
+
+// Convenience re-export for UIs.
+export { highestRole };

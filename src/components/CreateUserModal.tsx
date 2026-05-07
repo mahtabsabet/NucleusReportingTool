@@ -2,13 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { XIcon, UserPlusIcon, EyeIcon, EyeOffIcon, LoaderIcon } from 'lucide-react';
 import {
   createUser,
-  creatableRoles,
-  roleLabel,
   fetchActivitiesForScope,
-  type CallerContext,
-  type CreatableRole,
   type ScopeOption,
 } from '../lib/db/users';
+import {
+  creatableRoles,
+  roleLabel,
+  scopeRequirementFor,
+  assignableScopes,
+  type CallerContext,
+  type CreatableRole,
+} from '../lib/permissions';
 import { fetchClusters, fetchNuclei, type ClusterRow, type NucleusRow } from '../lib/db/clusters';
 
 interface Props {
@@ -38,24 +42,82 @@ export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const availableRoles = creatableRoles(callerCtx);
+  const allowedScopes = assignableScopes(callerCtx);
 
-  const needsCluster = role === 'cluster_coordinator' || role === 'nucleus_collaborator' || role === 'activity_lead';
-  const needsNucleus = role === 'nucleus_collaborator' || role === 'activity_lead';
-  const needsActivity = role === 'activity_lead';
+  // Resolve scope requirement off the central module so this UI stays in
+  // lockstep with the permissions table.
+  const scopeNeed = role ? scopeRequirementFor(role) : 'none';
+  const roleNeedsCluster = scopeNeed === 'cluster' || scopeNeed === 'nucleus' || scopeNeed === 'activity';
+  const roleNeedsNucleus = scopeNeed === 'nucleus' || scopeNeed === 'activity';
+  const roleNeedsActivity = scopeNeed === 'activity';
+
+  // A caller restricted to nuclei (i.e. a Nucleus Coordinator) skips the
+  // cluster dropdown — they can only pick from their own nuclei.
+  const callerHasNoClusters =
+    Array.isArray(allowedScopes.clusterIds) && (allowedScopes.clusterIds as string[]).length === 0;
+  const callerHasFixedNuclei =
+    Array.isArray(allowedScopes.nucleusIds) && (allowedScopes.nucleusIds as string[]).length > 0;
+  const skipClusterPicker = roleNeedsCluster && callerHasNoClusters && callerHasFixedNuclei;
+
+  const needsCluster = roleNeedsCluster && !skipClusterPicker;
+  const needsNucleus = roleNeedsNucleus;
+  const needsActivity = roleNeedsActivity;
 
   // Load clusters when role requires one
   useEffect(() => {
     if (!needsCluster) return;
     setLoadingClusters(true);
     fetchClusters()
-      .then(setClusters)
+      .then(all => {
+        // Filter to clusters the caller is allowed to assign within.
+        const filtered = allowedScopes.clusterIds === 'all'
+          ? all
+          : all.filter(c => (allowedScopes.clusterIds as string[]).includes(c.id));
+        setClusters(filtered);
+        // If the caller has exactly one cluster (typical for a CC), preselect it.
+        if (filtered.length === 1 && !selectedClusterId) {
+          setSelectedClusterId(filtered[0].id);
+        }
+      })
       .catch(() => setError('Failed to load clusters'))
       .finally(() => setLoadingClusters(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [needsCluster]);
 
-  // Load nuclei when cluster is selected
+  // Load nuclei.  Two modes:
+  //  - cluster-driven: we picked a cluster, list its nuclei (filtered to
+  //    the caller's nucleus scope if they're an NC).
+  //  - direct: caller has no cluster scope, only specific nuclei.
   useEffect(() => {
-    if (!needsNucleus || !selectedClusterId) {
+    if (!needsNucleus) {
+      setNuclei([]);
+      return;
+    }
+
+    const allowedNucleusIds = allowedScopes.nucleusIds === 'all'
+      ? null
+      : (allowedScopes.nucleusIds as string[]);
+
+    const filterToScope = (rows: NucleusRow[]) =>
+      allowedNucleusIds === null ? rows : rows.filter(n => allowedNucleusIds.includes(n.id));
+
+    if (skipClusterPicker) {
+      // Direct nucleus list.
+      setLoadingNuclei(true);
+      fetchNuclei()
+        .then(rows => {
+          const filtered = filterToScope(rows);
+          setNuclei(filtered);
+          if (filtered.length === 1 && !selectedNucleusId) {
+            setSelectedNucleusId(filtered[0].id);
+          }
+        })
+        .catch(() => setError('Failed to load nuclei'))
+        .finally(() => setLoadingNuclei(false));
+      return;
+    }
+
+    if (!selectedClusterId) {
       setNuclei([]);
       return;
     }
@@ -63,10 +125,11 @@ export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
     setSelectedNucleusId('');
     setSelectedActivityId('');
     fetchNuclei(selectedClusterId)
-      .then(setNuclei)
+      .then(rows => setNuclei(filterToScope(rows)))
       .catch(() => setError('Failed to load nuclei'))
       .finally(() => setLoadingNuclei(false));
-  }, [selectedClusterId, needsNucleus]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedClusterId, needsNucleus, skipClusterPicker]);
 
   // Load activities when nucleus is selected
   useEffect(() => {
@@ -105,7 +168,7 @@ export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
 
   function isFormValid(): boolean {
     if (!name.trim() || !email.trim() || !password.trim() || !role) return false;
-    if (needsCluster && !selectedClusterId) return false;
+    if (roleNeedsCluster && !skipClusterPicker && !selectedClusterId) return false;
     if (needsNucleus && !selectedNucleusId) return false;
     if (needsActivity && !selectedActivityId) return false;
     return true;
@@ -207,11 +270,11 @@ export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
                   value={selectedNucleusId}
                   onChange={e => handleNucleusChange(e.target.value)}
                   required
-                  disabled={!selectedClusterId}
+                  disabled={!skipClusterPicker && !selectedClusterId}
                   className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <option value="">
-                    {!selectedClusterId ? 'Select a cluster first…' : 'Select a nucleus…'}
+                    {!skipClusterPicker && !selectedClusterId ? 'Select a cluster first…' : 'Select a nucleus…'}
                   </option>
                   {nuclei.map(n => (
                     <option key={n.id} value={n.id}>{n.name}</option>
