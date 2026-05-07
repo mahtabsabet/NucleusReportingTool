@@ -185,6 +185,14 @@ export function Timeline({ clusterId }: TimelineProps) {
   // applies it as soon as the new width is in the DOM.
   const pendingScrollLeftRef = useRef<number | null>(null);
   const initializedRef = useRef(false);
+  // Wheel and touch handlers read the live pxPerDay through this ref so we
+  // don't have to re-attach the listeners on every zoom step. Re-attaching
+  // mid-pinch would reset the closure-captured `pinch` state and freeze
+  // the gesture after the first frame.
+  const pxPerDayRef = useRef(pxPerDay);
+  useEffect(() => {
+    pxPerDayRef.current = pxPerDay;
+  }, [pxPerDay]);
 
   // Track container width via ResizeObserver.
   useEffect(() => {
@@ -263,10 +271,11 @@ export function Timeline({ clusterId }: TimelineProps) {
 
   // Wheel: plain wheel zooms (anchored on cursor); shift+wheel pans
   // horizontally. Attached via addEventListener so we can preventDefault —
-  // React's onWheel is passive.
+  // React's onWheel is passive. Reads the live pxPerDay through a ref to
+  // avoid re-binding the listener on every zoom step.
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || pxPerDay <= 0) return;
+    if (!el) return;
     const handler = (e: WheelEvent) => {
       if (e.shiftKey) {
         e.preventDefault();
@@ -274,29 +283,36 @@ export function Timeline({ clusterId }: TimelineProps) {
         return;
       }
       e.preventDefault();
+      const ppd = pxPerDayRef.current;
+      if (ppd <= 0) return;
       const rect = el.getBoundingClientRect();
       const cursorViewportX = e.clientX - rect.left;
       const cursorContentX = el.scrollLeft + cursorViewportX;
-      const cursorDate = dateAtPixel(cursorContentX, minDate, pxPerDay);
+      const cursorDate = dateAtPixel(cursorContentX, minDate, ppd);
       // Exponential zoom — a single wheel "notch" (deltaY = 100) gives a
       // ~1.35× zoom step.
       const factor = Math.exp(-e.deltaY * 0.003);
-      const newPpd = clampPxPerDay(pxPerDay * factor, el.clientWidth, totalDays);
-      if (newPpd === pxPerDay) return;
+      const newPpd = clampPxPerDay(ppd * factor, el.clientWidth, totalDays);
+      if (newPpd === ppd) return;
       const newCursorContentX = pixelAtDate(cursorDate, minDate, newPpd);
       pendingScrollLeftRef.current = newCursorContentX - cursorViewportX;
       setPxPerDay(newPpd);
     };
     el.addEventListener('wheel', handler, { passive: false });
     return () => el.removeEventListener('wheel', handler);
-  }, [pxPerDay, minDate, totalDays]);
+  }, [minDate, totalDays]);
 
   // Touch handling: 1 finger pans, 2 fingers pinch-zoom anchored on the
   // midpoint. The container has `touch-action: none` so the browser
   // doesn't claim gestures for native scroll/zoom — we drive both here.
+  //
+  // Critical: this effect must NOT depend on `pxPerDay`. setPxPerDay during
+  // a pinch would otherwise re-run the effect, tear down the listeners,
+  // and reset the closure-captured `pinch` state — freezing the gesture
+  // after the first frame. We read the live pxPerDay through a ref instead.
   useEffect(() => {
     const el = containerRef.current;
-    if (!el || pxPerDay <= 0) return;
+    if (!el) return;
     let pan: { startX: number; startScrollLeft: number } | null = null;
     let pinch:
       | { d0: number; ppd0: number; midViewportX: number; midDate: Date }
@@ -309,14 +325,16 @@ export function Timeline({ clusterId }: TimelineProps) {
 
     const startPinch = (t1: Touch, t2: Touch) => {
       pan = null;
+      const ppd = pxPerDayRef.current;
+      if (ppd <= 0) return;
       const rect = el.getBoundingClientRect();
       const midViewportX = (t1.clientX + t2.clientX) / 2 - rect.left;
       const midContentX = el.scrollLeft + midViewportX;
       pinch = {
         d0: Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY),
-        ppd0: pxPerDay,
+        ppd0: ppd,
         midViewportX,
-        midDate: dateAtPixel(midContentX, minDate, pxPerDay),
+        midDate: dateAtPixel(midContentX, minDate, ppd),
       };
     };
 
@@ -344,7 +362,7 @@ export function Timeline({ clusterId }: TimelineProps) {
           el.clientWidth,
           totalDays,
         );
-        if (newPpd === pxPerDay) return;
+        if (newPpd === pxPerDayRef.current) return;
         const newMidContentX = pixelAtDate(pinch.midDate, minDate, newPpd);
         pendingScrollLeftRef.current = newMidContentX - pinch.midViewportX;
         setPxPerDay(newPpd);
@@ -373,7 +391,7 @@ export function Timeline({ clusterId }: TimelineProps) {
       el.removeEventListener('touchend', onTouchEnd);
       el.removeEventListener('touchcancel', onTouchEnd);
     };
-  }, [pxPerDay, minDate, totalDays]);
+  }, [minDate, totalDays]);
 
   const fitAll = useCallback(() => {
     const el = containerRef.current;
