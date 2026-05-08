@@ -113,6 +113,12 @@ export function activityLeadActivityIds(ctx: CallerContext): string[] {
 export function isClusterCoordinator(ctx: CallerContext): boolean {
   return coordinatorClusterIds(ctx).length > 0;
 }
+// True if the user is permitted to create a nucleus in *any* cluster — used
+// to decide whether to render the "New Nucleus" affordance at all (vs. the
+// per-cluster `create_nucleus` check, which gates the action itself).
+export function canCreateAnyNucleus(ctx: CallerContext): boolean {
+  return ctx.isSuperAdmin || ctx.isAdmin || isClusterCoordinator(ctx);
+}
 export function isNucleusCollaborator(ctx: CallerContext): boolean {
   return collaboratorNucleusIds(ctx).length > 0;
 }
