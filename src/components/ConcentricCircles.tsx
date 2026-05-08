@@ -13,6 +13,8 @@ import {
   ZoomInIcon,
   ZoomOutIcon,
   Maximize2Icon,
+  LockIcon,
+  UnlockIcon,
 } from 'lucide-react';
 import {
   fetchNucleusEnrollmentsWithNames,
@@ -78,8 +80,9 @@ const CORE_INNER_R = 6; // inner anchor radius for the innermost (core) band
 const MIN_BAND_WIDTH_CORE = 56; // minimum visible thickness for the core band
 const MIN_BAND_WIDTH_OUTER = 42; // minimum visible thickness for outer bands
 const BASE_VIEW_SIZE = 400; // baseline viewBox dimension (unchanged from prior)
-const BASE_CONTAINER_PX = 500; // baseline rendered CSS size
-const MAX_CONTAINER_PX = 720; // max rendered size — beyond this, zoom is used to enlarge
+// Viewport box max size: fill the parent's available width, but never grow taller
+// than the visible page area (minus surrounding chrome).
+const VIEWPORT_MAX_CSS = 'min(100%, calc(100vh - 220px))';
 
 // Order from innermost to outermost — used for nesting / z-ordering
 const ORDERED_LEVELS: Level[] = ['coordinating', 'supporting', 'participating', 'aware'];
@@ -260,10 +263,12 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
+  const [isZoomLocked, setIsZoomLocked] = useState(false);
   const panStartRef = useRef<{ mx: number; my: number; px: number; py: number } | null>(null);
   const vizContainerRef = useRef<HTMLDivElement | null>(null);
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 3;
+  const zoomLockKey = `nucleus-circle-zoom:${nucleusId}`;
 
   useEffect(() => {
     setLoading(true);
@@ -443,12 +448,6 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
   }, [bandPlans]);
   const center = viewSize / 2;
 
-  // Container CSS size grows with viewSize up to a cap; beyond the cap, users zoom.
-  const containerMaxPx = useMemo(() => {
-    const ratio = BASE_CONTAINER_PX / BASE_VIEW_SIZE;
-    return Math.min(MAX_CONTAINER_PX, Math.max(BASE_CONTAINER_PX, viewSize * ratio));
-  }, [viewSize]);
-
   // Compute node positions for each level using the dynamic plans.
   const nodePositions = useMemo(() => {
     const result: Record<Level, { x: number; y: number }[]> = {
@@ -463,7 +462,47 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
   // Zoom & pan handlers
   const zoomIn  = useCallback(() => setZoom(z => Math.min(ZOOM_MAX, z * 1.2)), []);
   const zoomOut = useCallback(() => setZoom(z => Math.max(ZOOM_MIN, z / 1.2)), []);
-  const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
+  const resetView = useCallback(() => {
+    // If a locked zoom exists for this nucleus, reset to it; else to 1.
+    let target = 1;
+    try {
+      const stored = localStorage.getItem(zoomLockKey);
+      if (stored != null) {
+        const v = parseFloat(stored);
+        if (!isNaN(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) target = v;
+      }
+    } catch { /* ignore storage errors */ }
+    setZoom(target);
+    setPan({ x: 0, y: 0 });
+  }, [zoomLockKey]);
+
+  // Restore a locked zoom on mount / when nucleusId changes.
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(zoomLockKey);
+      if (stored != null) {
+        const v = parseFloat(stored);
+        if (!isNaN(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) {
+          setZoom(v);
+          setIsZoomLocked(true);
+          return;
+        }
+      }
+      setIsZoomLocked(false);
+    } catch { /* ignore storage errors */ }
+  }, [zoomLockKey]);
+
+  const toggleZoomLock = useCallback(() => {
+    try {
+      if (isZoomLocked) {
+        localStorage.removeItem(zoomLockKey);
+        setIsZoomLocked(false);
+      } else {
+        localStorage.setItem(zoomLockKey, String(zoom));
+        setIsZoomLocked(true);
+      }
+    } catch { /* ignore storage errors */ }
+  }, [isZoomLocked, zoom, zoomLockKey]);
 
   const handlePanMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -530,9 +569,12 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
           top: `${topPct}%`,
           width: `${sizePct}%`,
           height: `${sizePct}%`,
-          transform: `translate(-50%, -50%) scale(${scale})`,
+          // Counter-scale by 1/zoom so icons stay a constant on-screen size while
+          // the rings (parent) scale up — zooming gives icons more arc room rather
+          // than enlarging them.
+          transform: `translate(-50%, -50%) scale(${scale / zoom})`,
           zIndex: isHovered ? 30 : 20,
-          transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+          transition: 'transform 0.18s ease, box-shadow 0.18s ease',
           cursor: 'pointer',
         }}
       >
@@ -889,15 +931,19 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
       <div className="flex flex-col gap-8">
         {/* Hint text */}
         <p className="text-xs text-gray-400 text-center -mb-4">
-          Hover for name • Click for details • Drag to reassign • Scroll to zoom • Drag empty space to pan
+          Hover for name • Click for details • Drag to reassign • Scroll to zoom •
+          Drag empty space to pan • Lock to remember the zoom level
         </p>
 
-        {/* Circles visualization — viewport with zoom/pan, transformed inner stage */}
+        {/* Circles visualization — viewport with zoom/pan, transformed inner stage.
+            The box fills its parent's available width and height so zooming
+            uses the full page area rather than being clipped to a small box. */}
         <div
           ref={vizContainerRef}
           className="relative mx-auto w-full overflow-hidden rounded-2xl select-none"
           style={{
-            maxWidth: `${containerMaxPx}px`,
+            width: '100%',
+            maxWidth: VIEWPORT_MAX_CSS,
             aspectRatio: '1/1',
             cursor: isPanning ? 'grabbing' : 'grab',
             touchAction: 'none',
@@ -1022,12 +1068,27 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
             <button
               type="button"
               onClick={resetView}
-              disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
               aria-label="Reset view"
-              title="Reset view"
+              title={isZoomLocked ? 'Reset to locked zoom' : 'Reset view'}
               className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Maximize2Icon className="w-4 h-4" />
+            </button>
+            <div className="my-0.5 border-t border-gray-100" />
+            <button
+              type="button"
+              onClick={toggleZoomLock}
+              aria-label={isZoomLocked ? 'Unlock zoom level' : 'Lock current zoom as default'}
+              title={isZoomLocked
+                ? 'Zoom is locked — click to clear the saved level'
+                : 'Lock current zoom — page will load at this level next time'}
+              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${
+                isZoomLocked
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              {isZoomLocked ? <LockIcon className="w-4 h-4" /> : <UnlockIcon className="w-4 h-4" />}
             </button>
           </div>
         </div>
