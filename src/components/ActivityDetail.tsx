@@ -371,7 +371,12 @@ export function ActivityDetail() {
               value={schedule}
               onChange={e => setSchedule(e.target.value)}
               placeholder="e.g. Saturdays at 10:00 AM, Every other Tuesday at 7 PM, Bi-weekly..."
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-medium shadow-sm"
+              readOnly={regionalOnly}
+              className={`w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium shadow-sm ${
+                regionalOnly
+                  ? 'bg-gray-50 text-gray-700 cursor-default focus:outline-none'
+                  : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+              }`}
             />
           </div>
 
@@ -383,8 +388,13 @@ export function ActivityDetail() {
             <textarea
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              placeholder="Write any notes about this activity here..."
-              className="w-full min-h-[120px] px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y shadow-sm"
+              placeholder={regionalOnly && !notes ? 'No notes for this activity.' : 'Write any notes about this activity here...'}
+              readOnly={regionalOnly}
+              className={`w-full min-h-[120px] px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
+                regionalOnly
+                  ? 'bg-gray-50 cursor-default focus:outline-none'
+                  : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+              }`}
             />
           </div>
         </div>
@@ -451,26 +461,28 @@ export function ActivityDetail() {
             </div>
           )}
 
-          <div className="flex items-center gap-3 mt-8 pt-8 border-t border-gray-100">
-            <button
-              onClick={() => navigate(`/nucleus/${nucleusId}`)}
-              className="px-6 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
-            >
-              Save Changes
-            </button>
-            {saved && (
-              <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
-                <CheckIcon className="w-4 h-4" />
-                Saved!
-              </span>
-            )}
-          </div>
+          {!regionalOnly && (
+            <div className="flex items-center gap-3 mt-8 pt-8 border-t border-gray-100">
+              <button
+                onClick={() => navigate(`/nucleus/${nucleusId}`)}
+                className="px-6 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
+              >
+                Save Changes
+              </button>
+              {saved && (
+                <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
+                  <CheckIcon className="w-4 h-4" />
+                  Saved!
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>
