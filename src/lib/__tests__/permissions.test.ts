@@ -12,6 +12,7 @@ import {
   canRequestChangeUserRole,
   canRequestDeleteUser,
   creatableRoles,
+  isRegionalOnly,
   primaryRole,
   roleLabel,
   scopeRequirementFor,
@@ -277,6 +278,21 @@ describe('misc', () => {
     expect(primaryRole(NC)).toBe('nucleus_collaborator');
     expect(primaryRole(AL)).toBe('activity_lead');
     expect(primaryRole(REGIONAL)).toBe('regional_viewer');
+  });
+
+  it('isRegionalOnly is true only for view-only regional users', () => {
+    expect(isRegionalOnly(REGIONAL)).toBe(true);
+    expect(isRegionalOnly(SUPER)).toBe(false);
+    expect(isRegionalOnly(ADMIN)).toBe(false);
+    expect(isRegionalOnly(CC)).toBe(false);
+    expect(isRegionalOnly(NC)).toBe(false);
+    expect(isRegionalOnly(AL)).toBe(false);
+    // A regional viewer who also holds a scoped grant is not view-only.
+    const regionalCC = ctx({
+      isRegionalViewer: true,
+      grants: [{ role: 'cluster_coordinator', clusterId: 'C1', nucleusId: null, activityId: null }],
+    });
+    expect(isRegionalOnly(regionalCC)).toBe(false);
   });
 
   it('roleLabel covers every role', () => {

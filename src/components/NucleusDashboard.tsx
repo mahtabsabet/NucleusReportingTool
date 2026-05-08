@@ -42,6 +42,8 @@ import {
   type CourseRow,
 } from '../lib/db/nucleus';
 import { fetchCourses } from '../lib/db/clusterProfile';
+import { getCallerContext } from '../lib/db/users';
+import { isRegionalOnly } from '../lib/permissions';
 
 const activityTypeLabels: Record<string, string> = {
   'children-class': "Children's Class",
@@ -87,6 +89,7 @@ export function NucleusDashboard() {
   const [canRename, setCanRename] = useState(false);
 
   const [canDelete, setCanDelete] = useState(false);
+  const [regionalOnly, setRegionalOnly] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -95,6 +98,7 @@ export function NucleusDashboard() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
+    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
     Promise.all([
       fetchNucleus(id),
       fetchActivitiesForNucleus(id),
@@ -431,7 +435,11 @@ export function NucleusDashboard() {
                 <div className={panelBase}>
                   <div className="mb-6">
                     <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Overall Participation</h2>
-                    <p className="text-sm text-gray-500">Drag and drop names between circles to update engagement levels.</p>
+                    <p className="text-sm text-gray-500">
+                      {regionalOnly
+                        ? 'View engagement levels of participants across this nucleus.'
+                        : 'Drag and drop names between circles to update engagement levels.'}
+                    </p>
                   </div>
                   <ConcentricCircles nucleusId={id!} />
                   {backToDashboard}
@@ -512,7 +520,7 @@ export function NucleusDashboard() {
                         {activities.length === 0 && (
                           <tr>
                             <td colSpan={3} className="py-10 text-center text-gray-400 italic text-sm">
-                              No activities yet. Add one below.
+                              {regionalOnly ? 'No activities yet.' : 'No activities yet. Add one below.'}
                             </td>
                           </tr>
                         )}
@@ -520,13 +528,15 @@ export function NucleusDashboard() {
                     </table>
                   </div>
 
-                  <button
-                    onClick={() => setShowAddActivity(true)}
-                    className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-2 text-sm font-semibold"
-                  >
-                    <PlusIcon className="w-4 h-4" />
-                    Add New Activity
-                  </button>
+                  {!regionalOnly && (
+                    <button
+                      onClick={() => setShowAddActivity(true)}
+                      className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-2 text-sm font-semibold"
+                    >
+                      <PlusIcon className="w-4 h-4" />
+                      Add New Activity
+                    </button>
+                  )}
                   {backToDashboard}
                 </div>
               )}

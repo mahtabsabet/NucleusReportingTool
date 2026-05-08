@@ -25,6 +25,8 @@ import {
 } from '../lib/db/persons';
 import { submitPermissionRequest } from '../lib/db/requests';
 import { fetchCourses, type CourseRow } from '../lib/db/clusterProfile';
+import { getCallerContext } from '../lib/db/users';
+import { isRegionalOnly } from '../lib/permissions';
 import { GlobalSearch } from './GlobalSearch';
 
 const ROLE_DISPLAY: Record<string, string> = {
@@ -80,6 +82,11 @@ export function IndividualProfile() {
   const [requestError, setRequestError] = useState<string | null>(null);
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
+  const [regionalOnly, setRegionalOnly] = useState(false);
+
+  useEffect(() => {
+    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -481,7 +488,7 @@ export function IndividualProfile() {
                       Save Profile
                     </button>
                   </div>
-                ) : (
+                ) : !regionalOnly ? (
                   <button
                     onClick={startEditing}
                     className="flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl font-medium transition-all duration-200 backdrop-blur-sm"
@@ -489,7 +496,7 @@ export function IndividualProfile() {
                     <EditIcon className="w-4 h-4" />
                     Edit Profile
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
@@ -712,23 +719,30 @@ export function IndividualProfile() {
             <textarea
               value={personNotes}
               onChange={e => setPersonNotes(e.target.value)}
-              placeholder="Write any notes about conversations, next steps, observations..."
-              className="w-full min-h-[120px] px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y shadow-sm"
+              placeholder={regionalOnly && !personNotes ? 'No notes for this person.' : 'Write any notes about conversations, next steps, observations...'}
+              readOnly={regionalOnly}
+              className={`w-full min-h-[120px] px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
+                regionalOnly
+                  ? 'bg-gray-50 cursor-default focus:outline-none'
+                  : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+              }`}
             />
-            <div className="flex items-center gap-3 mt-3">
-              <button
-                onClick={handleSaveNotes}
-                className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
-              >
-                Save Notes
-              </button>
-              {notesSaved && (
-                <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
-                  <CheckIcon className="w-4 h-4" />
-                  Saved!
-                </span>
-              )}
-            </div>
+            {!regionalOnly && (
+              <div className="flex items-center gap-3 mt-3">
+                <button
+                  onClick={handleSaveNotes}
+                  className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
+                >
+                  Save Notes
+                </button>
+                {notesSaved && (
+                  <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
+                    <CheckIcon className="w-4 h-4" />
+                    Saved!
+                  </span>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Footer (edit mode) */}

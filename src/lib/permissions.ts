@@ -126,6 +126,17 @@ export function isActivityLead(ctx: CallerContext): boolean {
   return activityLeadActivityIds(ctx).length > 0;
 }
 
+// True when the caller is a Regional (View-Only) user with no elevated grants.
+// Used by the UI to hide affordances that would otherwise hint at edit
+// capabilities the user doesn't actually have.
+export function isRegionalOnly(ctx: CallerContext): boolean {
+  if (ctx.isSuperAdmin || ctx.isAdmin) return false;
+  if (isClusterCoordinator(ctx) || isNucleusCollaborator(ctx) || isActivityLead(ctx)) {
+    return false;
+  }
+  return ctx.isRegionalViewer;
+}
+
 // The "primary" role of a caller, picked top-down for display purposes.
 export function primaryRole(ctx: CallerContext): Role {
   if (ctx.isSuperAdmin) return 'super_admin';
