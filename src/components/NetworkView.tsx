@@ -11,12 +11,10 @@ import {
   Position,
   BaseEdge,
   EdgeLabelRenderer,
-  useNodesState,
-  useEdgesState,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useNavigate } from 'react-router-dom';
-import { UsersIcon, ShieldCheckIcon, SproutIcon, TrendingUpIcon, XIcon } from 'lucide-react';
+import { ShieldCheckIcon, SproutIcon, TrendingUpIcon, XIcon } from 'lucide-react';
 import { fetchCrossNucleusPersons, type CrossNucleusPerson } from '../lib/db/reports';
 
 // ---------- Types & layout constants ----------
@@ -47,7 +45,7 @@ const TIER_META: Record<Tier, {
 }> = {
   established: {
     title: 'ESTABLISHED NUCLEI',
-    blurb: 'Strong, stable nuclei with consistent activity and capacity.',
+    blurb: 'Strong, stable nuclei with consistent activity.',
     band: 'bg-violet-50/60',
     border: 'border-violet-200',
     accent: 'text-violet-700',
@@ -77,9 +75,9 @@ const TIER_META: Record<Tier, {
 const LANE_LABEL_WIDTH = 220;
 const LANE_HEIGHT = 240;
 const LANE_GAP = 32;
-const NUCLEUS_W = 200;
-const NUCLEUS_H = 100;
-const NUCLEUS_SPACING = 320; // horizontal distance between nucleus centers
+const NUCLEUS_W = 168;
+const NUCLEUS_H = 64;
+const NUCLEUS_SPACING = 280; // horizontal distance between nucleus centers
 const LANE_PADDING_X = 80;
 
 function totalPeople(n: NucleusShape): number {
@@ -131,6 +129,7 @@ const TierLaneNode = ({ data }: NodeProps) => {
   const meta = TIER_META[tier];
   const Icon = meta.Icon;
   const width = data.width as number;
+  const [hovered, setHovered] = useState(false);
   return (
     <div
       className={`rounded-2xl ${meta.band} ${meta.border} border-2 border-dashed`}
@@ -138,11 +137,23 @@ const TierLaneNode = ({ data }: NodeProps) => {
     >
       <div className="flex h-full">
         <div className="w-[220px] shrink-0 p-5 flex flex-col gap-2">
-          <div className={`flex items-center gap-2 ${meta.accent}`}>
-            <Icon className="w-4 h-4" />
-            <span className="text-[11px] font-bold tracking-wider">{meta.title}</span>
+          <div
+            className={`relative inline-flex items-center gap-2 ${meta.accent}`}
+            style={{ pointerEvents: 'auto', cursor: 'help', alignSelf: 'flex-start' }}
+            onMouseEnter={() => setHovered(true)}
+            onMouseLeave={() => setHovered(false)}
+          >
+            <Icon className="w-5 h-5" />
+            <span className="text-base font-bold tracking-wider">{meta.title}</span>
+            {hovered && (
+              <div
+                className="absolute left-0 top-full mt-1.5 z-50 w-[260px] bg-white border border-gray-200 rounded-lg shadow-md px-3 py-2 text-xs text-gray-700 leading-snug"
+                style={{ pointerEvents: 'none' }}
+              >
+                {meta.blurb}
+              </div>
+            )}
           </div>
-          <p className="text-xs text-gray-600 leading-snug">{meta.blurb}</p>
         </div>
       </div>
     </div>
@@ -161,21 +172,28 @@ const NucleusCardNode = ({ data, selected }: NodeProps) => {
   const dimmed = data.dimmed as boolean;
   const highlighted = data.highlighted as boolean;
   const peopleCount = data.peopleCount as number;
-  const Icon = tier === 'emerging' ? SproutIcon : UsersIcon;
-  const ringClass = highlighted || selected ? `shadow-lg ring-2 ring-offset-1 ${RING_BY_TIER[tier]}` : '';
+  const ringClass = highlighted || selected ? `shadow-xl ring-2 ring-offset-1 ${RING_BY_TIER[tier]}` : '';
+  // On hover, scale the card up so its label is easier to read. The scale
+  // is applied to the card's content layer so it pops over neighbouring cards
+  // without changing its anchored bounding rect (which routing relies on).
+  const scaleStyle = highlighted
+    ? { transform: 'scale(1.18)', zIndex: 50 }
+    : { transform: 'scale(1)', zIndex: 'auto' as const };
   return (
     <div
-      className={`relative px-4 py-3 bg-white border-2 ${meta.cardBorder} rounded-xl shadow-sm transition-all duration-150 ${ringClass} ${dimmed ? 'opacity-30' : 'opacity-100'}`}
-      style={{ width: NUCLEUS_W, minHeight: NUCLEUS_H }}
+      className={`relative bg-white border-2 ${meta.cardBorder} rounded-xl shadow-sm transition-all duration-150 ${ringClass} ${dimmed ? 'opacity-30' : 'opacity-100'}`}
+      style={{
+        width: NUCLEUS_W,
+        height: NUCLEUS_H,
+        transformOrigin: 'center center',
+        ...scaleStyle,
+      }}
     >
       <Handle type="target" position={Position.Top} className="opacity-0" />
       <Handle type="source" position={Position.Bottom} className="opacity-0" />
       <Handle type="target" position={Position.Left} className="opacity-0" />
       <Handle type="source" position={Position.Right} className="opacity-0" />
-      <div className="flex flex-col items-center text-center gap-1">
-        <div className={`w-7 h-7 rounded-full flex items-center justify-center ${meta.band}`}>
-          <Icon className={`w-4 h-4 ${meta.accent}`} />
-        </div>
+      <div className="flex flex-col items-center justify-center text-center px-3 py-2 h-full gap-0.5">
         <div className="font-semibold text-gray-900 text-sm leading-tight">{data.label as string}</div>
         <div className="text-[11px] font-medium text-gray-500">
           {peopleCount} {peopleCount === 1 ? 'person' : 'people'}
@@ -367,51 +385,75 @@ function ConnectionBandEdge(props: EdgeProps) {
   const style = STRENGTH_STYLE[d.strength];
   const baseOpacity = d.obstructed ? 0.12 : d.dimmed ? 0.15 : d.highlighted ? 1 : 0.85;
 
-  const visible = d.people.slice(0, 4);
-  const overflow = d.people.length - visible.length;
+  // When the band is being focused (one of its endpoints is hovered, or the
+  // band itself is hovered), draw a thicker line and enlarge the pill so the
+  // people on the connector are easier to read.
+  const focused = d.highlighted;
+  const strokeWidth = focused ? style.width + 3 : style.width;
+  const avatarSize = focused ? 30 : 22;
   const showNames = d.people.length <= 3;
+  const visible = d.people.slice(0, focused ? 6 : 4);
+  const overflow = d.people.length - visible.length;
+  const labelScale = focused ? 1.15 : 1;
 
   return (
     <>
+      {/* A wide, transparent hit-area path on top of the visible stroke so
+          mousing anywhere along the line registers as a hover on the edge. */}
+      <path
+        d={d.path}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={Math.max(strokeWidth + 18, 22)}
+        style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
+      />
       <BaseEdge
         id={id}
         path={d.path}
         style={{
           stroke: style.stroke,
-          strokeWidth: d.highlighted ? style.width + 1.5 : style.width,
+          strokeWidth,
           opacity: baseOpacity,
           fill: 'none',
-          transition: 'opacity 150ms ease',
+          transition: 'opacity 150ms ease, stroke-width 150ms ease',
+          pointerEvents: 'none',
         }}
       />
       <EdgeLabelRenderer>
         <div
           style={{
             position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${d.labelX}px, ${d.labelY}px)`,
+            transform: `translate(-50%, -50%) translate(${d.labelX}px, ${d.labelY}px) scale(${labelScale})`,
+            transformOrigin: 'center center',
             opacity: d.obstructed ? 0.15 : d.dimmed ? 0.35 : 1,
-            transition: 'opacity 150ms ease',
+            transition: 'opacity 150ms ease, transform 150ms ease',
           }}
           className="pointer-events-auto select-none nodrag nopan"
         >
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); d.onSelect(); }}
-            className={`flex items-center gap-0.5 ${style.pillBg} ${style.pillBorder} border rounded-full pl-1 pr-1.5 py-0.5 shadow-sm hover:shadow-md hover:scale-105 transition-transform`}
+            className={`flex items-center gap-0.5 ${style.pillBg} ${style.pillBorder} border rounded-full pl-1 pr-1.5 py-0.5 shadow-sm hover:shadow-md transition-shadow`}
           >
             <div className="flex -space-x-1.5">
               {visible.map((p) => (
-                <Avatar key={p.id} name={p.name} photoUrl={p.photoUrl} size={22} />
+                <Avatar key={p.id} name={p.name} photoUrl={p.photoUrl} size={avatarSize} />
               ))}
             </div>
             {overflow > 0 && (
-              <span className="ml-1 inline-flex items-center justify-center min-w-[22px] h-[22px] px-1 rounded-full bg-white border border-gray-200 text-[10px] font-bold text-gray-700">
+              <span
+                className="ml-1 inline-flex items-center justify-center px-1.5 rounded-full bg-white border border-gray-200 font-bold text-gray-700"
+                style={{ minWidth: avatarSize, height: avatarSize, fontSize: Math.max(10, avatarSize * 0.4) }}
+              >
                 +{overflow}
               </span>
             )}
           </button>
           {showNames && (
-            <div className="text-[10px] text-gray-600 text-center mt-0.5 font-medium whitespace-nowrap">
+            <div
+              className="text-gray-700 text-center mt-1 font-medium whitespace-nowrap"
+              style={{ fontSize: focused ? 12 : 10 }}
+            >
               {visible.map((p) => shortName(p.name)).join(' • ')}
             </div>
           )}
@@ -437,6 +479,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const navigate = useNavigate();
   const [crossPeople, setCrossPeople] = useState<CrossNucleusPerson[]>([]);
   const [hoveredNucleus, setHoveredNucleus] = useState<string | null>(null);
+  const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [selectedBand, setSelectedBand] = useState<SelectedBand | null>(null);
 
   useEffect(() => {
@@ -513,23 +556,35 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     });
   }, [crossPeople, nucleusPos]);
 
-  // Highlight set: nucleus + connected nuclei + bands touching it.
+  // Highlight set: nucleus + connected nuclei + bands touching it. Hovering
+  // a connector itself highlights the connector and its two endpoint nuclei.
   const highlightSet = useMemo(() => {
-    if (!hoveredNucleus) return null;
-    const nucleusIds = new Set<string>([hoveredNucleus]);
+    if (!hoveredNucleus && !hoveredEdge) return null;
+    const nucleusIds = new Set<string>();
     const bandKeys = new Set<string>();
-    bands.forEach((b) => {
-      if (b.aId === hoveredNucleus || b.bId === hoveredNucleus) {
-        nucleusIds.add(b.aId);
-        nucleusIds.add(b.bId);
-        bandKeys.add(`${b.aId}__${b.bId}`);
+    if (hoveredNucleus) {
+      nucleusIds.add(hoveredNucleus);
+      bands.forEach((b) => {
+        if (b.aId === hoveredNucleus || b.bId === hoveredNucleus) {
+          nucleusIds.add(b.aId);
+          nucleusIds.add(b.bId);
+          bandKeys.add(`${b.aId}__${b.bId}`);
+        }
+      });
+    }
+    if (hoveredEdge) {
+      const match = bands.find((b) => `band-${b.aId}__${b.bId}` === hoveredEdge);
+      if (match) {
+        nucleusIds.add(match.aId);
+        nucleusIds.add(match.bId);
+        bandKeys.add(`${match.aId}__${match.bId}`);
       }
-    });
+    }
     return { nucleusIds, bandKeys };
-  }, [hoveredNucleus, bands]);
+  }, [hoveredNucleus, hoveredEdge, bands]);
 
   // Build ReactFlow nodes & edges.
-  const { initialNodes, initialEdges } = useMemo(() => {
+  const { nodes, edges } = useMemo(() => {
     const nodes: Node[] = [];
 
     TIER_ORDER.forEach((t, ti) => {
@@ -610,16 +665,8 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       };
     });
 
-    return { initialNodes: nodes, initialEdges: edges };
-  }, [nuclei, bands, nucleusPos, tierOf, laneWidth, highlightSet]);
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-
-  useEffect(() => {
-    setNodes(initialNodes);
-    setEdges(initialEdges);
-  }, [initialNodes, initialEdges, setNodes, setEdges]);
+    return { nodes, edges };
+  }, [nuclei, bands, nucleusPos, tierOf, laneWidth, highlightSet, hoveredNucleus]);
 
   const onNodeClick = useCallback(
     (_e: React.MouseEvent, node: Node) => {
@@ -632,6 +679,10 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     if (node.data.isNucleus) setHoveredNucleus(node.id);
   }, []);
   const onNodeMouseLeave = useCallback(() => setHoveredNucleus(null), []);
+  const onEdgeMouseEnter = useCallback((_e: React.MouseEvent, edge: Edge) => {
+    setHoveredEdge(edge.id);
+  }, []);
+  const onEdgeMouseLeave = useCallback(() => setHoveredEdge(null), []);
 
   // Derived data for the selected-band panel.
   return (
@@ -648,13 +699,16 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       <ReactFlow
         nodes={nodes}
         edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
         onNodeMouseEnter={onNodeMouseEnter}
         onNodeMouseLeave={onNodeMouseLeave}
+        onEdgeMouseEnter={onEdgeMouseEnter}
+        onEdgeMouseLeave={onEdgeMouseLeave}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable={false}
         fitView
         fitViewOptions={{ padding: 0.15 }}
         minZoom={0.2}
