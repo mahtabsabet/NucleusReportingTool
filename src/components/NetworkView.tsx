@@ -562,7 +562,9 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
           highlighted,
           isNucleus: true,
         },
-        draggable: true,
+        // Cards stay fixed: routed paths depend on the deterministic tier
+        // layout, so dragging would invalidate the obstacle avoidance.
+        draggable: false,
         zIndex: 1,
       });
     });
