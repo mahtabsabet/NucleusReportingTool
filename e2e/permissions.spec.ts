@@ -91,6 +91,41 @@ async function getCreateUserRoleOptions(page: Page): Promise<string[]> {
   return labels.filter(t => t && !/^select a role/i.test(t.trim()));
 }
 
+// ── Seed bootstrap ───────────────────────────────────────────────────────────
+//
+// scripts/seed.ts auto-creates the main E2E test user on a fresh database
+// (matching the existing pattern for the perm-* users). This block exercises
+// the resulting user via the default storageState ("e2e/.auth/user.json")
+// to confirm the bootstrap produced a working, admin-with-cluster-coordinator
+// account — i.e. the seed didn't silently leave the user un-permissioned
+// after creating it.
+
+test.describe('main E2E user (seed-bootstrapped)', () => {
+  // Default storageState (set in playwright.config.ts) — the auth.setup
+  // fixture signs in as E2E_TEST_EMAIL / E2E_TEST_PASSWORD. Successful sign-in
+  // already implies the auth.users row exists, but we additionally assert the
+  // role grants below so a regression in the grant section of the seed is
+  // caught here too.
+
+  test('signs in successfully and lands on the app shell', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    // Login form should not render — we're already authenticated.
+    await expect(page.locator('#email')).not.toBeVisible();
+  });
+
+  test('has admin grant — Create User button is visible on /users', async ({ page }) => {
+    await page.goto('/users');
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('button', { name: /create user/i })).toBeVisible();
+  });
+
+  test('has cluster_coordinator grant for Test Cluster — sees New Nucleus on its map', async ({ page }) => {
+    await selectTestCluster(page);
+    await expect(page.getByRole('button', { name: /new nucleus/i })).toBeVisible({ timeout: 10000 });
+  });
+});
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 test.describe('admin', () => {
