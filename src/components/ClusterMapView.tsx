@@ -13,6 +13,7 @@ import {
   XIcon,
   PlusIcon,
   CheckIcon,
+  InfoIcon,
   GlobeIcon,
   UsersIcon,
   BookOpenIcon,
@@ -30,6 +31,7 @@ import { useIsMobile } from '../lib/useIsMobile';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
+import { canCreateAnyNucleus } from '../lib/permissions';
 import { Timeline } from './Timeline';
 import { NetworkView } from './NetworkView';
 import { GlobalSearch } from './GlobalSearch';
@@ -92,7 +94,9 @@ export function ClusterMapView() {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [showNetwork, setShowNetwork] = useState(false);
   const [canCreate, setCanCreate] = useState(false);
+  const [canCreateAnyCluster, setCanCreateAnyCluster] = useState(false);
   const [canManageUsers, setCanManageUsers] = useState(false);
+  const [showSelectClusterMessage, setShowSelectClusterMessage] = useState(false);
 
   useEffect(() => {
     const initialClusterId = searchParams.get('cluster');
@@ -101,7 +105,10 @@ export function ClusterMapView() {
       .then(([c, n, ctx]) => {
         setClusters(c);
         setNuclei(n);
-        if (ctx) setCanManageUsers(canCreateUsers(ctx));
+        if (ctx) {
+          setCanManageUsers(canCreateUsers(ctx));
+          setCanCreateAnyCluster(canCreateAnyNucleus(ctx));
+        }
         if (initialClusterId) {
           const cluster = c.find(cl => cl.id === initialClusterId);
           if (cluster) {
@@ -153,6 +160,14 @@ export function ClusterMapView() {
     setNewLocation(null);
     setNewName('');
     setSelectedNucleus(null);
+  };
+  const handleNewNucleusClick = () => {
+    if (!canCreate) {
+      setShowSelectClusterMessage(true);
+      window.setTimeout(() => setShowSelectClusterMessage(false), 4000);
+      return;
+    }
+    handleStartPlacing();
   };
   const handleCancelPlacing = () => {
     setIsPlacing(false);
@@ -256,16 +271,12 @@ export function ClusterMapView() {
             </>
           )}
 
-          {!isPlacing && canCreate &&
+          {!isPlacing && canCreateAnyCluster &&
           <button
-            onClick={handleStartPlacing}
-            disabled={!selectedCluster}
-            title={
-            !selectedCluster ?
-            'Select a cluster first to add a nucleus' :
-            ''
-            }
-            className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 text-xs sm:text-sm flex-shrink-0">
+            onClick={handleNewNucleusClick}
+            aria-disabled={!canCreate}
+            title={!canCreate ? 'Select a cluster first to add a nucleus' : ''}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 bg-blue-600 text-white font-semibold rounded-xl transition-all duration-200 text-xs sm:text-sm flex-shrink-0 ${canCreate ? 'hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5' : 'opacity-50 cursor-not-allowed'}`}>
 
               <PlusIcon className="w-4 h-4" />
               <span className="hidden sm:inline">New Nucleus</span>
@@ -502,6 +513,35 @@ export function ClusterMapView() {
         </aside>}
 
         <main className="flex-1 relative flex flex-col min-w-0">
+          {/* Select-a-cluster prompt — shown when the user taps "New Nucleus"
+              without a cluster selected (or without permission for the
+              selected one). Auto-dismisses. */}
+          {showSelectClusterMessage &&
+          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-amber-50/95 backdrop-blur-md rounded-2xl shadow-xl border border-amber-200/70 p-4 sm:p-5 w-[min(440px,calc(100vw-2rem))] animate-in slide-in-from-top-4 duration-300">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0 shadow-inner">
+                  <InfoIcon className="w-5 h-5 text-amber-700" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-bold text-amber-900 text-sm sm:text-base">Please select a cluster</h3>
+                  <p className="text-xs sm:text-sm font-medium text-amber-800 mt-0.5">
+                    <span className="sm:hidden">
+                      Go back to the home screen to choose a cluster, then return here to create a nucleus.
+                    </span>
+                    <span className="hidden sm:inline">
+                      Pick a cluster from the sidebar to create a nucleus in it.
+                    </span>
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowSelectClusterMessage(false)}
+                  aria-label="Dismiss"
+                  className="text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 rounded-full p-1 transition-colors flex-shrink-0">
+                  <XIcon className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          }
           {/* Placing Mode Banner */}
           {isPlacing &&
           <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[1000] bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-blue-200/60 p-5 w-[min(480px,calc(100vw-2rem))] animate-in slide-in-from-top-4 duration-300">
