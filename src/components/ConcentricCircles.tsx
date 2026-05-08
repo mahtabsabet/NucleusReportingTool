@@ -13,8 +13,6 @@ import {
   ZoomInIcon,
   ZoomOutIcon,
   Maximize2Icon,
-  LockIcon,
-  UnlockIcon,
 } from 'lucide-react';
 import {
   fetchNucleusEnrollmentsWithNames,
@@ -80,9 +78,10 @@ const CORE_INNER_R = 6; // inner anchor radius for the innermost (core) band
 const MIN_BAND_WIDTH_CORE = 56; // minimum visible thickness for the core band
 const MIN_BAND_WIDTH_OUTER = 42; // minimum visible thickness for outer bands
 const BASE_VIEW_SIZE = 400; // baseline viewBox dimension (unchanged from prior)
-// Viewport box max size: fill the parent's available width, but never grow taller
-// than the visible page area (minus surrounding chrome).
-const VIEWPORT_MAX_CSS = 'min(100%, calc(100vh - 220px))';
+// Viewport box max size: fill the parent's width but stay roughly within the
+// visible page area. Subtracts only enough chrome to leave the page header
+// visible above; the user can scroll for the surrounding controls below.
+const VIEWPORT_MAX_CSS = 'min(100%, calc(100vh - 80px))';
 
 // Order from innermost to outermost — used for nesting / z-ordering
 const ORDERED_LEVELS: Level[] = ['coordinating', 'supporting', 'participating', 'aware'];
@@ -259,16 +258,17 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     selectedId: string;
   } | null>(null);
 
-  // Zoom & pan state (visualization is wrapped in a CSS transform)
+  // Zoom & pan state (visualization is wrapped in a CSS transform).
+  // Zoom is auto-persisted per nucleus so each nucleus reopens at the last-used level.
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
-  const [isZoomLocked, setIsZoomLocked] = useState(false);
+  const [zoomReady, setZoomReady] = useState(false);
   const panStartRef = useRef<{ mx: number; my: number; px: number; py: number } | null>(null);
   const vizContainerRef = useRef<HTMLDivElement | null>(null);
   const ZOOM_MIN = 0.5;
   const ZOOM_MAX = 3;
-  const zoomLockKey = `nucleus-circle-zoom:${nucleusId}`;
+  const zoomStorageKey = `nucleus-circle-zoom:${nucleusId}`;
 
   useEffect(() => {
     setLoading(true);
@@ -462,47 +462,32 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
   // Zoom & pan handlers
   const zoomIn  = useCallback(() => setZoom(z => Math.min(ZOOM_MAX, z * 1.2)), []);
   const zoomOut = useCallback(() => setZoom(z => Math.max(ZOOM_MIN, z / 1.2)), []);
-  const resetView = useCallback(() => {
-    // If a locked zoom exists for this nucleus, reset to it; else to 1.
-    let target = 1;
-    try {
-      const stored = localStorage.getItem(zoomLockKey);
-      if (stored != null) {
-        const v = parseFloat(stored);
-        if (!isNaN(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) target = v;
-      }
-    } catch { /* ignore storage errors */ }
-    setZoom(target);
-    setPan({ x: 0, y: 0 });
-  }, [zoomLockKey]);
+  const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
-  // Restore a locked zoom on mount / when nucleusId changes.
+  // Restore the last-used zoom for this nucleus on mount / when nucleusId changes.
+  // `zoomReady` gates the auto-save effect so we don't overwrite the stored value
+  // with the default `1` before the restore runs.
   useEffect(() => {
+    setZoomReady(false);
+    let restored = 1;
     try {
-      const stored = localStorage.getItem(zoomLockKey);
+      const stored = localStorage.getItem(zoomStorageKey);
       if (stored != null) {
         const v = parseFloat(stored);
-        if (!isNaN(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) {
-          setZoom(v);
-          setIsZoomLocked(true);
-          return;
-        }
+        if (!isNaN(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) restored = v;
       }
-      setIsZoomLocked(false);
     } catch { /* ignore storage errors */ }
-  }, [zoomLockKey]);
+    setZoom(restored);
+    setZoomReady(true);
+  }, [zoomStorageKey]);
 
-  const toggleZoomLock = useCallback(() => {
+  // Auto-persist zoom whenever the user changes it.
+  useEffect(() => {
+    if (!zoomReady) return;
     try {
-      if (isZoomLocked) {
-        localStorage.removeItem(zoomLockKey);
-        setIsZoomLocked(false);
-      } else {
-        localStorage.setItem(zoomLockKey, String(zoom));
-        setIsZoomLocked(true);
-      }
+      localStorage.setItem(zoomStorageKey, String(zoom));
     } catch { /* ignore storage errors */ }
-  }, [isZoomLocked, zoom, zoomLockKey]);
+  }, [zoom, zoomReady, zoomStorageKey]);
 
   const handlePanMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
@@ -931,8 +916,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
       <div className="flex flex-col gap-8">
         {/* Hint text */}
         <p className="text-xs text-gray-400 text-center -mb-4">
-          Hover for name • Click for details • Drag to reassign • Scroll to zoom •
-          Drag empty space to pan • Lock to remember the zoom level
+          Hover for name • Click for details • Drag to reassign • Scroll to zoom • Drag empty space to pan
         </p>
 
         {/* Circles visualization — viewport with zoom/pan, transformed inner stage.
@@ -1068,27 +1052,12 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
             <button
               type="button"
               onClick={resetView}
+              disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
               aria-label="Reset view"
-              title={isZoomLocked ? 'Reset to locked zoom' : 'Reset view'}
+              title="Reset view"
               className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <Maximize2Icon className="w-4 h-4" />
-            </button>
-            <div className="my-0.5 border-t border-gray-100" />
-            <button
-              type="button"
-              onClick={toggleZoomLock}
-              aria-label={isZoomLocked ? 'Unlock zoom level' : 'Lock current zoom as default'}
-              title={isZoomLocked
-                ? 'Zoom is locked — click to clear the saved level'
-                : 'Lock current zoom — page will load at this level next time'}
-              className={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${
-                isZoomLocked
-                  ? 'bg-blue-600 text-white hover:bg-blue-700'
-                  : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              {isZoomLocked ? <LockIcon className="w-4 h-4" /> : <UnlockIcon className="w-4 h-4" />}
             </button>
           </div>
         </div>
