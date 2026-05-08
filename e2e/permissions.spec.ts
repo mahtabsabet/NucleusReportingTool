@@ -527,10 +527,35 @@ test.describe('regional (view-only)', () => {
     await expect(page.getByPlaceholder('Add name...')).toHaveCount(0);
   });
 
+  test('Activity detail hides Cancel/Save Changes and renders Schedule + Notes read-only', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
+    await expect(page.getByRole('heading', { name: "Test Children's Class" }))
+      .toBeVisible({ timeout: 15000 });
+    // Footer buttons must not appear for Regional users.
+    await expect(page.getByRole('button', { name: /^cancel$/i })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: /save changes/i })).not.toBeVisible();
+    // Schedule + Notes fields must be present (so values are visible) but read-only.
+    const scheduleInput = page.getByPlaceholder(/saturdays at 10:00/i);
+    await expect(scheduleInput).toHaveAttribute('readonly', '');
+    const notesTextarea = page.locator('textarea').first();
+    await expect(notesTextarea).toHaveAttribute('readonly', '');
+  });
+
   test('Individual profile hides the "Edit Profile" button', async ({ page }) => {
     await page.goto(`/individual/${TEST_IDS.personParticipatingId}`);
     await page.waitForLoadState('networkidle');
     await expect(page.getByRole('button', { name: /edit profile/i })).not.toBeVisible();
+  });
+
+  test('Individual profile notes are read-only and Save Notes is hidden', async ({ page }) => {
+    await page.goto(`/individual/${TEST_IDS.personParticipatingId}`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('heading', { name: /notes \(conversations/i }))
+      .toBeVisible({ timeout: 15000 });
+    // Locate the notes textarea — it sits directly under that heading.
+    const notesTextarea = page.locator('textarea').last();
+    await expect(notesTextarea).toHaveAttribute('readonly', '');
+    await expect(page.getByRole('button', { name: /save notes/i })).not.toBeVisible();
   });
 
   test('Concentric circles hide the "Save Engagement Levels" button', async ({ page }) => {
