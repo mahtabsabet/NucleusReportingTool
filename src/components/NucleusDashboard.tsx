@@ -43,7 +43,7 @@ import {
 } from '../lib/db/nucleus';
 import { fetchCourses } from '../lib/db/clusterProfile';
 import { getCallerContext } from '../lib/db/users';
-import { isRegionalOnly } from '../lib/permissions';
+import { actionPermission, isRegionalOnly } from '../lib/permissions';
 
 const activityTypeLabels: Record<string, string> = {
   'children-class': "Children's Class",
@@ -90,6 +90,8 @@ export function NucleusDashboard() {
 
   const [canDelete, setCanDelete] = useState(false);
   const [regionalOnly, setRegionalOnly] = useState(false);
+  const [canCreateActivity, setCanCreateActivity] = useState(false);
+  const [canEditCircles, setCanEditCircles] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [deleting, setDeleting] = useState(false);
@@ -98,7 +100,6 @@ export function NucleusDashboard() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
     Promise.all([
       fetchNucleus(id),
       fetchActivitiesForNucleus(id),
@@ -106,7 +107,12 @@ export function NucleusDashboard() {
       fetchCourses(),
       canRenameNucleus(id),
       canDeleteNucleus(id),
-    ]).then(([n, acts, persons, courseList, renameAllowed, deleteAllowed]) => {
+      getCallerContext(),
+    ]).then(([n, acts, persons, courseList, renameAllowed, deleteAllowed, ctx]) => {
+      const target = { nucleusId: id, clusterId: n?.clusterId ?? null };
+      setRegionalOnly(ctx ? isRegionalOnly(ctx) : false);
+      setCanCreateActivity(ctx ? actionPermission(ctx, 'create_activity', target) === 'direct' : false);
+      setCanEditCircles(ctx ? actionPermission(ctx, 'edit_concentric_circles', target) === 'direct' : false);
       setNucleus(n);
       setActivities(acts);
       setPeople(persons);
@@ -441,7 +447,7 @@ export function NucleusDashboard() {
                         : 'Drag and drop names between circles to update engagement levels.'}
                     </p>
                   </div>
-                  <ConcentricCircles nucleusId={id!} />
+                  <ConcentricCircles nucleusId={id!} canEdit={canEditCircles} />
                   {backToDashboard}
                 </div>
               )}
@@ -453,7 +459,7 @@ export function NucleusDashboard() {
                     <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Network View</h2>
                     <p className="text-sm text-gray-500">Visual overview of connections within this nucleus.</p>
                   </div>
-                  <InNucleusNetworkView nucleusId={id!} />
+                  <InNucleusNetworkView nucleusId={id!} canEdit={canEditCircles} />
                   {backToDashboard}
                 </div>
               )}
@@ -520,7 +526,7 @@ export function NucleusDashboard() {
                         {activities.length === 0 && (
                           <tr>
                             <td colSpan={3} className="py-10 text-center text-gray-400 italic text-sm">
-                              {regionalOnly ? 'No activities yet.' : 'No activities yet. Add one below.'}
+                              {canCreateActivity ? 'No activities yet. Add one below.' : 'No activities yet.'}
                             </td>
                           </tr>
                         )}
@@ -528,7 +534,7 @@ export function NucleusDashboard() {
                     </table>
                   </div>
 
-                  {!regionalOnly && (
+                  {canCreateActivity && (
                     <button
                       onClick={() => setShowAddActivity(true)}
                       className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-2 text-sm font-semibold"

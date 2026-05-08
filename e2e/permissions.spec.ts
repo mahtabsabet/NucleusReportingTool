@@ -586,6 +586,47 @@ test.describe('regional (view-only)', () => {
   });
 });
 
+// ── Activity Lead: read-only nucleus-level affordances ─────────────────────
+//
+// Activity Leads can edit their own activity's roster, but they cannot
+// create new activities, edit engagement levels, or change someone's
+// primary contact. The corresponding controls must not render — otherwise
+// the UI hints at edits that won't take effect.
+
+test.describe('activity lead — nucleus-level read-only UI', () => {
+  test.use({ storageState: 'e2e/.auth/perm-lead.json' });
+
+  test('Activities tab hides the "Add New Activity" button', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    await page.getByText(/core and other activities/i).first().click();
+    await expect(page.getByRole('heading', { name: /core and other activities/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /add new activity/i })).not.toBeVisible();
+  });
+
+  test('Concentric circles hide the "Save Engagement Levels" button', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    await page.getByText(/overall participation/i).first().click();
+    await expect(page.getByRole('heading', { name: /overall participation/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /save engagement levels/i })).not.toBeVisible();
+    await expect(page.getByText(/drag to reassign/i)).not.toBeVisible();
+  });
+
+  test('Profile panel in concentric circles shows primary contact as static text (no dropdown)', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    await page.getByText(/overall participation/i).first().click();
+    await expect(page.getByRole('heading', { name: /overall participation/i })).toBeVisible();
+    const firstAvatar = page.locator('[data-node="true"]').first();
+    await expect(firstAvatar).toBeVisible({ timeout: 15000 });
+    await firstAvatar.click();
+    await expect(page.getByRole('heading', { name: /primary contact/i })).toBeVisible();
+    const panel = page.locator('div').filter({ hasText: /primary contact/i }).last();
+    await expect(panel.locator('select')).toHaveCount(0);
+  });
+});
+
 // ── Role-dropdown shape per role ────────────────────────────────────────────
 //
 // These are deliberately focused tests — even if the broader behaviour drifts,
