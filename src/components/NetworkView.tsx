@@ -218,96 +218,132 @@ function Avatar({
   );
 }
 
-// ---------- Path routing ----------
+// ---------- Routing helpers (curve edges around obstacle cards) ----------
 
-interface Pt { x: number; y: number }
 interface Rect { x: number; y: number; w: number; h: number }
 
-function pointInRect(p: Pt, r: Rect): boolean {
-  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
-}
-
-function ccw(a: Pt, b: Pt, c: Pt): number {
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
-
-function segmentsIntersect(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
-  const d1 = ccw(p3, p4, p1);
-  const d2 = ccw(p3, p4, p2);
-  const d3 = ccw(p1, p2, p3);
-  const d4 = ccw(p1, p2, p4);
-  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
-      && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
-}
-
-function segmentIntersectsRect(s: Pt, t: Pt, r: Rect): boolean {
-  if (pointInRect(s, r) || pointInRect(t, r)) return true;
-  const corners: Pt[] = [
-    { x: r.x,         y: r.y },
-    { x: r.x + r.w,   y: r.y },
-    { x: r.x + r.w,   y: r.y + r.h },
-    { x: r.x,         y: r.y + r.h },
-  ];
+// Liang–Barsky: does the segment [s, t] intersect the axis-aligned rect?
+function segmentIntersectsRect(sx: number, sy: number, tx: number, ty: number, r: Rect, pad = 0): boolean {
+  const xMin = r.x - pad, xMax = r.x + r.w + pad, yMin = r.y - pad, yMax = r.y + r.h + pad;
+  let t0 = 0, t1 = 1;
+  const dx = tx - sx, dy = ty - sy;
+  const p = [-dx, dx, -dy, dy];
+  const q = [sx - xMin, xMax - sx, sy - yMin, yMax - sy];
   for (let i = 0; i < 4; i++) {
-    if (segmentsIntersect(s, t, corners[i], corners[(i + 1) % 4])) return true;
+    if (p[i] === 0) {
+      if (q[i] < 0) return false;
+    } else {
+      const t = q[i] / p[i];
+      if (p[i] < 0) {
+        if (t > t1) return false;
+        if (t > t0) t0 = t;
+      } else {
+        if (t < t0) return false;
+        if (t < t1) t1 = t;
+      }
+    }
+  }
+  return t1 > t0;
+}
+
+// Sample a quadratic Bézier and test whether any segment intersects the rect.
+function quadraticIntersectsRect(sx: number, sy: number, cx: number, cy: number, tx: number, ty: number, r: Rect, pad = 0): boolean {
+  const STEPS = 16;
+  let px = sx, py = sy;
+  for (let i = 1; i <= STEPS; i++) {
+    const t = i / STEPS;
+    const u = 1 - t;
+    const x = u * u * sx + 2 * u * t * cx + t * t * tx;
+    const y = u * u * sy + 2 * u * t * cy + t * t * ty;
+    if (segmentIntersectsRect(px, py, x, y, r, pad)) return true;
+    px = x; py = y;
   }
   return false;
 }
 
-interface RoutedPath { d: string; labelX: number; labelY: number; blockers: string[] }
+// Move a point at the rect's center toward (toX, toY) until it hits the rect's edge,
+// so that lines start/end on the card boundary rather than its center.
+function rectEdgePoint(r: Rect, toX: number, toY: number): { x: number; y: number } {
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  const dx = toX - cx, dy = toY - cy;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  const tx = dx === 0 ? Infinity : (r.w / 2) / Math.abs(dx);
+  const ty = dy === 0 ? Infinity : (r.h / 2) / Math.abs(dy);
+  const t = Math.min(tx, ty);
+  return { x: cx + dx * t, y: cy + dy * t };
+}
 
-// Pick a quadratic bezier that arcs around any nucleus rect intersected by the
-// straight line between the two endpoints. The apex of the curve is offset to
-// the side of the chord that requires less deflection, far enough past every
-// obstructing corner that the curve clears it.
-function routePath(s: Pt, t: Pt, obstacles: { id: string; rect: Rect }[], margin = 28): RoutedPath {
-  const blockers = obstacles.filter((o) => segmentIntersectsRect(s, t, o.rect));
-  const mx = (s.x + t.x) / 2;
-  const my = (s.y + t.y) / 2;
+interface BandRoute {
+  path: string;
+  labelX: number;
+  labelY: number;
+  crossedIds: string[]; // ids of obstacle cards the rendered curve still passes over
+}
 
-  if (blockers.length === 0) {
-    return { d: `M ${s.x} ${s.y} L ${t.x} ${t.y}`, labelX: mx, labelY: my, blockers: [] };
+// Compute a curved path from source-card to target-card, bending around obstacle cards
+// when the straight line would pass through them. Falls back to a straight line if clear.
+function routeBandPath(
+  source: Rect,
+  target: Rect,
+  obstacles: { id: string; rect: Rect }[],
+  pad = 8,
+): BandRoute {
+  const scx = source.x + source.w / 2, scy = source.y + source.h / 2;
+  const tcx = target.x + target.w / 2, tcy = target.y + target.h / 2;
+  const sEdge = rectEdgePoint(source, tcx, tcy);
+  const tEdge = rectEdgePoint(target, scx, scy);
+  const sx = sEdge.x, sy = sEdge.y, tx = tEdge.x, ty = tEdge.y;
+
+  const blocking = obstacles.filter((o) => segmentIntersectsRect(sx, sy, tx, ty, o.rect, pad));
+  if (blocking.length === 0) {
+    return {
+      path: `M ${sx},${sy} L ${tx},${ty}`,
+      labelX: (sx + tx) / 2,
+      labelY: (sy + ty) / 2,
+      crossedIds: [],
+    };
   }
 
-  const dx = t.x - s.x;
-  const dy = t.y - s.y;
+  const dx = tx - sx, dy = ty - sy;
   const len = Math.hypot(dx, dy) || 1;
-  const px = -dy / len; // perpendicular unit vector to the chord
-  const py = dx / len;
+  const nx = -dy / len; // perpendicular unit
+  const ny = dx / len;
+  const mx = (sx + tx) / 2, my = (sy + ty) / 2;
 
-  let bestSide = 1;
-  let bestApex = Infinity;
-  for (const side of [1, -1] as const) {
-    let maxPerp = 0;
-    for (const b of blockers) {
-      const corners: Pt[] = [
-        { x: b.rect.x,           y: b.rect.y },
-        { x: b.rect.x + b.rect.w, y: b.rect.y },
-        { x: b.rect.x + b.rect.w, y: b.rect.y + b.rect.h },
-        { x: b.rect.x,           y: b.rect.y + b.rect.h },
+  // Try both perpendicular directions and pick the one that clears more obstacles.
+  // Magnitude scales with the deepest obstacle's reach perpendicular to the line.
+  const candidates: { offset: number; cx: number; cy: number; crossed: { id: string; rect: Rect }[] }[] = [];
+  for (const sign of [1, -1]) {
+    // Magnitude: enough to clear the worst-case obstacle's far corner from the chord.
+    let mag = 0;
+    for (const o of blocking) {
+      const corners = [
+        { x: o.rect.x, y: o.rect.y },
+        { x: o.rect.x + o.rect.w, y: o.rect.y },
+        { x: o.rect.x, y: o.rect.y + o.rect.h },
+        { x: o.rect.x + o.rect.w, y: o.rect.y + o.rect.h },
       ];
       for (const c of corners) {
-        const signed = side * ((c.x - mx) * px + (c.y - my) * py);
-        if (signed > maxPerp) maxPerp = signed;
+        const proj = (c.x - mx) * nx + (c.y - my) * ny; // signed perpendicular distance from chord
+        const reach = sign > 0 ? proj : -proj;
+        if (reach > mag) mag = reach;
       }
     }
-    const apex = maxPerp + margin;
-    if (apex < bestApex) { bestApex = apex; bestSide = side; }
+    // Bezier apex sits at half the control-point offset from the chord, so double the push.
+    const offset = sign * (mag + pad + 24) * 2;
+    const cx = mx + nx * offset;
+    const cy = my + ny * offset;
+    const crossed = obstacles.filter((o) => quadraticIntersectsRect(sx, sy, cx, cy, tx, ty, o.rect, pad));
+    candidates.push({ offset, cx, cy, crossed });
   }
-
-  // For a quadratic bezier, B(0.5) = (S + 2C + T) / 4, i.e. apex = midpoint + (C - midpoint) / 2.
-  // To place the apex at distance `bestApex` from the chord on `bestSide`,
-  // C must be at twice that perpendicular offset from the midpoint.
-  const apexX = mx + bestSide * bestApex * px;
-  const apexY = my + bestSide * bestApex * py;
-  const cx = 2 * apexX - mx;
-  const cy = 2 * apexY - my;
+  candidates.sort((a, b) => a.crossed.length - b.crossed.length || Math.abs(a.offset) - Math.abs(b.offset));
+  const best = candidates[0];
 
   return {
-    d: `M ${s.x} ${s.y} Q ${cx} ${cy} ${t.x} ${t.y}`,
-    labelX: apexX,
-    labelY: apexY,
-    blockers: blockers.map((b) => b.id),
+    path: `M ${sx},${sy} Q ${best.cx},${best.cy} ${tx},${ty}`,
+    labelX: 0.25 * sx + 0.5 * best.cx + 0.25 * tx,
+    labelY: 0.25 * sy + 0.5 * best.cy + 0.25 * ty,
+    crossedIds: best.crossed.map((o) => o.id),
   };
 }
 
@@ -318,7 +354,8 @@ interface BandData {
   strength: Strength;
   dimmed: boolean;
   highlighted: boolean;
-  pathD: string;
+  obstructed: boolean; // hovered card is blocked by this band → fade so card is readable
+  path: string;
   labelX: number;
   labelY: number;
   onSelect: () => void;
@@ -328,7 +365,7 @@ function ConnectionBandEdge(props: EdgeProps) {
   const { id, data } = props;
   const d = data as unknown as BandData;
   const style = STRENGTH_STYLE[d.strength];
-  const baseOpacity = d.dimmed ? 0.15 : d.highlighted ? 1 : 0.85;
+  const baseOpacity = d.obstructed ? 0.12 : d.dimmed ? 0.15 : d.highlighted ? 1 : 0.85;
 
   const visible = d.people.slice(0, 4);
   const overflow = d.people.length - visible.length;
@@ -338,12 +375,13 @@ function ConnectionBandEdge(props: EdgeProps) {
     <>
       <BaseEdge
         id={id}
-        path={d.pathD}
+        path={d.path}
         style={{
           stroke: style.stroke,
           strokeWidth: d.highlighted ? style.width + 1.5 : style.width,
           opacity: baseOpacity,
           fill: 'none',
+          transition: 'opacity 150ms ease',
         }}
       />
       <EdgeLabelRenderer>
@@ -351,7 +389,8 @@ function ConnectionBandEdge(props: EdgeProps) {
           style={{
             position: 'absolute',
             transform: `translate(-50%, -50%) translate(${d.labelX}px, ${d.labelY}px)`,
-            opacity: d.dimmed ? 0.35 : 1,
+            opacity: d.obstructed ? 0.15 : d.dimmed ? 0.35 : 1,
+            transition: 'opacity 150ms ease',
           }}
           className="pointer-events-auto select-none nodrag nopan"
         >
@@ -436,7 +475,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     return { nucleusPos: pos, tierOf, laneWidth };
   }, [nuclei]);
 
-  // Pairwise connection bands (one band per unordered nucleus pair).
+  // Pairwise connection bands (one band per unordered nucleus pair) with routed paths.
   const bands = useMemo(() => {
     const map = new Map<string, { aId: string; bId: string; people: { id: string; name: string; photoUrl: string | null }[] }>();
     crossPeople.forEach((p) => {
@@ -456,7 +495,22 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       }
     });
     map.forEach((band) => band.people.sort((a, b) => a.name.localeCompare(b.name)));
-    return [...map.values()];
+
+    // Build obstacle index once, then compute a routed path per band.
+    const allRects = new Map<string, Rect>();
+    nucleusPos.forEach((p, id) => {
+      allRects.set(id, { x: p.x, y: p.y, w: NUCLEUS_W, h: NUCLEUS_H });
+    });
+    return [...map.values()].map((b) => {
+      const source = allRects.get(b.aId)!;
+      const target = allRects.get(b.bId)!;
+      const obstacles: { id: string; rect: Rect }[] = [];
+      allRects.forEach((rect, id) => {
+        if (id !== b.aId && id !== b.bId) obstacles.push({ id, rect });
+      });
+      const route = routeBandPath(source, target, obstacles);
+      return { ...b, route };
+    });
   }, [crossPeople, nucleusPos]);
 
   // Highlight set: nucleus + connected nuclei + bands touching it.
@@ -508,19 +562,10 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
           highlighted,
           isNucleus: true,
         },
+        // Cards stay fixed: routed paths depend on the deterministic tier
+        // layout, so dragging would invalidate the obstacle avoidance.
         draggable: false,
         zIndex: 1,
-      });
-    });
-
-    // Rect index — used both for routing around obstacles and for centering
-    // edge endpoints on each nucleus card.
-    const allRects: { id: string; rect: Rect; center: Pt }[] = [];
-    nucleusPos.forEach((p, id) => {
-      allRects.push({
-        id,
-        rect: { x: p.x, y: p.y, w: NUCLEUS_W, h: NUCLEUS_H },
-        center: { x: p.x + NUCLEUS_W / 2, y: p.y + NUCLEUS_H / 2 },
       });
     });
 
@@ -529,22 +574,24 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       const strength = strengthFor(b.people.length);
       const dimmed = !!highlightSet && !highlightSet.bandKeys.has(key);
       const highlighted = !!highlightSet && highlightSet.bandKeys.has(key);
+      // If the user is hovering a card that this band passes over (and the band is
+      // not connected to it), fade the band so the card is readable.
+      const obstructed =
+        !!hoveredNucleus &&
+        b.aId !== hoveredNucleus &&
+        b.bId !== hoveredNucleus &&
+        b.route.crossedIds.includes(hoveredNucleus);
       const fromN = nuclei.find((n) => n.id === b.aId);
       const toN = nuclei.find((n) => n.id === b.bId);
-
-      const sCenter = allRects.find((r) => r.id === b.aId)?.center ?? { x: 0, y: 0 };
-      const tCenter = allRects.find((r) => r.id === b.bId)?.center ?? { x: 0, y: 0 };
-      const obstacles = allRects.filter((r) => r.id !== b.aId && r.id !== b.bId);
-      const routed = routePath(sCenter, tCenter, obstacles);
-
       const data: BandData = {
         people: b.people,
         strength,
         dimmed,
         highlighted,
-        pathD: routed.d,
-        labelX: routed.labelX,
-        labelY: routed.labelY,
+        obstructed,
+        path: b.route.path,
+        labelX: b.route.labelX,
+        labelY: b.route.labelY,
         onSelect: () => setSelectedBand({
           fromId: b.aId,
           toId: b.bId,
@@ -588,7 +635,16 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
 
   // Derived data for the selected-band panel.
   return (
-    <div className="network-view-root w-full h-full bg-slate-50/50 relative">
+    <div className="w-full h-full bg-slate-50/50 relative network-view-root">
+      {/* Lift connector lines and avatar pills above nucleus cards so a line that
+          must pass through a card stays visible. xyflow's defaults render nodes
+          on top of both the edges svg and the EdgeLabelRenderer portal. */}
+      <style>{`
+        .network-view-root .react-flow__edges,
+        .network-view-root .react-flow__edgelabel-renderer {
+          z-index: 10;
+        }
+      `}</style>
       <ReactFlow
         nodes={nodes}
         edges={edges}
