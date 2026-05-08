@@ -68,7 +68,8 @@ interface PanelActivity {
 }
 
 // Layout primitives — bands are planned dynamically based on participant counts.
-const NODE_R = 16; // SVG units — visual radius of each person node
+const NODE_R = 16; // SVG units — visual radius of each person node (used for layout/spacing math)
+const NODE_CSS_PX = 40; // rendered icon diameter in CSS pixels (independent of viewBox / box size)
 const NODE_PADDING = 3; // padding inside band boundaries around node circles
 const MIN_TANGENTIAL_SPACING = NODE_R * 2 + 6; // arc-length minimum between adjacent nodes on a sub-ring
 const MIN_RADIAL_SPACING = NODE_R * 2 + 4; // radial minimum between sub-rings within a band
@@ -464,6 +465,14 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
   const zoomOut = useCallback(() => setZoom(z => Math.max(ZOOM_MIN, z / 1.2)), []);
   const resetView = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
 
+  // Two-stage zoom so the visualization area always tracks the rings:
+  //   • zoom < 1 → shrink the outer box itself (rings stay filling it; the flex
+  //     layout below tucks the unplaced area right under the smaller box).
+  //   • zoom > 1 → keep the box at full panel width and scale content inside
+  //     (overflow:hidden clips, user pans). Icons counter-scale by innerScale.
+  const boxScale = Math.min(1, zoom);
+  const innerScale = Math.max(1, zoom);
+
   // Restore the last-used zoom for this nucleus on mount / when nucleusId changes.
   // `zoomReady` gates the auto-save effect so we don't overwrite the stored value
   // with the default `1` before the restore runs.
@@ -537,7 +546,6 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
     const initials = getInitials(entry.name);
     const leftPct = (x / viewSize) * 100;
     const topPct = (y / viewSize) * 100;
-    const sizePct = (NODE_R * 2 / viewSize) * 100;
 
     return (
       <div
@@ -552,12 +560,12 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
           position: 'absolute',
           left: `${leftPct}%`,
           top: `${topPct}%`,
-          width: `${sizePct}%`,
-          height: `${sizePct}%`,
-          // Counter-scale by 1/zoom so icons stay a constant on-screen size while
-          // the rings (parent) scale up — zooming gives icons more arc room rather
-          // than enlarging them.
-          transform: `translate(-50%, -50%) scale(${scale / zoom})`,
+          width: `${NODE_CSS_PX}px`,
+          height: `${NODE_CSS_PX}px`,
+          // Counter-scale by 1/innerScale so icons stay a constant on-screen size
+          // while the rings (parent transform) scale up at zoom > 1. At zoom <= 1
+          // the inner stage isn't scaled, so the icon renders at its natural size.
+          transform: `translate(-50%, -50%) scale(${scale / innerScale})`,
           zIndex: isHovered ? 30 : 20,
           transition: 'transform 0.18s ease, box-shadow 0.18s ease',
           cursor: 'pointer',
@@ -919,25 +927,27 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
           Hover for name • Click for details • Drag to reassign • Scroll to zoom • Drag empty space to pan
         </p>
 
-        {/* Circles visualization — viewport with zoom/pan, transformed inner stage.
-            The box fills its parent's available width and height so zooming
-            uses the full page area rather than being clipped to a small box. */}
+        {/* Circles visualization. The outer box width tracks zoom (when zoom < 1
+            the whole box shrinks so the unplaced area below stays right under
+            the rings); when zoom > 1, the box stays at full panel width and the
+            inner stage scales — overflow:hidden clips, the user pans. */}
         <div
           ref={vizContainerRef}
-          className="relative mx-auto w-full overflow-hidden rounded-2xl select-none"
+          className="relative mx-auto overflow-hidden rounded-2xl select-none"
           style={{
-            width: '100%',
+            width: `${boxScale * 100}%`,
             maxWidth: VIEWPORT_MAX_CSS,
             aspectRatio: '1/1',
             cursor: isPanning ? 'grabbing' : 'grab',
             touchAction: 'none',
+            transition: isPanning ? 'none' : 'width 0.18s ease-out',
           }}
           onMouseDown={handlePanMouseDown}
         >
           <div
             className="absolute inset-0"
             style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${innerScale})`,
               transformOrigin: '50% 50%',
               transition: isPanning ? 'none' : 'transform 0.18s ease-out',
               willChange: 'transform',
