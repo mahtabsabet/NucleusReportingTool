@@ -59,6 +59,7 @@ export async function seed() {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const testEmail = process.env.E2E_TEST_EMAIL;
+  const testPassword = process.env.E2E_TEST_PASSWORD;
 
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error(
@@ -69,6 +70,9 @@ export async function seed() {
   if (!testEmail) {
     throw new Error('Missing E2E_TEST_EMAIL in .env.local');
   }
+  if (!testPassword) {
+    throw new Error('Missing E2E_TEST_PASSWORD in .env.local');
+  }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -78,9 +82,24 @@ export async function seed() {
   const { data: { users: allUsers }, error: listErr } = await supabase.auth.admin.listUsers();
   if (listErr) throw new Error(`List users: ${listErr.message}`);
 
-  // Resolve the main E2E test user (needed by existing tests)
-  const testUser = allUsers.find(u => u.email === testEmail);
-  if (!testUser) throw new Error(`Test user not found in auth.users: ${testEmail}`);
+  // Resolve the main E2E test user. Auto-create it if missing — CI starts
+  // from a fresh database and shouldn't fail before the seed has had a
+  // chance to run. (The perm test users below already use this pattern.)
+  let testUser = allUsers.find(u => u.email === testEmail);
+  if (!testUser) {
+    const { data, error } = await supabase.auth.admin.createUser({
+      email:         testEmail,
+      password:      testPassword,
+      user_metadata: { name: 'E2E Test User' },
+      email_confirm: true,
+    });
+    if (error || !data.user) {
+      throw new Error(`Create main E2E test user ${testEmail}: ${error?.message ?? 'unknown'}`);
+    }
+    await supabase.from('profiles').update({ name: 'E2E Test User' }).eq('id', data.user.id);
+    testUser = data.user;
+    allUsers.push(data.user);
+  }
 
   // Find or create each permanent permission test user
   async function ensurePermUser(
