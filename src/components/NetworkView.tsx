@@ -224,7 +224,6 @@ function Avatar({
 interface BandData {
   people: { id: string; name: string; photoUrl: string | null }[];
   strength: Strength;
-  dashed: boolean;
   dimmed: boolean;
   highlighted: boolean;
   onSelect: () => void;
@@ -249,7 +248,6 @@ function ConnectionBandEdge(props: EdgeProps) {
         style={{
           stroke: style.stroke,
           strokeWidth: d.highlighted ? style.width + 1.5 : style.width,
-          strokeDasharray: d.dashed ? '6 6' : undefined,
           opacity: baseOpacity,
         }}
       />
@@ -422,9 +420,6 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
 
     const edges: Edge[] = bands.map((b) => {
       const key = `${b.aId}__${b.bId}`;
-      const aTier = tierOf.get(b.aId);
-      const bTier = tierOf.get(b.bId);
-      const dashed = aTier !== bTier;
       const strength = strengthFor(b.people.length);
       const dimmed = !!highlightSet && !highlightSet.bandKeys.has(key);
       const highlighted = !!highlightSet && highlightSet.bandKeys.has(key);
@@ -433,7 +428,6 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       const data: BandData = {
         people: b.people,
         strength,
-        dashed,
         dimmed,
         highlighted,
         onSelect: () => setSelectedBand({
@@ -535,10 +529,6 @@ function Legend() {
         <li className="flex items-center gap-2">
           <span className="inline-block h-[1.5px] w-7 rounded-full" style={{ background: STRENGTH_STYLE.light.stroke }} />
           <span><b className="text-gray-800">Light</b> (1 shared)</span>
-        </li>
-        <li className="flex items-center gap-2">
-          <span className="inline-block h-[1.5px] w-7 border-t border-dashed border-gray-500" />
-          <span><b className="text-gray-800">Across tiers</b></span>
         </li>
       </ul>
     </div>
