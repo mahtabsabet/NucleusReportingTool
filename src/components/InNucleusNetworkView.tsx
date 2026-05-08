@@ -79,9 +79,34 @@ interface SimNode {
   vy: number;
 }
 
-const NODE_R = 22;
-const WIDTH = 800;
-const HEIGHT = 500;
+const DEFAULT_NODE_R = 22;
+const DEFAULT_WIDTH = 800;
+const DEFAULT_HEIGHT = 500;
+
+interface LayoutConfig {
+  width: number;
+  height: number;
+  nodeR: number;
+  idealEdge: number;
+  repulsion: number;
+  iterations: number;
+}
+
+// Density-aware layout config. Avatars stay clickable (min 14px) and the
+// logical canvas grows with node count so dense nuclei have more breathing room.
+function computeLayoutConfig(count: number): LayoutConfig {
+  const n = Math.max(count, 1);
+  // Canvas grows with sqrt(count) so area scales roughly linearly with nodes.
+  const factor = Math.max(1, Math.min(2.0, Math.sqrt(n / 12)));
+  return {
+    width: Math.round(DEFAULT_WIDTH * factor),
+    height: Math.round(DEFAULT_HEIGHT * factor),
+    nodeR: Math.round(Math.max(14, Math.min(DEFAULT_NODE_R, 26 - n * 0.18))),
+    idealEdge: Math.round(120 * Math.min(factor, 1.5)),
+    repulsion: Math.round(4000 * factor),
+    iterations: Math.min(600, 300 + Math.max(0, n - 12) * 8),
+  };
+}
 
 function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -112,15 +137,19 @@ async function fetchPanelActivities(personId: string): Promise<PanelActivity[]> 
 }
 
 // Run force simulation synchronously for `steps` iterations, mutating nodes in place
-function simulateStep(nodes: SimNode[], edges: { source: string; target: string }[], steps: number) {
+function simulateStep(
+  nodes: SimNode[],
+  edges: { source: string; target: string }[],
+  steps: number,
+  cfg: LayoutConfig,
+) {
+  const minSep = cfg.nodeR * 2 + 6;
   for (let s = 0; s < steps; s++) {
-    // Center gravity
     nodes.forEach(n => {
-      n.vx += (WIDTH / 2 - n.x) * 0.0015;
-      n.vy += (HEIGHT / 2 - n.y) * 0.0015;
+      n.vx += (cfg.width / 2 - n.x) * 0.0015;
+      n.vy += (cfg.height / 2 - n.y) * 0.0015;
     });
 
-    // Node repulsion (O(n²))
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i];
@@ -129,7 +158,9 @@ function simulateStep(nodes: SimNode[], edges: { source: string; target: string 
         const dy = b.y - a.y || 0.1;
         const dist2 = dx * dx + dy * dy;
         const dist = Math.sqrt(dist2) || 1;
-        const force = 4000 / dist2;
+        // Sharp short-range repulsion when avatars overlap, falling off with 1/r²
+        const overlap = Math.max(0, minSep - dist);
+        const force = cfg.repulsion / dist2 + overlap * 0.6;
         const fx = (dx / dist) * force;
         const fy = (dy / dist) * force;
         a.vx -= fx;
@@ -139,7 +170,6 @@ function simulateStep(nodes: SimNode[], edges: { source: string; target: string 
       }
     }
 
-    // Edge spring attraction
     const nodeMap = new Map(nodes.map(n => [n.id, n]));
     edges.forEach(({ source, target }) => {
       const s = nodeMap.get(source);
@@ -148,9 +178,7 @@ function simulateStep(nodes: SimNode[], edges: { source: string; target: string 
       const dx = t.x - s.x;
       const dy = t.y - s.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const ideal = 120;
-      const k = 0.04;
-      const force = (dist - ideal) * k;
+      const force = (dist - cfg.idealEdge) * 0.04;
       const fx = (dx / dist) * force;
       const fy = (dy / dist) * force;
       s.vx += fx;
@@ -159,31 +187,29 @@ function simulateStep(nodes: SimNode[], edges: { source: string; target: string 
       t.vy -= fy;
     });
 
-    // Integrate + damp + clamp
     nodes.forEach(n => {
       n.vx *= 0.82;
       n.vy *= 0.82;
       n.x += n.vx;
       n.y += n.vy;
-      n.x = Math.max(NODE_R + 4, Math.min(WIDTH - NODE_R - 4, n.x));
-      n.y = Math.max(NODE_R + 4, Math.min(HEIGHT - NODE_R - 4, n.y));
+      n.x = Math.max(cfg.nodeR + 4, Math.min(cfg.width - cfg.nodeR - 4, n.x));
+      n.y = Math.max(cfg.nodeR + 4, Math.min(cfg.height - cfg.nodeR - 4, n.y));
     });
   }
 }
 
-function initNodes(enrollments: NucleusEnrollmentEntry[]): SimNode[] {
+function initNodes(enrollments: NucleusEnrollmentEntry[], cfg: LayoutConfig): SimNode[] {
   return enrollments.map((e, i) => {
-    // Deterministic random-ish start positions spread across the canvas
-    const angle = (2 * Math.PI * i) / enrollments.length;
-    const r = Math.min(WIDTH, HEIGHT) * 0.3;
+    const angle = (2 * Math.PI * i) / Math.max(enrollments.length, 1);
+    const r = Math.min(cfg.width, cfg.height) * 0.3;
     return {
       id: e.personId,
       name: e.name,
       level: (e.engagementLevel ?? 'unplaced') as Level | 'unplaced',
       primaryContactId: e.primaryContactId,
       photoUrl: e.photoUrl,
-      x: WIDTH / 2 + r * Math.cos(angle) + (Math.random() - 0.5) * 40,
-      y: HEIGHT / 2 + r * Math.sin(angle) + (Math.random() - 0.5) * 40,
+      x: cfg.width / 2 + r * Math.cos(angle) + (Math.random() - 0.5) * 40,
+      y: cfg.height / 2 + r * Math.sin(angle) + (Math.random() - 0.5) * 40,
       vx: 0,
       vy: 0,
     };
@@ -224,13 +250,25 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
   const nodesRef = useRef<SimNode[]>([]);
   const edgesRef = useRef<{ source: string; target: string }[]>([]);
   const iterRef = useRef(0);
-  const MAX_ITER = 300;
+  const layoutRef = useRef<LayoutConfig>(computeLayoutConfig(0));
+  // Mirror of hoveredId so the simulation tick can pause without React re-renders
+  const hoveredRef = useRef<string | null>(null);
 
   const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>({});
   const [enrollments, setEnrollments] = useState<NucleusEnrollmentEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const layout = React.useMemo(
+    () => computeLayoutConfig(enrollments.length),
+    [enrollments.length],
+  );
+
+  const setHovered = useCallback((id: string | null) => {
+    hoveredRef.current = id;
+    setHoveredId(id);
+  }, []);
 
   // Panel state
   const [panel, setPanel] = useState<SimNode | null>(null);
@@ -239,30 +277,45 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
   const [panelContactId, setPanelContactId] = useState<string | null>(null);
   const [panelContactSaving, setPanelContactSaving] = useState(false);
 
-  const startSimulation = useCallback((nodes: SimNode[], edges: { source: string; target: string }[]) => {
-    if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    iterRef.current = 0;
-    nodesRef.current = nodes;
-    edgesRef.current = edges;
+  const startSimulation = useCallback(
+    (nodes: SimNode[], edges: { source: string; target: string }[], cfg: LayoutConfig) => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      iterRef.current = 0;
+      nodesRef.current = nodes;
+      edgesRef.current = edges;
+      layoutRef.current = cfg;
+      const maxIter = cfg.iterations;
 
-    function tick() {
-      if (iterRef.current >= MAX_ITER) return;
-      simulateStep(nodesRef.current, edgesRef.current, 5);
-      iterRef.current += 5;
-      setPositions(Object.fromEntries(nodesRef.current.map(n => [n.id, { x: n.x, y: n.y }])));
+      function tick() {
+        if (iterRef.current >= maxIter) {
+          rafRef.current = null;
+          return;
+        }
+        // Pause physics while a node is hovered so positions don't shift under the cursor
+        if (hoveredRef.current !== null) {
+          rafRef.current = requestAnimationFrame(tick);
+          return;
+        }
+        simulateStep(nodesRef.current, edgesRef.current, 5, cfg);
+        iterRef.current += 5;
+        setPositions(Object.fromEntries(nodesRef.current.map(n => [n.id, { x: n.x, y: n.y }])));
+        rafRef.current = requestAnimationFrame(tick);
+      }
       rafRef.current = requestAnimationFrame(tick);
-    }
-    rafRef.current = requestAnimationFrame(tick);
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     setLoading(true);
     fetchNucleusEnrollmentsWithNames(nucleusId)
       .then(data => {
         setEnrollments(data);
-        const nodes = initNodes(data);
+        const cfg = computeLayoutConfig(data.length);
+        layoutRef.current = cfg;
+        const nodes = initNodes(data, cfg);
         const edges = buildEdges(nodes);
-        startSimulation(nodes, edges);
+        startSimulation(nodes, edges, cfg);
         setLoading(false);
       })
       .catch(() => setLoading(false));
@@ -300,7 +353,7 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
       );
       edgesRef.current = buildEdges(nodesRef.current);
       // Restart simulation with updated edges
-      startSimulation(nodesRef.current, edgesRef.current);
+      startSimulation(nodesRef.current, edgesRef.current, layoutRef.current);
     } catch (err) {
       console.error('Failed to update primary contact:', err);
     } finally {
@@ -320,7 +373,10 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
   const edges = edgesRef.current;
 
   const getPos = (id: string) =>
-    positions[id] ?? { x: nodesRef.current.find(n => n.id === id)?.x ?? WIDTH / 2, y: nodesRef.current.find(n => n.id === id)?.y ?? HEIGHT / 2 };
+    positions[id] ?? {
+      x: nodesRef.current.find(n => n.id === id)?.x ?? layout.width / 2,
+      y: nodesRef.current.find(n => n.id === id)?.y ?? layout.height / 2,
+    };
 
   const contactCandidates = panel
     ? validContacts(nodesRef.current, panel.id, panel.level)
@@ -352,27 +408,40 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
         Hover over any person to see their name. Click to view details and manage connections.
       </p>
 
-      <div className="relative rounded-2xl border border-gray-200 bg-gray-50 overflow-hidden" style={{ height: '520px' }}>
+      <div
+        className="relative rounded-2xl border border-gray-200 bg-gray-50 overflow-hidden"
+        style={{ height: `${Math.max(520, Math.min(900, layout.height + 40))}px` }}
+      >
         <svg
-          viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          preserveAspectRatio="xMidYMid meet"
           className="absolute inset-0 w-full h-full"
           style={{ cursor: 'default' }}
         >
-          {/* Edges */}
+          {/* Edges - subtle curved paths to reduce visual clutter when many connections cross */}
           {edges.map(edge => {
             const sp = getPos(edge.source);
             const tp = getPos(edge.target);
-            const isHighlighted = hoveredId === edge.source || hoveredId === edge.target ||
+            const dx = tp.x - sp.x;
+            const dy = tp.y - sp.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            const offset = Math.min(dist * 0.12, 26);
+            const mx = (sp.x + tp.x) / 2 - (dy / dist) * offset;
+            const my = (sp.y + tp.y) / 2 + (dx / dist) * offset;
+            const d = `M ${sp.x} ${sp.y} Q ${mx} ${my} ${tp.x} ${tp.y}`;
+            const isHighlighted =
+              hoveredId === edge.source || hoveredId === edge.target ||
               selectedId === edge.source || selectedId === edge.target;
             const isDimmed = hoveredId !== null && !isHighlighted;
             return (
-              <line
+              <path
                 key={`${edge.source}-${edge.target}`}
-                x1={sp.x} y1={sp.y}
-                x2={tp.x} y2={tp.y}
-                stroke={isHighlighted ? '#6366f1' : '#d1d5db'}
-                strokeWidth={isHighlighted ? 2.5 : 1.5}
-                strokeOpacity={isDimmed ? 0.2 : 1}
+                d={d}
+                fill="none"
+                stroke={isHighlighted ? '#6366f1' : '#9ca3af'}
+                strokeWidth={isHighlighted ? 2.25 : 1.25}
+                strokeOpacity={isHighlighted ? 0.9 : isDimmed ? 0.1 : 0.4}
+                strokeLinecap="round"
                 style={{ transition: 'stroke-opacity 0.2s, stroke-width 0.2s' }}
               />
             );
@@ -387,57 +456,71 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
             const isHovered = hoveredId === node.id;
             const isSelected = selectedId === node.id;
             const isDimmed = hoveredId !== null && hoveredId !== node.id && !connectedToHovered.has(node.id);
-            const scale = isHovered ? 1.2 : isSelected ? 1.15 : 1;
             const initials = getInitials(node.name);
+            const nodeR = layout.nodeR;
 
             return (
               <g
                 key={node.id}
-                transform={`translate(${pos.x},${pos.y}) scale(${scale})`}
+                // Translate only - no scale on hover. Scaling caused hit-area to grow
+                // and animate, which made mouseenter/leave fire repeatedly (jitter).
+                transform={`translate(${pos.x},${pos.y})`}
                 style={{
                   cursor: 'pointer',
-                  opacity: isDimmed ? 0.3 : 1,
-                  transition: 'opacity 0.2s, transform 0.15s',
-                  transformOrigin: `${pos.x}px ${pos.y}px`,
+                  opacity: isDimmed ? 0.35 : 1,
+                  transition: 'opacity 0.2s',
                 }}
-                onMouseEnter={() => setHoveredId(node.id)}
-                onMouseLeave={() => setHoveredId(null)}
+                onMouseEnter={() => setHovered(node.id)}
+                onMouseLeave={() => setHovered(null)}
                 onClick={() => openPanel(node)}
               >
-                {/* Selection / hover ring */}
+                {/* Static hover/selection ring - drawn outside the avatar but at fixed
+                    radius so it doesn't change the pointer hit-area of the avatar circle. */}
                 {(isHovered || isSelected) && (
-                  <circle
-                    cx={0} cy={0} r={NODE_R + 5}
-                    fill="none"
-                    stroke={isSelected ? '#6366f1' : colors.border}
-                    strokeWidth={2}
-                    strokeOpacity={0.6}
-                  />
+                  <>
+                    <circle
+                      cx={0} cy={0} r={nodeR + 8}
+                      fill="none"
+                      stroke={isSelected ? '#6366f1' : colors.border}
+                      strokeWidth={2}
+                      strokeOpacity={0.35}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                    <circle
+                      cx={0} cy={0} r={nodeR + 4}
+                      fill="none"
+                      stroke={isSelected ? '#6366f1' : colors.border}
+                      strokeWidth={2.5}
+                      strokeOpacity={0.85}
+                      style={{ pointerEvents: 'none' }}
+                    />
+                  </>
                 )}
 
                 {/* Clip path for photo */}
                 {node.photoUrl && (
                   <defs>
                     <clipPath id={`clip-${node.id}`}>
-                      <circle cx={0} cy={0} r={NODE_R} />
+                      <circle cx={0} cy={0} r={nodeR} />
                     </clipPath>
                   </defs>
                 )}
 
-                {/* Avatar circle */}
+                {/* Avatar circle - this is the hit target. Its size never changes on hover. */}
                 <circle
-                  cx={0} cy={0} r={NODE_R}
+                  cx={0} cy={0} r={nodeR}
                   fill={node.photoUrl ? 'transparent' : colors.avatar}
-                  stroke="rgba(255,255,255,0.9)"
+                  stroke={isHovered || isSelected ? colors.border : 'rgba(255,255,255,0.9)'}
                   strokeWidth={2.5}
+                  style={{ transition: 'stroke 0.15s' }}
                 />
 
                 {/* Photo or initials */}
                 {node.photoUrl ? (
                   <image
                     href={node.photoUrl}
-                    x={-NODE_R} y={-NODE_R}
-                    width={NODE_R * 2} height={NODE_R * 2}
+                    x={-nodeR} y={-nodeR}
+                    width={nodeR * 2} height={nodeR * 2}
                     clipPath={`url(#clip-${node.id})`}
                     preserveAspectRatio="xMidYMid slice"
                     style={{ pointerEvents: 'none' }}
@@ -448,7 +531,7 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
                     textAnchor="middle"
                     dominantBaseline="central"
                     fill="white"
-                    fontSize={NODE_R * 0.65}
+                    fontSize={nodeR * 0.65}
                     fontWeight="700"
                     style={{ pointerEvents: 'none', userSelect: 'none' }}
                   >
@@ -458,7 +541,7 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
 
                 {/* Hover tooltip */}
                 {isHovered && (
-                  <g transform={`translate(0,${-(NODE_R + 18)})`}>
+                  <g transform={`translate(0,${-(nodeR + 20)})`} style={{ pointerEvents: 'none' }}>
                     <rect
                       x={-node.name.length * 3.5 - 8}
                       y={-11}
@@ -474,7 +557,7 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
                       fill="white"
                       fontSize={12}
                       fontWeight={500}
-                      style={{ pointerEvents: 'none', userSelect: 'none' }}
+                      style={{ userSelect: 'none' }}
                     >
                       {node.name}
                     </text>
