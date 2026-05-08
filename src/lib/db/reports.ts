@@ -202,6 +202,7 @@ export async function fetchEventSummary(params: {
 export interface CrossNucleusPerson {
   id: string;
   name: string;
+  photoUrl: string | null;
   nucleiIds: string[];
 }
 
@@ -235,13 +236,16 @@ export async function fetchCrossNucleusPersons(nucleusIds: string[]): Promise<Cr
 
   const { data: persons } = await supabase
     .from('persons')
-    .select('id, name')
+    .select('id, name, profile_image_url')
     .in('id', crossPersonIds);
-  const nameMap = Object.fromEntries(((persons ?? []) as any[]).map(p => [p.id, p.name]));
+  const personMap = new Map<string, { name: string; photoUrl: string | null }>(
+    ((persons ?? []) as any[]).map(p => [p.id, { name: p.name, photoUrl: p.profile_image_url ?? null }]),
+  );
 
   return crossPersonIds.map(id => ({
     id,
-    name: nameMap[id] ?? id,
+    name: personMap.get(id)?.name ?? id,
+    photoUrl: personMap.get(id)?.photoUrl ?? null,
     nucleiIds: [...byPerson.get(id)!],
   }));
 }
