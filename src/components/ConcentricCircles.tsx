@@ -78,10 +78,10 @@ const CORE_INNER_R = 6; // inner anchor radius for the innermost (core) band
 const MIN_BAND_WIDTH_CORE = 56; // minimum visible thickness for the core band
 const MIN_BAND_WIDTH_OUTER = 42; // minimum visible thickness for outer bands
 const BASE_VIEW_SIZE = 400; // baseline viewBox dimension (unchanged from prior)
-// Viewport box max size: fill the parent's width but stay roughly within the
-// visible page area. Subtracts only enough chrome to leave the page header
-// visible above; the user can scroll for the surrounding controls below.
-const VIEWPORT_MAX_CSS = 'min(100%, calc(100vh - 80px))';
+// Viewport box max size: fill the full available width of the parent panel.
+// The box stays square via aspect-ratio; on shorter viewports the user can
+// scroll vertically to reach the surrounding controls.
+const VIEWPORT_MAX_CSS = '100%';
 
 // Order from innermost to outermost — used for nesting / z-ordering
 const ORDERED_LEVELS: Level[] = ['coordinating', 'supporting', 'participating', 'aware'];
