@@ -48,6 +48,12 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+/* Layered Community Flow: render the edge SVG layer above the nodes div so
+   connection bands draw on top of any nucleus card their path crosses. */
+.network-view-root .react-flow__edges {
+  z-index: 5;
+}
+
 /* Subtle background pattern for Nucleus Dashboard */
 .bg-nucleus-pattern {
   background-color: #faf9f6; /* Very light warm gray/amber */

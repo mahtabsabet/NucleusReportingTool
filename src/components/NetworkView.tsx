@@ -11,7 +11,6 @@ import {
   Position,
   BaseEdge,
   EdgeLabelRenderer,
-  getStraightPath,
   useNodesState,
   useEdgesState,
 } from '@xyflow/react';
@@ -219,6 +218,99 @@ function Avatar({
   );
 }
 
+// ---------- Path routing ----------
+
+interface Pt { x: number; y: number }
+interface Rect { x: number; y: number; w: number; h: number }
+
+function pointInRect(p: Pt, r: Rect): boolean {
+  return p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
+}
+
+function ccw(a: Pt, b: Pt, c: Pt): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function segmentsIntersect(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
+  const d1 = ccw(p3, p4, p1);
+  const d2 = ccw(p3, p4, p2);
+  const d3 = ccw(p1, p2, p3);
+  const d4 = ccw(p1, p2, p4);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0))
+      && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+function segmentIntersectsRect(s: Pt, t: Pt, r: Rect): boolean {
+  if (pointInRect(s, r) || pointInRect(t, r)) return true;
+  const corners: Pt[] = [
+    { x: r.x,         y: r.y },
+    { x: r.x + r.w,   y: r.y },
+    { x: r.x + r.w,   y: r.y + r.h },
+    { x: r.x,         y: r.y + r.h },
+  ];
+  for (let i = 0; i < 4; i++) {
+    if (segmentsIntersect(s, t, corners[i], corners[(i + 1) % 4])) return true;
+  }
+  return false;
+}
+
+interface RoutedPath { d: string; labelX: number; labelY: number; blockers: string[] }
+
+// Pick a quadratic bezier that arcs around any nucleus rect intersected by the
+// straight line between the two endpoints. The apex of the curve is offset to
+// the side of the chord that requires less deflection, far enough past every
+// obstructing corner that the curve clears it.
+function routePath(s: Pt, t: Pt, obstacles: { id: string; rect: Rect }[], margin = 28): RoutedPath {
+  const blockers = obstacles.filter((o) => segmentIntersectsRect(s, t, o.rect));
+  const mx = (s.x + t.x) / 2;
+  const my = (s.y + t.y) / 2;
+
+  if (blockers.length === 0) {
+    return { d: `M ${s.x} ${s.y} L ${t.x} ${t.y}`, labelX: mx, labelY: my, blockers: [] };
+  }
+
+  const dx = t.x - s.x;
+  const dy = t.y - s.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const px = -dy / len; // perpendicular unit vector to the chord
+  const py = dx / len;
+
+  let bestSide = 1;
+  let bestApex = Infinity;
+  for (const side of [1, -1] as const) {
+    let maxPerp = 0;
+    for (const b of blockers) {
+      const corners: Pt[] = [
+        { x: b.rect.x,           y: b.rect.y },
+        { x: b.rect.x + b.rect.w, y: b.rect.y },
+        { x: b.rect.x + b.rect.w, y: b.rect.y + b.rect.h },
+        { x: b.rect.x,           y: b.rect.y + b.rect.h },
+      ];
+      for (const c of corners) {
+        const signed = side * ((c.x - mx) * px + (c.y - my) * py);
+        if (signed > maxPerp) maxPerp = signed;
+      }
+    }
+    const apex = maxPerp + margin;
+    if (apex < bestApex) { bestApex = apex; bestSide = side; }
+  }
+
+  // For a quadratic bezier, B(0.5) = (S + 2C + T) / 4, i.e. apex = midpoint + (C - midpoint) / 2.
+  // To place the apex at distance `bestApex` from the chord on `bestSide`,
+  // C must be at twice that perpendicular offset from the midpoint.
+  const apexX = mx + bestSide * bestApex * px;
+  const apexY = my + bestSide * bestApex * py;
+  const cx = 2 * apexX - mx;
+  const cy = 2 * apexY - my;
+
+  return {
+    d: `M ${s.x} ${s.y} Q ${cx} ${cy} ${t.x} ${t.y}`,
+    labelX: apexX,
+    labelY: apexY,
+    blockers: blockers.map((b) => b.id),
+  };
+}
+
 // ---------- Custom edge: connection band ----------
 
 interface BandData {
@@ -226,13 +318,15 @@ interface BandData {
   strength: Strength;
   dimmed: boolean;
   highlighted: boolean;
+  pathD: string;
+  labelX: number;
+  labelY: number;
   onSelect: () => void;
 }
 
 function ConnectionBandEdge(props: EdgeProps) {
-  const { id, sourceX, sourceY, targetX, targetY, data } = props;
+  const { id, data } = props;
   const d = data as unknown as BandData;
-  const [edgePath, labelX, labelY] = getStraightPath({ sourceX, sourceY, targetX, targetY });
   const style = STRENGTH_STYLE[d.strength];
   const baseOpacity = d.dimmed ? 0.15 : d.highlighted ? 1 : 0.85;
 
@@ -244,18 +338,19 @@ function ConnectionBandEdge(props: EdgeProps) {
     <>
       <BaseEdge
         id={id}
-        path={edgePath}
+        path={d.pathD}
         style={{
           stroke: style.stroke,
           strokeWidth: d.highlighted ? style.width + 1.5 : style.width,
           opacity: baseOpacity,
+          fill: 'none',
         }}
       />
       <EdgeLabelRenderer>
         <div
           style={{
             position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
+            transform: `translate(-50%, -50%) translate(${d.labelX}px, ${d.labelY}px)`,
             opacity: d.dimmed ? 0.35 : 1,
           }}
           className="pointer-events-auto select-none nodrag nopan"
@@ -413,8 +508,19 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
           highlighted,
           isNucleus: true,
         },
-        draggable: true,
+        draggable: false,
         zIndex: 1,
+      });
+    });
+
+    // Rect index — used both for routing around obstacles and for centering
+    // edge endpoints on each nucleus card.
+    const allRects: { id: string; rect: Rect; center: Pt }[] = [];
+    nucleusPos.forEach((p, id) => {
+      allRects.push({
+        id,
+        rect: { x: p.x, y: p.y, w: NUCLEUS_W, h: NUCLEUS_H },
+        center: { x: p.x + NUCLEUS_W / 2, y: p.y + NUCLEUS_H / 2 },
       });
     });
 
@@ -425,11 +531,20 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       const highlighted = !!highlightSet && highlightSet.bandKeys.has(key);
       const fromN = nuclei.find((n) => n.id === b.aId);
       const toN = nuclei.find((n) => n.id === b.bId);
+
+      const sCenter = allRects.find((r) => r.id === b.aId)?.center ?? { x: 0, y: 0 };
+      const tCenter = allRects.find((r) => r.id === b.bId)?.center ?? { x: 0, y: 0 };
+      const obstacles = allRects.filter((r) => r.id !== b.aId && r.id !== b.bId);
+      const routed = routePath(sCenter, tCenter, obstacles);
+
       const data: BandData = {
         people: b.people,
         strength,
         dimmed,
         highlighted,
+        pathD: routed.d,
+        labelX: routed.labelX,
+        labelY: routed.labelY,
         onSelect: () => setSelectedBand({
           fromId: b.aId,
           toId: b.bId,
@@ -444,7 +559,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
         target: b.bId,
         type: 'connectionBand',
         data: data as unknown as Record<string, unknown>,
-        zIndex: 0,
+        zIndex: 5,
       };
     });
 
@@ -473,7 +588,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
 
   // Derived data for the selected-band panel.
   return (
-    <div className="w-full h-full bg-slate-50/50 relative">
+    <div className="network-view-root w-full h-full bg-slate-50/50 relative">
       <ReactFlow
         nodes={nodes}
         edges={edges}
