@@ -15,6 +15,8 @@ import {
   updatePrimaryContact,
   type NucleusEnrollmentEntry,
 } from '../lib/db/nucleus';
+import { getCallerContext } from '../lib/db/users';
+import { isRegionalOnly } from '../lib/permissions';
 import { supabase } from '../lib/supabase';
 
 type Level = 'coordinating' | 'participating' | 'supporting' | 'aware';
@@ -276,6 +278,11 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
   const [panelLoading, setPanelLoading] = useState(false);
   const [panelContactId, setPanelContactId] = useState<string | null>(null);
   const [panelContactSaving, setPanelContactSaving] = useState(false);
+  const [regionalOnly, setRegionalOnly] = useState(false);
+
+  useEffect(() => {
+    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
+  }, []);
 
   const startSimulation = useCallback(
     (nodes: SimNode[], edges: { source: string; target: string }[], cfg: LayoutConfig) => {
@@ -646,7 +653,13 @@ export function InNucleusNetworkView({ nucleusId }: Props) {
             {/* primary contact */}
             <div className="px-6 pt-5 pb-4 border-b border-gray-100">
               <h3 className="text-base font-semibold text-gray-800 mb-1">Primary contact</h3>
-              {contactCandidates.length === 0 ? (
+              {regionalOnly ? (
+                <p className="text-sm text-gray-700">
+                  {currentContactName
+                    ? <span className="font-medium">{currentContactName}</span>
+                    : <span className="text-gray-400 italic">No primary contact assigned.</span>}
+                </p>
+              ) : contactCandidates.length === 0 ? (
                 <p className="text-sm text-gray-400 italic">
                   {panel.level === 'coordinating'
                     ? 'Core members can be anyone\'s primary contact.'

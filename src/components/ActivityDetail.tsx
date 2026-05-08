@@ -18,6 +18,8 @@ import {
   deleteActivity,
 } from '../lib/db/nucleus';
 import { submitPermissionRequest } from '../lib/db/requests';
+import { getCallerContext } from '../lib/db/users';
+import { isRegionalOnly } from '../lib/permissions';
 import { markPersonUnplaced } from '../lib/unplacedTracker';
 import { Activity } from '../types';
 import { PersonNameCombobox } from './PersonNameCombobox';
@@ -67,6 +69,11 @@ export function ActivityDetail() {
   const [requestError, setRequestError] = useState<string | null>(null);
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
+  const [regionalOnly, setRegionalOnly] = useState(false);
+
+  useEffect(() => {
+    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
+  }, []);
 
   useEffect(() => {
     if (!activityId) return;
@@ -410,20 +417,24 @@ export function ActivityDetail() {
                           </div>
                           {name}
                         </button>
-                        <button
-                          onClick={() => removeParticipant(role, pid)}
-                          className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all duration-200"
-                        >
-                          <XIcon className="w-4 h-4" />
-                        </button>
+                        {!regionalOnly && (
+                          <button
+                            onClick={() => removeParticipant(role, pid)}
+                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all duration-200"
+                          >
+                            <XIcon className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     );
                   })}
                 </div>
-                <PersonNameCombobox
-                  placeholder="Add name..."
-                  onAdd={params => addParticipantToRole(role, params)}
-                />
+                {!regionalOnly && (
+                  <PersonNameCombobox
+                    placeholder="Add name..."
+                    onAdd={params => addParticipantToRole(role, params)}
+                  />
+                )}
               </div>
             ))}
           </div>

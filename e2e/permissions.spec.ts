@@ -504,6 +504,61 @@ test.describe('regional (view-only)', () => {
     });
     expect(status).toBe(403);
   });
+
+  // ── UI affordances that imply edit access must not appear for view-only
+  //    Regional users. The action would be blocked by RLS anyway, but seeing
+  //    the control suggests a change is being made when in fact nothing
+  //    happens — so we hide it client-side as well.
+
+  test('Activities tab hides the "Add New Activity" button', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    // Open the focused activities panel by clicking its dashboard card.
+    await page.getByText(/core and other activities/i).first().click();
+    await expect(page.getByRole('heading', { name: /core and other activities/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /add new activity/i })).not.toBeVisible();
+  });
+
+  test('Activity detail page hides participant add fields and "+" buttons', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
+    await expect(page.getByRole('heading', { name: "Test Children's Class" }))
+      .toBeVisible({ timeout: 15000 });
+    // PersonNameCombobox uses placeholder "Add name..." — must be absent everywhere.
+    await expect(page.getByPlaceholder('Add name...')).toHaveCount(0);
+  });
+
+  test('Individual profile hides the "Edit Profile" button', async ({ page }) => {
+    await page.goto(`/individual/${TEST_IDS.personParticipatingId}`);
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('button', { name: /edit profile/i })).not.toBeVisible();
+  });
+
+  test('Concentric circles hide the "Save Engagement Levels" button', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    // Open the Circles module via its dashboard card.
+    await page.getByText(/overall participation/i).first().click();
+    await expect(page.getByRole('heading', { name: /overall participation/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /save engagement levels/i })).not.toBeVisible();
+    // The drag/drop hint must not appear either.
+    await expect(page.getByText(/drag to reassign/i)).not.toBeVisible();
+  });
+
+  test('Profile panel in concentric circles shows primary contact as static text (no dropdown)', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    await page.getByText(/overall participation/i).first().click();
+    await expect(page.getByRole('heading', { name: /overall participation/i })).toBeVisible();
+    // Click any rendered avatar to open the profile panel.
+    const firstAvatar = page.locator('[data-node="true"]').first();
+    await expect(firstAvatar).toBeVisible({ timeout: 15000 });
+    await firstAvatar.click();
+    // Panel header section
+    await expect(page.getByRole('heading', { name: /primary contact/i })).toBeVisible();
+    // No <select> in the primary-contact block.
+    const panel = page.locator('div').filter({ hasText: /primary contact/i }).last();
+    await expect(panel.locator('select')).toHaveCount(0);
+  });
 });
 
 // ── Role-dropdown shape per role ────────────────────────────────────────────

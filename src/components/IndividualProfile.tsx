@@ -25,6 +25,8 @@ import {
 } from '../lib/db/persons';
 import { submitPermissionRequest } from '../lib/db/requests';
 import { fetchCourses, type CourseRow } from '../lib/db/clusterProfile';
+import { getCallerContext } from '../lib/db/users';
+import { isRegionalOnly } from '../lib/permissions';
 import { GlobalSearch } from './GlobalSearch';
 
 const ROLE_DISPLAY: Record<string, string> = {
@@ -80,6 +82,11 @@ export function IndividualProfile() {
   const [requestError, setRequestError] = useState<string | null>(null);
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
+  const [regionalOnly, setRegionalOnly] = useState(false);
+
+  useEffect(() => {
+    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -481,7 +488,7 @@ export function IndividualProfile() {
                       Save Profile
                     </button>
                   </div>
-                ) : (
+                ) : !regionalOnly ? (
                   <button
                     onClick={startEditing}
                     className="flex items-center gap-2 px-5 py-2.5 bg-white/10 hover:bg-white/20 border border-white/20 rounded-xl font-medium transition-all duration-200 backdrop-blur-sm"
@@ -489,7 +496,7 @@ export function IndividualProfile() {
                     <EditIcon className="w-4 h-4" />
                     Edit Profile
                   </button>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
