@@ -1,8 +1,10 @@
 """
 Convert Alberta Bahá'í Regional Map KMZ into per-layer GeoJSON files.
 
-Each KML <Folder> becomes a separate GeoJSON FeatureCollection in data/,
-so the app can toggle layers independently.
+Source KMZ stays in data/ (committed to the repo as the authoritative
+input). Each KML <Folder> is exported to public/data/ as its own
+GeoJSON FeatureCollection so the frontend can fetch layers individually
+and toggle them on/off.
 
 Run from the repo root:  python3 scripts/kmz_to_geojson.py
 """
@@ -15,7 +17,7 @@ import zipfile
 from pathlib import Path
 
 KMZ = Path("data/alberta-regional-map.kmz")
-OUT_DIR = Path("data")
+OUT_DIR = Path("public/data")
 NS = {"k": "http://www.opengis.net/kml/2.2"}
 
 FOLDER_FILENAMES = {
