@@ -12,7 +12,8 @@
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
-    "e2e:report": "playwright show-report"
+    "e2e:report": "playwright show-report",
+    "seed:alberta-clusters": "tsx scripts/seed-alberta-clusters.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",
@@ -41,6 +42,7 @@
     "eslint-plugin-react-refresh": "^0.4.1",
     "postcss": "latest",
     "tailwindcss": "3.4.17",
+    "tsx": "^4.21.0",
     "typescript": "^5.5.4",
     "vite": "^5.2.0",
     "vitest": "^4.1.5"
