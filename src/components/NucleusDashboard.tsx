@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeftIcon,
   PlusIcon,
   ChevronRightIcon,
   MoreHorizontalIcon,
+  MoreVerticalIcon,
   UserIcon,
   BookOpenIcon,
   AwardIcon,
@@ -26,6 +27,7 @@ import {
 import { ConcentricCircles } from './ConcentricCircles';
 import { InNucleusNetworkView } from './InNucleusNetworkView';
 import { GlobalSearch } from './GlobalSearch';
+import { AccountMenu } from './AccountMenu';
 import { Activity } from '../types';
 import {
   fetchNucleus,
@@ -43,7 +45,7 @@ import {
 } from '../lib/db/nucleus';
 import { fetchCourses } from '../lib/db/clusterProfile';
 import { getCallerContext } from '../lib/db/users';
-import { isRegionalOnly } from '../lib/permissions';
+import { actionPermission, isRegionalOnly } from '../lib/permissions';
 
 const activityTypeLabels: Record<string, string> = {
   'children-class': "Children's Class",
@@ -90,15 +92,40 @@ export function NucleusDashboard() {
 
   const [canDelete, setCanDelete] = useState(false);
   const [regionalOnly, setRegionalOnly] = useState(false);
+  const [canCreateActivity, setCanCreateActivity] = useState(false);
+  const [canEditCircles, setCanEditCircles] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const coverInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onClick(e: MouseEvent) {
+      const target = e.target as Node;
+      if (menuRef.current?.contains(target)) return;
+      if (menuButtonRef.current?.contains(target)) return;
+      setMenuOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', onClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
+
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
     Promise.all([
       fetchNucleus(id),
       fetchActivitiesForNucleus(id),
@@ -106,7 +133,12 @@ export function NucleusDashboard() {
       fetchCourses(),
       canRenameNucleus(id),
       canDeleteNucleus(id),
-    ]).then(([n, acts, persons, courseList, renameAllowed, deleteAllowed]) => {
+      getCallerContext(),
+    ]).then(([n, acts, persons, courseList, renameAllowed, deleteAllowed, ctx]) => {
+      const target = { nucleusId: id, clusterId: n?.clusterId ?? null };
+      setRegionalOnly(ctx ? isRegionalOnly(ctx) : false);
+      setCanCreateActivity(ctx ? actionPermission(ctx, 'create_activity', target) === 'direct' : false);
+      setCanEditCircles(ctx ? actionPermission(ctx, 'edit_concentric_circles', target) === 'direct' : false);
       setNucleus(n);
       setActivities(acts);
       setPeople(persons);
@@ -270,118 +302,136 @@ export function NucleusDashboard() {
 
   return (
     <div className="min-h-screen bg-nucleus-pattern font-sans">
-      {/* Header */}
+      {/* Compact header — single row: back link · nucleus name + menu · search · account */}
       <header
-        className="relative bg-white/90 backdrop-blur-md border-b border-gray-200/80 px-4 sm:px-8 py-5 sm:py-8 shadow-sm overflow-hidden"
+        className="relative z-40 bg-white/90 backdrop-blur-md border-b border-gray-200/80 px-4 sm:px-6 py-2.5 shadow-sm"
         style={
           bannerImage
             ? {
-                backgroundImage: `linear-gradient(to bottom, rgba(255,255,255,0.8), rgba(255,255,255,0.95)), url(${bannerImage})`,
+                backgroundImage: `linear-gradient(to bottom, rgba(255,255,255,0.85), rgba(255,255,255,0.95)), url(${bannerImage})`,
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
               }
             : {}
         }
       >
-        <div className="max-w-[1600px] mx-auto flex flex-col relative z-10">
-          <div className="flex justify-between items-start mb-4">
-            <button
-              onClick={() => navigate('/')}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors bg-white/50 px-3 py-1.5 rounded-lg backdrop-blur-sm"
-            >
-              <ChevronLeftIcon className="w-4 h-4" />
-              Back to Cluster Map
-            </button>
+        <div className="max-w-[1600px] mx-auto flex items-center gap-3 sm:gap-4 relative z-10">
+          <button
+            onClick={() => navigate('/')}
+            className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors bg-white/50 px-2.5 py-1.5 rounded-lg backdrop-blur-sm flex-shrink-0"
+          >
+            <ChevronLeftIcon className="w-4 h-4" />
+            <span className="hidden sm:inline">Back to Cluster Map</span>
+          </button>
 
-            <div className="hidden md:block flex-1 max-w-md mx-4">
-              <GlobalSearch />
+          <div className="h-6 w-px bg-gray-300/70 hidden sm:block" />
+
+          <div className="flex items-center gap-2 min-w-0 flex-shrink">
+            <div className="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center shadow-sm flex-shrink-0">
+              <CircleIcon className="w-4 h-4" />
             </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => navigate(`/nucleus/${id}/growth-report`)}
-                className="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-50/80 hover:bg-emerald-100 text-sm font-medium text-emerald-700 rounded-lg border border-emerald-200 shadow-sm transition-all backdrop-blur-sm"
-              >
-                <TrendingUpIcon className="w-4 h-4" />
-                <span className="hidden sm:inline">Growth Report</span>
-              </button>
-              <label className="cursor-pointer inline-flex items-center gap-2 px-3 py-1.5 bg-white/80 hover:bg-white text-sm font-medium text-gray-700 rounded-lg border border-gray-200 shadow-sm transition-all backdrop-blur-sm">
-                <ImageIcon className="w-4 h-4 text-gray-500" />
-                <span className="hidden sm:inline">
-                  {bannerImage ? 'Change Cover' : 'Add Cover Photo'}
-                </span>
+            {editingName ? (
+              <div className="flex items-center gap-1.5">
                 <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
+                  type="text"
+                  value={nameInput}
+                  onChange={e => setNameInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleSaveRename(); else if (e.key === 'Escape') handleCancelRename(); }}
+                  className="text-lg font-bold text-gray-900 tracking-tight border-b-2 border-blue-500 bg-transparent focus:outline-none w-44"
+                  autoFocus
                 />
-              </label>
-              {canDelete && (
                 <button
-                  onClick={() => { setDeleteConfirmInput(''); setDeleteError(null); setShowDeleteConfirm(true); }}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 bg-red-50/80 hover:bg-red-100 text-sm font-medium text-red-600 rounded-lg border border-red-200 shadow-sm transition-all backdrop-blur-sm"
-                  title="Delete nucleus"
+                  onClick={handleSaveRename}
+                  disabled={nameSaving}
+                  className="px-2 py-0.5 bg-blue-600 text-white text-xs font-semibold rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
                 >
-                  <Trash2Icon className="w-4 h-4" />
-                  <span className="hidden sm:inline">Delete</span>
+                  {nameSaving ? '…' : 'Save'}
                 </button>
-              )}
-            </div>
+                <button
+                  onClick={handleCancelRename}
+                  className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <XIcon className="w-3.5 h-3.5" />
+                </button>
+                {nameError && <p className="text-xs text-red-600 ml-1">{nameError}</p>}
+              </div>
+            ) : (
+              <>
+                <h1 className="text-lg sm:text-xl font-bold text-gray-900 tracking-tight truncate">
+                  {nucleus.name}
+                </h1>
+                {(canRename || canDelete) && (
+                  <div className="relative flex-shrink-0">
+                    <button
+                      ref={menuButtonRef}
+                      onClick={() => setMenuOpen(o => !o)}
+                      title="Nucleus options"
+                      aria-label="Nucleus options"
+                      className="p-1 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-all"
+                    >
+                      <MoreVerticalIcon className="w-4 h-4" />
+                    </button>
+                    {menuOpen && (
+                      <div
+                        ref={menuRef}
+                        className="absolute left-0 mt-1 w-56 bg-white rounded-xl shadow-xl border border-gray-200 py-1.5 z-50"
+                      >
+                        {canRename && (
+                          <button
+                            onClick={() => { setMenuOpen(false); startRenamingNucleus(); }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                          >
+                            <PencilIcon className="w-4 h-4 text-gray-400" />
+                            Rename nucleus
+                          </button>
+                        )}
+                        {canRename && (
+                          <button
+                            onClick={() => { setMenuOpen(false); coverInputRef.current?.click(); }}
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors"
+                          >
+                            <ImageIcon className="w-4 h-4 text-gray-400" />
+                            {bannerImage ? 'Change cover photo' : 'Add cover photo'}
+                          </button>
+                        )}
+                        {canDelete && (
+                          <>
+                            <div className="my-1 border-t border-gray-100" />
+                            <button
+                              onClick={() => {
+                                setMenuOpen(false);
+                                setDeleteConfirmInput('');
+                                setDeleteError(null);
+                                setShowDeleteConfirm(true);
+                              }}
+                              className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2Icon className="w-4 h-4" />
+                              Delete nucleus
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    <input
+                      ref={coverInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageUpload}
+                      className="hidden"
+                    />
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-md">
-              <CircleIcon className="w-6 h-6" />
-            </div>
-            <div>
-              {editingName ? (
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={nameInput}
-                      onChange={e => setNameInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSaveRename(); else if (e.key === 'Escape') handleCancelRename(); }}
-                      className="text-2xl font-bold text-gray-900 tracking-tight border-b-2 border-blue-500 bg-transparent focus:outline-none w-64"
-                      autoFocus
-                    />
-                    <button
-                      onClick={handleSaveRename}
-                      disabled={nameSaving}
-                      className="px-3 py-1 bg-blue-600 text-white text-sm font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                    >
-                      {nameSaving ? 'Saving…' : 'Save'}
-                    </button>
-                    <button
-                      onClick={handleCancelRename}
-                      className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
-                    >
-                      <XIcon className="w-4 h-4" />
-                    </button>
-                  </div>
-                  {nameError && <p className="text-xs text-red-600">{nameError}</p>}
-                </div>
-              ) : (
-                <div className="flex items-center gap-2">
-                  <h1 className="text-3xl font-bold text-gray-900 tracking-tight">
-                    {nucleus.name}
-                  </h1>
-                  {canRename && (
-                    <button
-                      onClick={startRenamingNucleus}
-                      title="Rename nucleus"
-                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all"
-                    >
-                      <PencilIcon className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              )}
-              <p className="text-sm font-medium text-gray-600 mt-1">
-                Nucleus Reporting Form
-              </p>
-            </div>
+          <div className="hidden md:block flex-1 min-w-0 max-w-xl mx-auto">
+            <GlobalSearch />
+          </div>
+
+          <div className="flex-shrink-0">
+            <AccountMenu inline buttonClassName="w-9 h-9 rounded-full bg-white shadow-sm border border-gray-200 flex items-center justify-center text-sm font-bold text-gray-700 hover:shadow-md hover:border-gray-300 transition-all overflow-hidden" />
           </div>
         </div>
       </header>
@@ -425,6 +475,17 @@ export function NucleusDashboard() {
                   <span className="text-[9px] font-medium text-center leading-tight">{m.label}</span>
                 </button>
               ))}
+
+              <div className="w-10 border-t border-gray-100 my-1" />
+
+              <button
+                onClick={() => navigate(`/nucleus/${id}/growth-report`)}
+                className="w-full flex flex-col items-center gap-1 py-3 px-1 rounded-xl text-emerald-600 hover:bg-emerald-50 transition-all duration-200"
+                title="Growth Report"
+              >
+                <TrendingUpIcon className="w-5 h-5" />
+                <span className="text-[9px] font-medium text-center leading-tight">Growth</span>
+              </button>
             </div>
 
             {/* Expanded module — key triggers fade-in on every module switch */}
@@ -441,7 +502,7 @@ export function NucleusDashboard() {
                         : 'Drag and drop names between circles to update engagement levels.'}
                     </p>
                   </div>
-                  <ConcentricCircles nucleusId={id!} />
+                  <ConcentricCircles nucleusId={id!} canEdit={canEditCircles} />
                   {backToDashboard}
                 </div>
               )}
@@ -453,7 +514,7 @@ export function NucleusDashboard() {
                     <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Network View</h2>
                     <p className="text-sm text-gray-500">Visual overview of connections within this nucleus.</p>
                   </div>
-                  <InNucleusNetworkView nucleusId={id!} />
+                  <InNucleusNetworkView nucleusId={id!} canEdit={canEditCircles} />
                   {backToDashboard}
                 </div>
               )}
@@ -520,7 +581,7 @@ export function NucleusDashboard() {
                         {activities.length === 0 && (
                           <tr>
                             <td colSpan={3} className="py-10 text-center text-gray-400 italic text-sm">
-                              {regionalOnly ? 'No activities yet.' : 'No activities yet. Add one below.'}
+                              {canCreateActivity ? 'No activities yet. Add one below.' : 'No activities yet.'}
                             </td>
                           </tr>
                         )}
@@ -528,7 +589,7 @@ export function NucleusDashboard() {
                     </table>
                   </div>
 
-                  {!regionalOnly && (
+                  {canCreateActivity && (
                     <button
                       onClick={() => setShowAddActivity(true)}
                       className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 flex items-center gap-2 text-sm font-semibold"
@@ -805,6 +866,18 @@ export function NucleusDashboard() {
                       No notes yet. Click to add notes about this nucleus.
                     </p>
                   )}
+                </div>
+              </div>
+
+              {/* Growth Report card */}
+              <div className={cardBase} onClick={() => navigate(`/nucleus/${id}/growth-report`)}>
+                {cardHeader('Growth Report', 'Trends in participation and engagement over time.')}
+                <div className="flex flex-col items-center justify-center flex-1 py-4 gap-2 rounded-xl bg-emerald-50/60">
+                  <TrendingUpIcon className="w-8 h-8 text-emerald-400" />
+                  <p className="text-sm font-medium text-emerald-700">View growth trends</p>
+                  <p className="text-xs text-gray-500 text-center px-4">
+                    Charts and metrics tracking the nucleus over time.
+                  </p>
                 </div>
               </div>
 

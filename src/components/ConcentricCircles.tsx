@@ -19,14 +19,17 @@ import {
   updateEngagementLevel,
   updatePrimaryContact,
 } from '../lib/db/nucleus';
-import { getCallerContext } from '../lib/db/users';
-import { isRegionalOnly } from '../lib/permissions';
 import { getUnplacedPersonIds, clearPersonUnplaced } from '../lib/unplacedTracker';
 import { supabase } from '../lib/supabase';
 
 interface ConcentricCirclesProps {
   nucleusId: string;
   compact?: boolean;
+  // When false, the component renders read-only: no drag/drop, no save
+  // button, and the primary-contact panel becomes a static statement.
+  // Defaults to true (caller permits edits) — the caller is expected to
+  // resolve the underlying permission and pass the right value.
+  canEdit?: boolean;
 }
 
 type Level = 'coordinating' | 'participating' | 'supporting' | 'aware';
@@ -236,7 +239,8 @@ function validContacts(
   });
 }
 
-export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps) {
+export function ConcentricCircles({ nucleusId, compact, canEdit = true }: ConcentricCirclesProps) {
+  const readOnly = !canEdit;
   const navigate = useNavigate();
 
   const [circles, setCircles] = useState<Record<Level, NameEntry[]>>({
@@ -253,11 +257,6 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
   const [panelLoading, setPanelLoading] = useState(false);
   const [panelContactId, setPanelContactId] = useState<string | null>(null);
   const [panelContactSaving, setPanelContactSaving] = useState(false);
-  const [regionalOnly, setRegionalOnly] = useState(false);
-
-  useEffect(() => {
-    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
-  }, []);
 
   // State for the "assign primary contact" prompt shown after dropping from unplaced
   const [contactPrompt, setContactPrompt] = useState<{
@@ -558,8 +557,8 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
       <div
         key={entry.id}
         aria-label={entry.name}
-        draggable={!regionalOnly}
-        onDragStart={regionalOnly ? undefined : e => handleDragStart(e, entry.id, level)}
+        draggable={!readOnly}
+        onDragStart={readOnly ? undefined : e => handleDragStart(e, entry.id, level)}
         onClick={() => openPanel(entry, level)}
         onMouseEnter={() => setHoveredId(entry.id)}
         onMouseLeave={() => setHoveredId(null)}
@@ -746,7 +745,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
           {/* primary contact */}
           <div className="px-6 pt-5 pb-4 border-b border-gray-100">
             <h3 className="text-base font-semibold text-gray-800 mb-1">Primary contact</h3>
-            {regionalOnly ? (
+            {readOnly ? (
               <p className="text-sm text-gray-700">
                 {currentContactName
                   ? <><span className="font-medium">{currentContactName}</span></>
@@ -937,7 +936,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
       <div className="flex flex-col gap-8">
         {/* Hint text */}
         <p className="text-xs text-gray-400 text-center -mb-4">
-          {regionalOnly
+          {readOnly
             ? 'Hover for name • Click for details • Scroll to zoom • Drag empty space to pan'
             : 'Hover for name • Click for details • Drag to reassign • Scroll to zoom • Drag empty space to pan'}
         </p>
@@ -1024,9 +1023,9 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
                         backgroundColor: LEVEL_COLORS[level].highlight,
                       } : {}),
                     }}
-                    onDragOver={regionalOnly ? undefined : e => handleDragOver(e, level)}
-                    onDragLeave={regionalOnly ? undefined : e => handleDragLeave(e, level)}
-                    onDrop={regionalOnly ? undefined : e => handleDrop(e, level)}
+                    onDragOver={readOnly ? undefined : e => handleDragOver(e, level)}
+                    onDragLeave={readOnly ? undefined : e => handleDragLeave(e, level)}
+                    onDrop={readOnly ? undefined : e => handleDrop(e, level)}
                   />
                 );
               })}
@@ -1092,14 +1091,14 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
           className={`rounded-2xl border-2 border-dashed px-6 py-5 transition-all duration-200 ${
             dragOverUnplaced ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-gray-50'
           }`}
-          onDragOver={regionalOnly ? undefined : e => { e.preventDefault(); setDragOverUnplaced(true); }}
-          onDragLeave={regionalOnly ? undefined : e => {
+          onDragOver={readOnly ? undefined : e => { e.preventDefault(); setDragOverUnplaced(true); }}
+          onDragLeave={readOnly ? undefined : e => {
             const rect = e.currentTarget.getBoundingClientRect();
             if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
               setDragOverUnplaced(false);
             }
           }}
-          onDrop={regionalOnly ? undefined : e => {
+          onDrop={readOnly ? undefined : e => {
             e.preventDefault();
             setDragOverUnplaced(false);
             const participantId = e.dataTransfer.getData('participantId');
@@ -1114,7 +1113,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
           }}
         >
           <p className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-3">
-            {regionalOnly
+            {readOnly
               ? 'New participants'
               : 'New participants — drag into a circle to assign engagement level'}
           </p>
@@ -1129,8 +1128,8 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
                   <div
                     key={entry.id}
                     aria-label={entry.name}
-                    draggable={!regionalOnly}
-                    onDragStart={regionalOnly ? undefined : e => handleDragStart(e, entry.id, 'unplaced')}
+                    draggable={!readOnly}
+                    onDragStart={readOnly ? undefined : e => handleDragStart(e, entry.id, 'unplaced')}
                     onClick={() => openPanel(entry, 'unplaced')}
                     onMouseEnter={() => setHoveredId(entry.id)}
                     onMouseLeave={() => setHoveredId(null)}
@@ -1156,7 +1155,7 @@ export function ConcentricCircles({ nucleusId, compact }: ConcentricCirclesProps
         </div>
 
         {/* Save button */}
-        {!regionalOnly && (
+        {!readOnly && (
           <div className="flex justify-center">
             <button
               onClick={handleSave}

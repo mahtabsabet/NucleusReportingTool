@@ -91,6 +91,41 @@ async function getCreateUserRoleOptions(page: Page): Promise<string[]> {
   return labels.filter(t => t && !/^select a role/i.test(t.trim()));
 }
 
+// ── Seed bootstrap ───────────────────────────────────────────────────────────
+//
+// scripts/seed.ts auto-creates the main E2E test user on a fresh database
+// (matching the existing pattern for the perm-* users). This block exercises
+// the resulting user via the default storageState ("e2e/.auth/user.json")
+// to confirm the bootstrap produced a working, admin-with-cluster-coordinator
+// account — i.e. the seed didn't silently leave the user un-permissioned
+// after creating it.
+
+test.describe('main E2E user (seed-bootstrapped)', () => {
+  // Default storageState (set in playwright.config.ts) — the auth.setup
+  // fixture signs in as E2E_TEST_EMAIL / E2E_TEST_PASSWORD. Successful sign-in
+  // already implies the auth.users row exists, but we additionally assert the
+  // role grants below so a regression in the grant section of the seed is
+  // caught here too.
+
+  test('signs in successfully and lands on the app shell', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    // Login form should not render — we're already authenticated.
+    await expect(page.locator('#email')).not.toBeVisible();
+  });
+
+  test('has admin grant — Create User button is visible on /users', async ({ page }) => {
+    await page.goto('/users');
+    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('button', { name: /create user/i })).toBeVisible();
+  });
+
+  test('has cluster_coordinator grant for Test Cluster — sees New Nucleus on its map', async ({ page }) => {
+    await selectTestCluster(page);
+    await expect(page.getByRole('button', { name: /new nucleus/i })).toBeVisible({ timeout: 10000 });
+  });
+});
+
 // ── Admin ─────────────────────────────────────────────────────────────────────
 
 test.describe('admin', () => {
@@ -581,6 +616,47 @@ test.describe('regional (view-only)', () => {
     // Panel header section
     await expect(page.getByRole('heading', { name: /primary contact/i })).toBeVisible();
     // No <select> in the primary-contact block.
+    const panel = page.locator('div').filter({ hasText: /primary contact/i }).last();
+    await expect(panel.locator('select')).toHaveCount(0);
+  });
+});
+
+// ── Activity Lead: read-only nucleus-level affordances ─────────────────────
+//
+// Activity Leads can edit their own activity's roster, but they cannot
+// create new activities, edit engagement levels, or change someone's
+// primary contact. The corresponding controls must not render — otherwise
+// the UI hints at edits that won't take effect.
+
+test.describe('activity lead — nucleus-level read-only UI', () => {
+  test.use({ storageState: 'e2e/.auth/perm-lead.json' });
+
+  test('Activities tab hides the "Add New Activity" button', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    await page.getByText(/core and other activities/i).first().click();
+    await expect(page.getByRole('heading', { name: /core and other activities/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /add new activity/i })).not.toBeVisible();
+  });
+
+  test('Concentric circles hide the "Save Engagement Levels" button', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    await page.getByText(/overall participation/i).first().click();
+    await expect(page.getByRole('heading', { name: /overall participation/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /save engagement levels/i })).not.toBeVisible();
+    await expect(page.getByText(/drag to reassign/i)).not.toBeVisible();
+  });
+
+  test('Profile panel in concentric circles shows primary contact as static text (no dropdown)', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
+    await page.getByText(/overall participation/i).first().click();
+    await expect(page.getByRole('heading', { name: /overall participation/i })).toBeVisible();
+    const firstAvatar = page.locator('[data-node="true"]').first();
+    await expect(firstAvatar).toBeVisible({ timeout: 15000 });
+    await firstAvatar.click();
+    await expect(page.getByRole('heading', { name: /primary contact/i })).toBeVisible();
     const panel = page.locator('div').filter({ hasText: /primary contact/i }).last();
     await expect(panel.locator('select')).toHaveCount(0);
   });

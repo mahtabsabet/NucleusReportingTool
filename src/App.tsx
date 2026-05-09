@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth';
 import { LoginPage } from './components/LoginPage';
 import { ClusterMapView } from './components/ClusterMapView';
@@ -22,6 +22,10 @@ import { useIsMobile } from './lib/useIsMobile';
 function AppRoutes() {
   const { user, loading } = useAuth();
   const isMobile = useIsMobile();
+  const location = useLocation();
+  // The nucleus dashboard renders its own AccountMenu inline in its compact
+  // header, so suppress the global floating chip there.
+  const nucleusDetailRoute = /^\/nucleus\/[^/]+$/.test(location.pathname);
 
   if (loading) {
     return (
@@ -38,7 +42,7 @@ function AppRoutes() {
   // buttons (e.g. the "+ New Nucleus" button on the mobile map view).
   return (
     <>
-      {!isMobile && <AccountMenu />}
+      {!isMobile && !nucleusDetailRoute && <AccountMenu />}
       <Routes>
       <Route path="/" element={isMobile ? <MobileLanding /> : <ClusterMapView />} />
       <Route path="/map" element={<ClusterMapView />} />
