@@ -1,0 +1,214 @@
+{
+  "type": "FeatureCollection",
+  "name": "Local Spiritual Assemblies",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "St. Albert"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.6293587,
+          53.653938
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Airdrie"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -114.0134073,
+          51.2926993
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Beaumont"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.4154677,
+          53.3524621
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Calgary"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -114.0718831,
+          51.0447331
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Cochrane"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -114.4667171,
+          51.1917968
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Edmonton"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.4938229,
+          53.5461245
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Fairview No. 136"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -118.4968924,
+          56.0701152
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Fort Saskatchewan"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.2163763,
+          53.6963182
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Grande Prairie"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -118.7884464,
+          55.1707126
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Lethbridge"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -112.8451365,
+          49.6955856
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Okotoks"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.974928,
+          50.7254764
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Red Deer"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.8115599,
+          52.268975
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Rocky View County"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.8567226,
+          51.2220104
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Strathcona County"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.0740513,
+          53.5700847
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Wood Buffalo"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -111.6366059,
+          57.1859727
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Stoney Plain"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -113.999344,
+          53.5362054
+        ]
+      }
+    }
+  ]
+}
