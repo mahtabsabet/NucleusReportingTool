@@ -810,6 +810,9 @@ test.describe('manage-user safeguards', () => {
 async function selectTestCluster(page: Page): Promise<void> {
   await page.goto('/');
   await page.waitForLoadState('networkidle');
+  // The cluster list is collapsed into a dropdown by default; expand it first.
+  // The header button shows "All Clusters" before any selection is made.
+  await page.locator('button[aria-expanded]').filter({ hasText: 'All Clusters' }).first().click();
   // "Test Cluster" and "Test Cluster 2" both appear; negative-lookahead picks the right one.
   await page.locator('button').filter({ hasText: /Test Cluster(?! 2)/ }).first().click();
   await page.waitForLoadState('networkidle');
