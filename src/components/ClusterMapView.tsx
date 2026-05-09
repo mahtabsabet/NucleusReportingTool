@@ -27,7 +27,8 @@ import {
   NetworkIcon,
   UserPlusIcon,
   ArrowLeftIcon,
-  LayersIcon } from
+  LayersIcon,
+  ChevronDownIcon } from
 'lucide-react';
 import { useIsMobile } from '../lib/useIsMobile';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
@@ -101,6 +102,8 @@ export function ClusterMapView() {
   const [canCreateAnyCluster, setCanCreateAnyCluster] = useState(false);
   const [canManageUsers, setCanManageUsers] = useState(false);
   const [showSelectClusterMessage, setShowSelectClusterMessage] = useState(false);
+  const [clustersListOpen, setClustersListOpen] = useState(false);
+  const [nucleiListOpen, setNucleiListOpen] = useState(false);
 
   useEffect(() => {
     const initialClusterId = searchParams.get('cluster');
@@ -147,6 +150,7 @@ export function ClusterMapView() {
     if (isPlacing) return;
     setSelectedCluster(clusterId);
     setSelectedNucleus(null);
+    setClustersListOpen(false);
     if (clusterId) {
       const cluster = clusters.find(c => c.id === clusterId);
       if (cluster) {
@@ -168,6 +172,7 @@ export function ClusterMapView() {
       setMapCenter([nucleus.location.lat, nucleus.location.lng]);
       setMapZoom(13);
       setSelectedNucleus(nucleusId);
+      setNucleiListOpen(false);
     }
   };
   const handleStartPlacing = () => {
@@ -339,52 +344,82 @@ export function ClusterMapView() {
 
           {/* Clusters Section */}
           <div className="p-6 border-b border-gray-100">
-            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">
+            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
               Clusters
             </h2>
-            <div className="space-y-1.5">
-              <button
-                onClick={() => handleClusterSelect(null)}
-                disabled={isPlacing}
-                className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left ${selectedCluster === null ? 'bg-gray-900 text-white shadow-sm' : 'hover:bg-gray-100 text-gray-700'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                
-                <div className="flex items-center gap-3">
-                  <GlobeIcon
-                    className={`w-5 h-5 ${selectedCluster === null ? 'text-gray-300' : 'text-gray-400'}`} />
-                  
-                  <span className="font-semibold">All Clusters</span>
-                </div>
-                <span
-                  className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === null ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
+            <button
+              onClick={() => setClustersListOpen((v) => !v)}
+              disabled={isPlacing}
+              aria-expanded={clustersListOpen}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left border ${selectedCluster === null ? 'bg-gray-900 text-white border-gray-900 shadow-sm' : 'bg-blue-50 text-blue-900 border-blue-100 shadow-sm'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>
 
-                  {nuclei.length}
+              <div className="flex items-center gap-3 min-w-0">
+                {selectedCluster === null ? (
+                  <GlobeIcon className="w-5 h-5 text-gray-300 flex-shrink-0" />
+                ) : (
+                  <MapIcon className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                )}
+                <span className="font-semibold truncate">
+                  {currentClusterName ?? 'All Clusters'}
                 </span>
-              </button>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span
+                  className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === null ? 'bg-gray-800 text-gray-300' : 'bg-blue-100 text-blue-700'}`}>
+                  {selectedCluster === null
+                    ? nuclei.length
+                    : nuclei.filter(n => n.clusterId === selectedCluster).length}
+                </span>
+                <ChevronDownIcon
+                  className={`w-4 h-4 transition-transform ${clustersListOpen ? 'rotate-180' : ''} ${selectedCluster === null ? 'text-gray-300' : 'text-blue-700'}`} />
+              </div>
+            </button>
 
-              {clusters.map((cluster) => {
-                const count = nuclei.filter(n => n.clusterId === cluster.id).length;
-                return (
-                  <button
-                    key={cluster.id}
-                    onClick={() => handleClusterSelect(cluster.id)}
-                    disabled={isPlacing}
-                    className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left ${selectedCluster === cluster.id ? 'bg-blue-50 text-blue-900 shadow-sm' : 'hover:bg-gray-50 text-gray-700'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                    
-                    <div className="flex items-center gap-3">
-                      <MapIcon
-                        className={`w-5 h-5 ${selectedCluster === cluster.id ? 'text-blue-500' : 'text-gray-400'}`} />
-                      
-                      <span className="font-semibold">{cluster.name}</span>
-                    </div>
-                    <span
-                      className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === cluster.id ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
-                      
-                      {count}
-                    </span>
-                  </button>);
+            {clustersListOpen && (
+              <div className="space-y-1.5 mt-2 max-h-72 overflow-y-auto pr-1">
+                <button
+                  onClick={() => handleClusterSelect(null)}
+                  disabled={isPlacing}
+                  className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left ${selectedCluster === null ? 'bg-gray-900 text-white shadow-sm' : 'hover:bg-gray-100 text-gray-700'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
 
-              })}
-            </div>
+                  <div className="flex items-center gap-3">
+                    <GlobeIcon
+                      className={`w-5 h-5 ${selectedCluster === null ? 'text-gray-300' : 'text-gray-400'}`} />
+
+                    <span className="font-semibold">All Clusters</span>
+                  </div>
+                  <span
+                    className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === null ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
+
+                    {nuclei.length}
+                  </span>
+                </button>
+
+                {clusters.map((cluster) => {
+                  const count = nuclei.filter(n => n.clusterId === cluster.id).length;
+                  return (
+                    <button
+                      key={cluster.id}
+                      onClick={() => handleClusterSelect(cluster.id)}
+                      disabled={isPlacing}
+                      className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left ${selectedCluster === cluster.id ? 'bg-blue-50 text-blue-900 shadow-sm' : 'hover:bg-gray-50 text-gray-700'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
+
+                      <div className="flex items-center gap-3">
+                        <MapIcon
+                          className={`w-5 h-5 ${selectedCluster === cluster.id ? 'text-blue-500' : 'text-gray-400'}`} />
+
+                        <span className="font-semibold">{cluster.name}</span>
+                      </div>
+                      <span
+                        className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === cluster.id ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+
+                        {count}
+                      </span>
+                    </button>);
+
+                })}
+              </div>
+            )}
           </div>
 
           {/* Reports Section */}
@@ -507,32 +542,64 @@ export function ClusterMapView() {
           )}
 
           <div className="p-6">
-            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-1.5">
-              Nuclei ({filteredNuclei.length})
+            <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
+              Nuclei
             </h2>
-            <p className="text-sm text-gray-400 mb-5">Select to view details</p>
-            <div className="space-y-1.5">
-              {filteredNuclei.map((nucleus) =>
-              <button
-                key={nucleus.id}
-                onClick={() => handleNucleusClick(nucleus.id)}
-                disabled={isPlacing}
-                className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 text-left relative overflow-hidden ${selectedNucleus === nucleus.id ? 'bg-blue-50/80 text-blue-900 shadow-sm' : 'hover:bg-gray-50 text-gray-700'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                
-                  {selectedNucleus === nucleus.id &&
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-600 rounded-r-full" />
-                }
-                  <MapPinIcon
-                  className={`w-5 h-5 flex-shrink-0 transition-colors ${selectedNucleus === nucleus.id ? 'text-blue-600' : 'text-gray-400'}`} />
-                
-                  <span
-                  className={`font-semibold ${selectedNucleus === nucleus.id ? 'text-blue-900' : 'text-gray-700'}`}>
-                  
-                    {nucleus.name}
-                  </span>
-                </button>
-              )}
-            </div>
+            <button
+              onClick={() => setNucleiListOpen((v) => !v)}
+              disabled={isPlacing || filteredNuclei.length === 0}
+              aria-expanded={nucleiListOpen}
+              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left border ${selectedNucleus ? 'bg-blue-50 text-blue-900 border-blue-100 shadow-sm' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'} ${isPlacing || filteredNuclei.length === 0 ? 'opacity-50 cursor-not-allowed' : ''}`}>
+
+              <div className="flex items-center gap-3 min-w-0">
+                <MapPinIcon
+                  className={`w-5 h-5 flex-shrink-0 ${selectedNucleus ? 'text-blue-600' : 'text-gray-400'}`} />
+                <span className="font-semibold truncate">
+                  {selectedNucleus
+                    ? filteredNuclei.find(n => n.id === selectedNucleus)?.name ?? 'Select a nucleus'
+                    : 'Select a nucleus'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span
+                  className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedNucleus ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>
+                  {filteredNuclei.length}
+                </span>
+                <ChevronDownIcon
+                  className={`w-4 h-4 transition-transform ${nucleiListOpen ? 'rotate-180' : ''} ${selectedNucleus ? 'text-blue-700' : 'text-gray-400'}`} />
+              </div>
+            </button>
+
+            {nucleiListOpen && filteredNuclei.length > 0 && (
+              <div className="space-y-1.5 mt-2 max-h-96 overflow-y-auto pr-1">
+                {filteredNuclei.map((nucleus) =>
+                <button
+                  key={nucleus.id}
+                  onClick={() => handleNucleusClick(nucleus.id)}
+                  disabled={isPlacing}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 text-left relative overflow-hidden ${selectedNucleus === nucleus.id ? 'bg-blue-50/80 text-blue-900 shadow-sm' : 'hover:bg-gray-50 text-gray-700'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
+
+                    {selectedNucleus === nucleus.id &&
+                  <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-600 rounded-r-full" />
+                  }
+                    <MapPinIcon
+                    className={`w-5 h-5 flex-shrink-0 transition-colors ${selectedNucleus === nucleus.id ? 'text-blue-600' : 'text-gray-400'}`} />
+
+                    <span
+                    className={`font-semibold ${selectedNucleus === nucleus.id ? 'text-blue-900' : 'text-gray-700'}`}>
+
+                      {nucleus.name}
+                    </span>
+                  </button>
+                )}
+              </div>
+            )}
+
+            {filteredNuclei.length === 0 && (
+              <p className="text-sm text-gray-400 mt-3">
+                {selectedCluster ? 'No nuclei in this cluster yet.' : 'No nuclei to display.'}
+              </p>
+            )}
           </div>
         </aside>}
 
