@@ -140,6 +140,9 @@ export function ClusterMapView() {
   const filteredNuclei = selectedCluster
     ? nuclei.filter(n => n.clusterId === selectedCluster)
     : nuclei;
+  const selectedClusterName = selectedCluster
+    ? clusters.find((c) => c.id === selectedCluster)?.name ?? null
+    : null;
   const handleClusterSelect = (clusterId: string | null) => {
     if (isPlacing) return;
     setSelectedCluster(clusterId);
@@ -651,14 +654,16 @@ export function ClusterMapView() {
 
                 {showBoundaries && boundariesData &&
               <GeoJSONLayer
-                key="cluster-boundaries"
+                key={`cluster-boundaries-${selectedClusterName ?? 'none'}`}
                 data={boundariesData}
-                style={() => ({
-                  color: '#4f46e5',
-                  weight: 2,
-                  fillColor: '#6366f1',
-                  fillOpacity: 0.08
-                })}
+                style={(feature: any) => {
+                  const isSelected =
+                    selectedClusterName != null &&
+                    feature?.properties?.name === selectedClusterName;
+                  return isSelected ?
+                    { color: '#4338ca', weight: 4, fillColor: '#6366f1', fillOpacity: 0.25 } :
+                    { color: '#4f46e5', weight: 2, fillColor: '#6366f1', fillOpacity: 0.08 };
+                }}
                 onEachFeature={(feature: any, layer: any) => {
                   const name = feature?.properties?.name;
                   if (name) layer.bindTooltip(name, { sticky: true });
