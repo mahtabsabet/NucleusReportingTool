@@ -304,7 +304,7 @@ export function NucleusDashboard() {
     <div className="min-h-screen bg-nucleus-pattern font-sans">
       {/* Compact header — single row: back link · nucleus name + menu · search · account */}
       <header
-        className="relative bg-white/90 backdrop-blur-md border-b border-gray-200/80 px-4 sm:px-6 py-2.5 shadow-sm overflow-hidden"
+        className="relative z-40 bg-white/90 backdrop-blur-md border-b border-gray-200/80 px-4 sm:px-6 py-2.5 shadow-sm"
         style={
           bannerImage
             ? {
