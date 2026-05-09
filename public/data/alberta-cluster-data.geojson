@@ -1,0 +1,364 @@
+{
+  "type": "FeatureCollection",
+  "name": "Cluster Data",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Wood Buffalo",
+        "description": "Cluster ID: AB01 <br>Map Location: Fort McMurray, AB<br>Milestone: IPG<br>Geographic Size km: 108444<br>General Population: 73160<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 1<br>Adult Men 21 up: 10<br>Adult Women 21 up: 9<br>Total  Believers: 20",
+        "Cluster ID": "AB01 ",
+        "Map Location": "Fort McMurray, AB",
+        "Milestone": "IPG",
+        "Geographic Size km": "108444.0",
+        "General Population": "73160.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "1.0",
+        "Adult Men 21 up": "10.0",
+        "Adult Women 21 up": "9.0",
+        "Total  Believers": "20.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Mackenzie",
+        "description": "Cluster ID: AB02 <br>Map Location: High Level, AB<br>Milestone: <br>Geographic Size km: 102109<br>General Population: 28500<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 0<br>Adult Men 21 up: 0<br>Adult Women 21 up: 0<br>Total  Believers: 0",
+        "Cluster ID": "AB02 ",
+        "Map Location": "High Level, AB",
+        "Geographic Size km": "102109.0",
+        "General Population": "28500.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "0.0",
+        "Adult Men 21 up": "0.0",
+        "Adult Women 21 up": "0.0",
+        "Total  Believers": "0.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Peace",
+        "description": "Cluster ID: AB03 <br>Map Location: Grand Praire, AB<br>Milestone: IPG<br>Geographic Size km: 273444<br>General Population: 196241<br>Children 0 to 11: 4<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 1<br>Adult Men 21 up: 26<br>Adult Women 21 up: 29<br>Total  Believers: 60",
+        "Cluster ID": "AB03 ",
+        "Map Location": "Grand Praire, AB",
+        "Milestone": "IPG",
+        "Geographic Size km": "273444.0",
+        "General Population": "196241.0",
+        "Children 0 to 11": "4.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "1.0",
+        "Adult Men 21 up": "26.0",
+        "Adult Women 21 up": "29.0",
+        "Total  Believers": "60.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Lesser Slave Lake",
+        "description": "Cluster ID: AB04 <br>Map Location: High Praire, AB<br>Milestone: <br>Geographic Size km: 64975<br>General Population: 29911<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 0<br>Adult Men 21 up: 6<br>Adult Women 21 up: 4<br>Total  Believers: 10",
+        "Cluster ID": "AB04 ",
+        "Map Location": "High Praire, AB",
+        "Geographic Size km": "64975.0",
+        "General Population": "29911.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "0.0",
+        "Adult Men 21 up": "6.0",
+        "Adult Women 21 up": "4.0",
+        "Total  Believers": "10.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Lakeland",
+        "description": "Cluster ID: AB05 <br>Map Location: Lac la Biche, AB<br>Milestone: PG<br>Geographic Size km: 38332<br>General Population: 77834<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 0<br>Adult Men 21 up: 10<br>Adult Women 21 up: 11<br>Total  Believers: 21",
+        "Cluster ID": "AB05 ",
+        "Map Location": "Lac la Biche, AB",
+        "Milestone": "PG",
+        "Geographic Size km": "38332.0",
+        "General Population": "77834.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "0.0",
+        "Adult Men 21 up": "10.0",
+        "Adult Women 21 up": "11.0",
+        "Total  Believers": "21.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Northern Gates",
+        "description": "Cluster ID: AB06 <br>Map Location: St. Albert, AB<br>Milestone: IPG Embracing Large Numbers<br>Geographic Size km: 26600<br>General Population: 160084<br>Children 0 to 11: 6<br>Junior Youth 12 to 14: 4<br>Youth 15 to 20: 2<br>Adult Men 21 up: 42<br>Adult Women 21 up: 67<br>Total  Believers: 121",
+        "Cluster ID": "AB06 ",
+        "Map Location": "St. Albert, AB",
+        "Milestone": "IPG Embracing Large Numbers",
+        "Geographic Size km": "26600.0",
+        "General Population": "160084.0",
+        "Children 0 to 11": "6.0",
+        "Junior Youth 12 to 14": "4.0",
+        "Youth 15 to 20": "2.0",
+        "Adult Men 21 up": "42.0",
+        "Adult Women 21 up": "67.0",
+        "Total  Believers": "121.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Yellowhead",
+        "description": "Cluster ID: AB07 <br>Map Location: Spruce Grove, AB<br>Milestone: PG<br>Geographic Size km: 38818<br>General Population: 138724<br>Children 0 to 11: 1<br>Junior Youth 12 to 14: 1<br>Youth 15 to 20: 3<br>Adult Men 21 up: 30<br>Adult Women 21 up: 52<br>Total  Believers: 87",
+        "Cluster ID": "AB07 ",
+        "Map Location": "Spruce Grove, AB",
+        "Milestone": "PG",
+        "Geographic Size km": "38818.0",
+        "General Population": "138724.0",
+        "Children 0 to 11": "1.0",
+        "Junior Youth 12 to 14": "1.0",
+        "Youth 15 to 20": "3.0",
+        "Adult Men 21 up": "30.0",
+        "Adult Women 21 up": "52.0",
+        "Total  Believers": "87.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Maskawacis",
+        "description": "Cluster ID: AB08 <br>Map Location:  Maskawacis, AB<br>Milestone: <br>Geographic Size km: 321<br>General Population: 8105<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 0<br>Adult Men 21 up: 0<br>Adult Women 21 up: 7<br>Total  Believers: 7",
+        "Cluster ID": "AB08 ",
+        "Map Location": " Maskawacis, AB",
+        "Geographic Size km": "321.0",
+        "General Population": "8105.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "0.0",
+        "Adult Men 21 up": "0.0",
+        "Adult Women 21 up": "7.0",
+        "Total  Believers": "7.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Stoney Nakoda",
+        "description": "Cluster ID: AB09 <br>Map Location: Morley, AB<br>Milestone: PG<br>Geographic Size km: 487<br>General Population: 4215<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 0<br>Adult Men 21 up: 6<br>Adult Women 21 up: 12<br>Total  Believers: 18",
+        "Cluster ID": "AB09 ",
+        "Map Location": "Morley, AB",
+        "Milestone": "PG",
+        "Geographic Size km": "487.0",
+        "General Population": "4215.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "0.0",
+        "Adult Men 21 up": "6.0",
+        "Adult Women 21 up": "12.0",
+        "Total  Believers": "18.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Blackgold Elk Island",
+        "description": "Cluster ID: AB10 <br>Map Location: Leduc, AB<br>Milestone: IPG<br>Geographic Size km: 7500<br>General Population: 140000<br>Children 0 to 11: 5<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 5<br>Adult Men 21 up: 33<br>Adult Women 21 up: 40<br>Total  Believers: 83",
+        "Cluster ID": "AB10 ",
+        "Map Location": "Leduc, AB",
+        "Milestone": "IPG",
+        "Geographic Size km": "7500.0",
+        "General Population": "140000.0",
+        "Children 0 to 11": "5.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "5.0",
+        "Adult Men 21 up": "33.0",
+        "Adult Women 21 up": "40.0",
+        "Total  Believers": "83.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Camrose Lloyd",
+        "description": "Cluster ID: AB11 <br>Map Location: Camrose, AB<br>Milestone: PG<br>Geographic Size km: 34867<br>General Population: 121828<br>Children 0 to 11: 1<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 0<br>Adult Men 21 up: 8<br>Adult Women 21 up: 12<br>Total  Believers: 21",
+        "Cluster ID": "AB11 ",
+        "Map Location": "Camrose, AB",
+        "Milestone": "PG",
+        "Geographic Size km": "34867.0",
+        "General Population": "121828.0",
+        "Children 0 to 11": "1.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "0.0",
+        "Adult Men 21 up": "8.0",
+        "Adult Women 21 up": "12.0",
+        "Total  Believers": "21.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Wheatland",
+        "description": "Cluster ID: AB12 <br>Map Location: Strathmore, AB<br>Milestone: PG<br>Geographic Size km: 26130<br>General Population: 55872<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 0<br>Adult Men 21 up: 12<br>Adult Women 21 up: 13<br>Total  Believers: 25",
+        "Cluster ID": "AB12 ",
+        "Map Location": "Strathmore, AB",
+        "Milestone": "PG",
+        "Geographic Size km": "26130.0",
+        "General Population": "55872.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "0.0",
+        "Adult Men 21 up": "12.0",
+        "Adult Women 21 up": "13.0",
+        "Total  Believers": "25.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Central Alberta",
+        "description": "Cluster ID: AB13 <br>Map Location: Red Deer, AB<br>Milestone: IPG<br>Geographic Size km: 35358<br>General Population: 264260<br>Children 0 to 11: 1<br>Junior Youth 12 to 14: 2<br>Youth 15 to 20: 3<br>Adult Men 21 up: 24<br>Adult Women 21 up: 33<br>Total  Believers: 63",
+        "Cluster ID": "AB13 ",
+        "Map Location": "Red Deer, AB",
+        "Milestone": "IPG",
+        "Geographic Size km": "35358.0",
+        "General Population": "264260.0",
+        "Children 0 to 11": "1.0",
+        "Junior Youth 12 to 14": "2.0",
+        "Youth 15 to 20": "3.0",
+        "Adult Men 21 up": "24.0",
+        "Adult Women 21 up": "33.0",
+        "Total  Believers": "63.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Rocky View Bighorn",
+        "description": "Cluster ID: AB15 <br>Map Location: Airdrie, AB<br>Milestone: IPG<br>Geographic Size km: 3836<br>General Population: 195000<br>Children 0 to 11: 2<br>Junior Youth 12 to 14: 6<br>Youth 15 to 20: 6<br>Adult Men 21 up: 17<br>Adult Women 21 up: 30<br>Total  Believers: 61",
+        "Cluster ID": "AB15 ",
+        "Map Location": "Airdrie, AB",
+        "Milestone": "IPG",
+        "Geographic Size km": "3836.0",
+        "General Population": "195000.0",
+        "Children 0 to 11": "2.0",
+        "Junior Youth 12 to 14": "6.0",
+        "Youth 15 to 20": "6.0",
+        "Adult Men 21 up": "17.0",
+        "Adult Women 21 up": "30.0",
+        "Total  Believers": "61.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Foothills",
+        "description": "Cluster ID: AB16 <br>Map Location: High River, AB<br>Milestone: IPG<br>Geographic Size km: 3643<br>General Population: 70797<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 4<br>Youth 15 to 20: 3<br>Adult Men 21 up: 14<br>Adult Women 21 up: 11<br>Total  Believers: 32",
+        "Cluster ID": "AB16 ",
+        "Map Location": "High River, AB",
+        "Milestone": "IPG",
+        "Geographic Size km": "3643.0",
+        "General Population": "70797.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "4.0",
+        "Youth 15 to 20": "3.0",
+        "Adult Men 21 up": "14.0",
+        "Adult Women 21 up": "11.0",
+        "Total  Believers": "32.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Crowsnest",
+        "description": "Cluster ID: AB17 <br>Map Location: Lethbridge, AB<br>Milestone: IPG<br>Geographic Size km: 24275<br>General Population: 160728<br>Children 0 to 11: 2<br>Junior Youth 12 to 14: 2<br>Youth 15 to 20: 1<br>Adult Men 21 up: 39<br>Adult Women 21 up: 56<br>Total  Believers: 100",
+        "Cluster ID": "AB17 ",
+        "Map Location": "Lethbridge, AB",
+        "Milestone": "IPG",
+        "Geographic Size km": "24275.0",
+        "General Population": "160728.0",
+        "Children 0 to 11": "2.0",
+        "Junior Youth 12 to 14": "2.0",
+        "Youth 15 to 20": "1.0",
+        "Adult Men 21 up": "39.0",
+        "Adult Women 21 up": "56.0",
+        "Total  Believers": "100.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Cypress Hills",
+        "description": "Cluster ID: AB18 <br>Map Location: Medicine Hat, AB<br>Milestone: PG<br>Geographic Size km: 35060<br>General Population: 134972<br>Children 0 to 11: 0<br>Junior Youth 12 to 14: 0<br>Youth 15 to 20: 0<br>Adult Men 21 up: 15<br>Adult Women 21 up: 11<br>Total  Believers: 26",
+        "Cluster ID": "AB18 ",
+        "Map Location": "Medicine Hat, AB",
+        "Milestone": "PG",
+        "Geographic Size km": "35060.0",
+        "General Population": "134972.0",
+        "Children 0 to 11": "0.0",
+        "Junior Youth 12 to 14": "0.0",
+        "Youth 15 to 20": "0.0",
+        "Adult Men 21 up": "15.0",
+        "Adult Women 21 up": "11.0",
+        "Total  Believers": "26.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Edmonton",
+        "description": "Cluster ID: AB19 <br>Map Location: Edmonton, AB<br>Milestone: IPG Embracing Large Numbers<br>Geographic Size km: 684<br>General Population: 1010899<br>Children 0 to 11: 33<br>Junior Youth 12 to 14: 22<br>Youth 15 to 20: 28<br>Adult Men 21 up: 215<br>Adult Women 21 up: 239<br>Total  Believers: 537",
+        "Cluster ID": "AB19 ",
+        "Map Location": "Edmonton, AB",
+        "Milestone": "IPG Embracing Large Numbers",
+        "Geographic Size km": "684.0",
+        "General Population": "1010899.0",
+        "Children 0 to 11": "33.0",
+        "Junior Youth 12 to 14": "22.0",
+        "Youth 15 to 20": "28.0",
+        "Adult Men 21 up": "215.0",
+        "Adult Women 21 up": "239.0",
+        "Total  Believers": "537.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Calgary",
+        "description": "Cluster ID: AB20 <br>Map Location: Calgary, AB<br>Milestone: IPG Embracing Large Numbers<br>Geographic Size km: 825<br>General Population: 1306784<br>Children 0 to 11: 60<br>Junior Youth 12 to 14: 18<br>Youth 15 to 20: 57<br>Adult Men 21 up: 338<br>Adult Women 21 up: 353<br>Total  Believers: 826",
+        "Cluster ID": "AB20 ",
+        "Map Location": "Calgary, AB",
+        "Milestone": "IPG Embracing Large Numbers",
+        "Geographic Size km": "825.0",
+        "General Population": "1306784.0",
+        "Children 0 to 11": "60.0",
+        "Junior Youth 12 to 14": "18.0",
+        "Youth 15 to 20": "57.0",
+        "Adult Men 21 up": "338.0",
+        "Adult Women 21 up": "353.0",
+        "Total  Believers": "826.0"
+      },
+      "geometry": null
+    }
+  ]
+}

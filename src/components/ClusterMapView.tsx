@@ -4,6 +4,7 @@ import {
   TileLayer,
   Marker,
   Popup,
+  GeoJSON as GeoJSONLayer,
   useMap,
   useMapEvents } from
 'react-leaflet';
@@ -25,7 +26,8 @@ import {
   HelpCircleIcon,
   NetworkIcon,
   UserPlusIcon,
-  ArrowLeftIcon } from
+  ArrowLeftIcon,
+  LayersIcon } from
 'lucide-react';
 import { useIsMobile } from '../lib/useIsMobile';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
@@ -93,6 +95,8 @@ export function ClusterMapView() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [showNetwork, setShowNetwork] = useState(false);
+  const [showBoundaries, setShowBoundaries] = useState(false);
+  const [boundariesData, setBoundariesData] = useState<any | null>(null);
   const [canCreate, setCanCreate] = useState(false);
   const [canCreateAnyCluster, setCanCreateAnyCluster] = useState(false);
   const [canManageUsers, setCanManageUsers] = useState(false);
@@ -125,9 +129,20 @@ export function ClusterMapView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!showBoundaries || boundariesData) return;
+    fetch('/data/alberta-clusters.geojson')
+      .then((r) => r.json())
+      .then(setBoundariesData)
+      .catch((err) => console.error('Failed to load cluster boundaries', err));
+  }, [showBoundaries, boundariesData]);
+
   const filteredNuclei = selectedCluster
     ? nuclei.filter(n => n.clusterId === selectedCluster)
     : nuclei;
+  const selectedClusterName = selectedCluster
+    ? clusters.find((c) => c.id === selectedCluster)?.name ?? null
+    : null;
   const handleClusterSelect = (clusterId: string | null) => {
     if (isPlacing) return;
     setSelectedCluster(clusterId);
@@ -259,6 +274,15 @@ export function ClusterMapView() {
                 <CalendarIcon
                   className={`w-4 h-4 sm:w-5 sm:h-5 ${timelineOpen ? 'text-indigo-600' : 'text-gray-500'}`} />
                 <span className="hidden sm:inline">Timeline</span>
+              </button>
+
+              <button
+                onClick={() => setShowBoundaries(!showBoundaries)}
+                title="Toggle cluster boundaries"
+                className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${showBoundaries ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
+                <LayersIcon
+                  className={`w-4 h-4 sm:w-5 sm:h-5 ${showBoundaries ? 'text-indigo-600' : 'text-gray-500'}`} />
+                <span className="hidden sm:inline">Boundaries</span>
               </button>
 
               <button
@@ -626,7 +650,25 @@ export function ClusterMapView() {
                 <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-              
+
+
+                {showBoundaries && boundariesData &&
+              <GeoJSONLayer
+                key={`cluster-boundaries-${selectedClusterName ?? 'none'}`}
+                data={boundariesData}
+                style={(feature: any) => {
+                  const isSelected =
+                    selectedClusterName != null &&
+                    feature?.properties?.name === selectedClusterName;
+                  return isSelected ?
+                    { color: '#4338ca', weight: 4, fillColor: '#6366f1', fillOpacity: 0.25 } :
+                    { color: '#4f46e5', weight: 2, fillColor: '#6366f1', fillOpacity: 0.08 };
+                }}
+                onEachFeature={(feature: any, layer: any) => {
+                  const name = feature?.properties?.name;
+                  if (name) layer.bindTooltip(name, { sticky: true });
+                }} />
+              }
 
                 {/* Existing Nuclei Markers */}
                 {filteredNuclei.map((nucleus) =>

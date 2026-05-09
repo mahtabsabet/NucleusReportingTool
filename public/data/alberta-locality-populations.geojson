@@ -1,0 +1,270 @@
+{
+  "type": "FeatureCollection",
+  "name": "Locality Populations.xlsx",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Airdrie",
+        "description": "Cluster: Rocky View<br>Population: 74100<br>Area:  33.8 km² <br>people/km²: 2192",
+        "Cluster": "Rocky View",
+        "Population": "74100.0",
+        "Area": " 33.8 km² ",
+        "people/km²": "2192.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Spruce Grove",
+        "description": "Cluster: Blackgold<br>Population: 37645<br>Area:  22.2 km² <br>people/km²: 1695",
+        "Cluster": "Blackgold",
+        "Population": "37645.0",
+        "Area": " 22.2 km² ",
+        "people/km²": "1695.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Calgary",
+        "description": "Cluster: Calgary<br>Population: 1306784<br>Area:  825.3 km² <br>people/km²: 1583",
+        "Cluster": "Calgary",
+        "Population": "1306784.0",
+        "Area": " 825.3 km² ",
+        "people/km²": "1583.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Beaumont Alberta",
+        "description": "Cluster: Blackgold<br>Population: 20888<br>Area:  13.4 km² <br>people/km²: 1558",
+        "Cluster": "Blackgold",
+        "Population": "20888.0",
+        "Area": " 13.4 km² ",
+        "people/km²": "1558.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Cochrane Alberta",
+        "description": "Cluster: Rocky View<br>Population: 32199<br>Area:  21.3 km² <br>people/km²: 1511",
+        "Cluster": "Rocky View",
+        "Population": "32199.0",
+        "Area": " 21.3 km² ",
+        "people/km²": "1511.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "St. Albert",
+        "description": "Cluster: Northern Gates<br>Population: 68232<br>Area:  48.5 km² <br>people/km²: 1406",
+        "Cluster": "Northern Gates",
+        "Population": "68232.0",
+        "Area": " 48.5 km² ",
+        "people/km²": "1406.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Sylvan Lake",
+        "description": "Cluster: Central Alberta<br>Population: 15995<br>Area:  11.4 km² <br>people/km²: 1403",
+        "Cluster": "Central Alberta",
+        "Population": "15995.0",
+        "Area": " 11.4 km² ",
+        "people/km²": "1403.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Leduc",
+        "description": "Cluster: Blackgold<br>Population: 34094<br>Area:  30.0 km² <br>people/km²: 1136",
+        "Cluster": "Blackgold",
+        "Population": "34094.0",
+        "Area": " 30.0 km² ",
+        "people/km²": "1136.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Edmonton",
+        "description": "Cluster: Edmonton<br>Population: 1010899<br>Area:  909.9 km² <br>people/km²: 1111",
+        "Cluster": "Edmonton",
+        "Population": "1010899.0",
+        "Area": " 909.9 km² ",
+        "people/km²": "1111.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "High River",
+        "description": "Cluster: Foothills<br>Population: 14324<br>Area:  13.5 km² <br>people/km²: 1061",
+        "Cluster": "Foothills",
+        "Population": "14324.0",
+        "Area": " 13.5 km² ",
+        "people/km²": "1061.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Blackfalds",
+        "description": "Cluster: Central Alberta<br>Population: 10470<br>Area:  10.0 km² <br>people/km²: 1047",
+        "Cluster": "Central Alberta",
+        "Population": "10470.0",
+        "Area": " 10.0 km² ",
+        "people/km²": "1047.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Red Deer",
+        "description": "Cluster: Central Alberta<br>Population: 100844<br>Area:  104.2 km² <br>people/km²: 968",
+        "Cluster": "Central Alberta",
+        "Population": "100844.0",
+        "Area": " 104.2 km² ",
+        "people/km²": "968.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Okotoks",
+        "description": "Cluster: Foothills<br>Population: 30405<br>Area:  31.4 km² <br>people/km²: 968",
+        "Cluster": "Foothills",
+        "Population": "30405.0",
+        "Area": " 31.4 km² ",
+        "people/km²": "968.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Wetaskiwin",
+        "description": "Cluster: Central Alberta<br>Population: 12594<br>Area:  14.3 km² <br>people/km²: 881",
+        "Cluster": "Central Alberta",
+        "Population": "12594.0",
+        "Area": " 14.3 km² ",
+        "people/km²": "881.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Morinville",
+        "description": "Cluster: Northern Gates<br>Population: 10385<br>Area:  13.4 km² <br>people/km²: 775",
+        "Cluster": "Northern Gates",
+        "Population": "10385.0",
+        "Area": " 13.4 km² ",
+        "people/km²": "775.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Cold Lake",
+        "description": "Cluster: Lakeland<br>Population: 15661<br>Area:  22.3 km² <br>people/km²: 702",
+        "Cluster": "Lakeland",
+        "Population": "15661.0",
+        "Area": " 22.3 km² ",
+        "people/km²": "702.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Camrose",
+        "description": "Cluster: Camrose Lloyd<br>Population: 18772<br>Area:  30.3 km² <br>people/km²: 619",
+        "Cluster": "Camrose Lloyd",
+        "Population": "18772.0",
+        "Area": " 30.3 km² ",
+        "people/km²": "619.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Grande Prairie",
+        "description": "Cluster: Peace<br>Population: 64141<br>Area:  104.2 km² <br>people/km²: 615",
+        "Cluster": "Peace",
+        "Population": "64141.0",
+        "Area": " 104.2 km² ",
+        "people/km²": "615.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Strathmore Alberta",
+        "description": "Cluster: Wheatland<br>Population: 14339<br>Area:  23.7 km² <br>people/km²: 605",
+        "Cluster": "Wheatland",
+        "Population": "14339.0",
+        "Area": " 23.7 km² ",
+        "people/km²": "605.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Medicine Hat",
+        "description": "Cluster: Cypress Hills<br>Population: 63271<br>Area:  121.2 km² <br>people/km²: 522",
+        "Cluster": "Cypress Hills",
+        "Population": "63271.0",
+        "Area": " 121.2 km² ",
+        "people/km²": "522.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Lloydminster (AB portion)",
+        "description": "Cluster: Camrose Lloyd<br>Population: 19739<br>Area:  41.0 km² <br>people/km²: 482",
+        "Cluster": "Camrose Lloyd",
+        "Population": "19739.0",
+        "Area": " 41.0 km² ",
+        "people/km²": "482.0"
+      },
+      "geometry": null
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Strathcona County",
+        "description": "Cluster: Blackgold<br>Population: 99225<br>Area:  3,963 km² <br>people/km²: 25",
+        "Cluster": "Blackgold",
+        "Population": "99225.0",
+        "Area": " 3,963 km² ",
+        "people/km²": "25.0"
+      },
+      "geometry": null
+    }
+  ]
+}
