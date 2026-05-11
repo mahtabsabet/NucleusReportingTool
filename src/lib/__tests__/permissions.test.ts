@@ -215,6 +215,20 @@ describe('actionPermission', () => {
     expect(actionPermission(AL, 'manage_timeline_events', { clusterId: 'C1' })).toBe('none');
     expect(actionPermission(REGIONAL, 'edit_timeline_cycles')).toBe('none');
   });
+
+  it('Timeline meetings and notes: same rule as events (CC and higher)', () => {
+    // Globally allowed
+    expect(actionPermission(SUPER, 'manage_timeline_meetings')).toBe('direct');
+    expect(actionPermission(ADMIN, 'manage_timeline_notes')).toBe('direct');
+    // CC only within own cluster
+    expect(actionPermission(CC, 'manage_timeline_meetings', { clusterId: 'C1' })).toBe('direct');
+    expect(actionPermission(CC, 'manage_timeline_meetings', { clusterId: 'OTHER' })).toBe('none');
+    expect(actionPermission(CC, 'manage_timeline_notes', { clusterId: 'C1' })).toBe('direct');
+    // NC, AL, Regional: never
+    expect(actionPermission(NC, 'manage_timeline_meetings', { clusterId: 'C1' })).toBe('none');
+    expect(actionPermission(AL, 'manage_timeline_notes', { clusterId: 'C1' })).toBe('none');
+    expect(actionPermission(REGIONAL, 'manage_timeline_meetings')).toBe('none');
+  });
 });
 
 // ---- User-management safeguards ---------------------------------------

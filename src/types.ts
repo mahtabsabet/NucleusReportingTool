@@ -71,12 +71,50 @@ export interface TimelineCycle {
   label: string;
 }
 
+// Timeline items come in two shapes: long-running events (e.g. an
+// expansion phase, intensive, campaign) and discrete meetings (e.g.
+// reflection meeting, cluster coordination meeting). The legacy
+// table name is `timeline_events`; we keep the React-side type name
+// `TimelineEvent` for the same reason — both stand for the
+// generalized "timeline item".
+export type TimelineItemType = 'event' | 'meeting';
+
 export interface TimelineEvent {
   id: string;
+  itemType: TimelineItemType;
   name: string;
   startDate: Date;
   endDate?: Date;
+  // Optional time-of-day for meetings; events typically span days
+  // and leave this null.
+  startTime?: string;
   clusterId?: string;
   nucleusId?: string;
   location?: string;
+  meetingType?: string;
+  attendees: string[];
+  createdBy?: string;
+  createdAt?: Date;
+}
+
+// One attachment on a timeline item. Kind discriminates the body
+// shape — text vs. uploaded document vs. external link — without
+// forcing each attachment into a single blob column.
+export type TimelineItemNoteKind = 'text' | 'document' | 'link';
+
+export interface TimelineItemNote {
+  id: string;
+  timelineItemId: string;
+  kind: TimelineItemNoteKind;
+  title?: string;
+  bodyText?: string;
+  filePath?: string;
+  fileName?: string;
+  fileMime?: string;
+  fileSizeBytes?: number;
+  linkUrl?: string;
+  linkLabel?: string;
+  createdBy?: string;
+  createdByName?: string;
+  createdAt: Date;
 }

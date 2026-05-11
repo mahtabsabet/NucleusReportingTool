@@ -35,7 +35,6 @@ import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } 
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
 import { canCreateAnyNucleus } from '../lib/permissions';
-import { Timeline } from './Timeline';
 import { NetworkView } from './NetworkView';
 import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
@@ -94,7 +93,6 @@ export function ClusterMapView() {
   const [newLocation, setNewLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [newName, setNewName] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [timelineOpen, setTimelineOpen] = useState(false);
   const [showNetwork, setShowNetwork] = useState(false);
   const [showBoundaries, setShowBoundaries] = useState(false);
   const [boundariesData, setBoundariesData] = useState<any | null>(null);
@@ -125,7 +123,15 @@ export function ClusterMapView() {
             canCreateNucleusInCluster(cluster.id).then(setCanCreate);
           }
         }
-        if (initialView === 'timeline') setTimelineOpen(true);
+        // Legacy deep-link `?view=timeline`: redirect into the new
+        // full-page Timeline workspace, preserving the cluster scope.
+        if (initialView === 'timeline') {
+          const target = initialClusterId
+            ? `/timeline?cluster=${initialClusterId}`
+            : '/timeline';
+          navigate(target, { replace: true });
+          return;
+        }
         if (initialView === 'network') setShowNetwork(true);
       })
       .finally(() => setLoading(false));
@@ -274,10 +280,14 @@ export function ClusterMapView() {
               </button>
 
               <button
-                onClick={() => setTimelineOpen(!timelineOpen)}
-                className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${timelineOpen ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
-                <CalendarIcon
-                  className={`w-4 h-4 sm:w-5 sm:h-5 ${timelineOpen ? 'text-indigo-600' : 'text-gray-500'}`} />
+                onClick={() => navigate(
+                  selectedCluster
+                    ? `/timeline?cluster=${selectedCluster}`
+                    : '/timeline'
+                )}
+                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
+                title="Open the full-page timeline workspace">
+                <CalendarIcon className="w-4 h-4 sm:w-5 sm:h-5 text-gray-500" />
                 <span className="hidden sm:inline">Timeline</span>
               </button>
 
@@ -812,8 +822,6 @@ export function ClusterMapView() {
             }
           </div>
 
-          {/* Timeline Panel */}
-          {timelineOpen && <Timeline clusterId={selectedCluster} />}
         </main>
       </div>
     </div>);

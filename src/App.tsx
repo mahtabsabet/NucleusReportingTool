@@ -17,6 +17,7 @@ import { MobileLanding } from './components/MobileLanding';
 import { MobileReports } from './components/MobileReports';
 import { MobileTimeline } from './components/MobileTimeline';
 import { MobileNetwork } from './components/MobileNetwork';
+import { TimelineWorkspace } from './components/TimelineWorkspace';
 import { useIsMobile } from './lib/useIsMobile';
 
 function AppRoutes() {
@@ -49,6 +50,7 @@ function AppRoutes() {
       <Route path="/m/reports" element={<MobileReports />} />
       <Route path="/m/timeline" element={<MobileTimeline />} />
       <Route path="/m/network" element={<MobileNetwork />} />
+      <Route path="/timeline" element={<TimelineWorkspace />} />
       <Route path="/guide" element={<UserGuide />} />
       <Route path="/nucleus/:id" element={<NucleusDashboard />} />
       <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
