@@ -90,15 +90,17 @@ export function MobileTimeline() {
           </p>
         </div>
       </header>
-      <div className="flex-1 min-h-0 relative">
-        <Timeline
-          key={`mt-${cluster ?? 'all'}-${reloadToken}`}
-          clusterId={cluster}
-          orientation="vertical"
-          onItemClick={onItemClick}
-          selectedItemId={selectedItemId}
-          openEditForItemId={editSignal}
-        />
+      <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 relative">
+          <Timeline
+            key={`mt-${cluster ?? 'all'}-${reloadToken}`}
+            clusterId={cluster}
+            orientation="vertical"
+            onItemClick={onItemClick}
+            selectedItemId={selectedItemId}
+            openEditForItemId={editSignal}
+          />
+        </div>
         {selectedItem && (
           <TimelineItemDetailDrawer
             item={selectedItem}

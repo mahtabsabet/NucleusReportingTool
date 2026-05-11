@@ -136,6 +136,8 @@ export function Timeline({
   const [formLocation, setFormLocation] = useState('');
   const [formMeetingType, setFormMeetingType] = useState('');
   const [formAttendees, setFormAttendees] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const canManageEvents = useMemo(
     () => (callerCtx ? canManageClusterTimelineEvents(callerCtx, clusterId) : false),
@@ -646,6 +648,8 @@ export function Timeline({
     setFormLocation('');
     setFormMeetingType('');
     setFormAttendees('');
+    setFormError(null);
+    setSaving(false);
   };
 
   const openAddEvent = (itemType: TimelineItemType = 'event', defaultStart?: Date) => {
@@ -687,10 +691,25 @@ export function Timeline({
 
   const saveEvent = async () => {
     if (!eventModal) return;
-    if (!formName.trim() || !formStart) return;
+    setFormError(null);
+    if (!formName.trim()) {
+      setFormError(
+        formItemType === 'meeting'
+          ? 'Meeting title is required.'
+          : 'Event name is required.',
+      );
+      return;
+    }
+    if (!formStart) {
+      setFormError('A date is required.');
+      return;
+    }
     const startDate = parseDateInput(formStart);
     const endDate = formEnd ? parseDateInput(formEnd) : null;
-    if (endDate && endDate < startDate) return;
+    if (endDate && endDate < startDate) {
+      setFormError('End date can’t be before the start date.');
+      return;
+    }
     const location = formLocation.trim() || null;
     const startTime = formStartTime.trim() || null;
     const meetingType =
@@ -705,6 +724,7 @@ export function Timeline({
             .map(a => a.trim())
             .filter(Boolean)
         : [];
+    setSaving(true);
     try {
       if (eventModal.mode === 'add') {
         const newEvent = await addTimelineEvent({
@@ -733,8 +753,16 @@ export function Timeline({
         setEvents(prev => prev.map(e => (e.id === updated.id ? updated : e)));
       }
       closeEventModal();
-    } catch (err) {
+    } catch (err: any) {
+      // Surface the error inline so the user isn't left with a button
+      // that "doesn't do anything". The most common cause in a fresh
+      // environment is the Phase 1 migration not yet being applied —
+      // the message from PostgREST ("column ... does not exist") makes
+      // that obvious without us having to special-case it here.
       console.error('Failed to save event:', err);
+      setFormError(err?.message ?? 'Failed to save. Please try again.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1495,8 +1523,8 @@ export function Timeline({
               if (e.target === e.currentTarget) closeEventModal();
             }}
           >
-            <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-5">
+            <div className="bg-white rounded-2xl shadow-xl border border-gray-200 w-full max-w-md max-h-[90vh] flex flex-col">
+              <div className="flex justify-between items-center px-6 pt-6 pb-4 flex-shrink-0">
                 <h3 className="text-lg font-bold text-gray-900">
                   {eventModal.mode === 'add'
                     ? formItemType === 'meeting'
@@ -1513,7 +1541,10 @@ export function Timeline({
                   <XIcon className="w-5 h-5" />
                 </button>
               </div>
-              <div className="space-y-4">
+              {/* Scrollable form region. Save / Cancel / Delete sit
+                  *outside* this region so they stay visible no matter
+                  how tall the form gets. */}
+              <div className="px-6 pb-2 overflow-y-auto space-y-4">
                 {/* Item type toggle — lets the user reclassify on edit
                     and confirms the active type when adding. */}
                 <div>
@@ -1621,15 +1652,9 @@ export function Timeline({
                         type="text"
                         value={formMeetingType}
                         onChange={e => setFormMeetingType(e.target.value)}
-                        list="timeline-meeting-types"
                         className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
                         placeholder="e.g. Reflection, Cluster Coordination, Accompaniment"
                       />
-                      <datalist id="timeline-meeting-types">
-                        <option value="Reflection Meeting" />
-                        <option value="Cluster Coordination Meeting" />
-                        <option value="Accompaniment Meeting" />
-                      </datalist>
                     </div>
                     <div>
                       <label className="block text-sm font-semibold text-gray-700 mb-1.5">
@@ -1648,7 +1673,17 @@ export function Timeline({
                     </div>
                   </>
                 )}
-                <div className="pt-2 flex gap-3 items-center">
+              </div>
+              {/* Footer (action bar). Stays pinned to the bottom of the
+                  modal — the form region above it scrolls when content
+                  overflows, so Save is always reachable. */}
+              <div className="px-6 pt-3 pb-6 border-t border-gray-100 flex-shrink-0">
+                {formError && (
+                  <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {formError}
+                  </div>
+                )}
+                <div className="flex gap-3 items-center">
                   {eventModal.mode === 'edit' && (
                     <button
                       onClick={deleteEvent}
@@ -1666,12 +1701,21 @@ export function Timeline({
                   >
                     Cancel
                   </button>
+                  {/* Always clickable — validation runs in saveEvent so
+                      the user sees *why* a click didn't take, rather
+                      than being left with an inert grey button. */}
                   <button
                     onClick={saveEvent}
-                    disabled={!formName.trim() || !formStart}
-                    className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50"
+                    disabled={saving}
+                    className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-60"
                   >
-                    {eventModal.mode === 'add' ? 'Save Event' : 'Save Changes'}
+                    {saving
+                      ? 'Saving…'
+                      : eventModal.mode === 'add'
+                      ? formItemType === 'meeting'
+                        ? 'Save Meeting'
+                        : 'Save Event'
+                      : 'Save Changes'}
                   </button>
                 </div>
               </div>
