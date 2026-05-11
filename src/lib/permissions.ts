@@ -250,6 +250,8 @@ export type ManagedAction =
   | 'edit_network_structure'
   | 'edit_timeline_cycles'      // Edit Cluster Cycle Dates (timeline view)
   | 'manage_timeline_events'    // Add / Edit Cluster events (timeline view)
+  | 'manage_timeline_meetings'  // Add / Edit Cluster meetings (timeline view)
+  | 'manage_timeline_notes'     // Attach / remove notes & documents on items
   | 'create_user'
   | 'delete_user'
   | 'change_user_permissions';
@@ -271,6 +273,29 @@ export function canManageClusterTimelineEvents(
   if (ctx.isAdmin || ctx.isSuperAdmin) return true;
   if (!clusterId) return false;
   return coordinatorClusterIds(ctx).includes(clusterId);
+}
+
+// Cluster-level timeline meetings — same rule as events (Cluster
+// Coordinators and higher). Phase 1 doesn't distinguish the two at
+// permission level, but the call sites pass the action through the
+// `actionPermission` switch so that a future split (e.g. letting
+// Nucleus Coordinators schedule meetings within their own nucleus)
+// is a one-line change here, not a UI rewrite.
+export function canManageClusterTimelineMeetings(
+  ctx: CallerContext,
+  clusterId: string | null,
+): boolean {
+  return canManageClusterTimelineEvents(ctx, clusterId);
+}
+
+// Notes and documents attached to a timeline item. Visibility (read)
+// inherits from cluster access at the RLS layer; this helper governs
+// the UI affordances for *adding* or *removing* notes.
+export function canManageClusterTimelineNotes(
+  ctx: CallerContext,
+  clusterId: string | null,
+): boolean {
+  return canManageClusterTimelineEvents(ctx, clusterId);
 }
 
 // In-scope helpers.
@@ -361,6 +386,8 @@ export function actionPermission(
 
     case 'edit_timeline_cycles':
     case 'manage_timeline_events':
+    case 'manage_timeline_meetings':
+    case 'manage_timeline_notes':
       // Table: Super Admin / Admin / Cluster Coordinator only.
       // CCs are scoped to their own cluster; the timeline UI must filter
       // displayed cycles/events to the caller's cluster scope before

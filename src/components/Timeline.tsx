@@ -24,7 +24,7 @@ import {
   updateTimelineEvent,
   deleteTimelineEvent,
 } from '../lib/db/timeline';
-import { TimelineCycle, TimelineEvent } from '../types';
+import { TimelineCycle, TimelineEvent, TimelineItemType } from '../types';
 import { buildCycleSchedule, ComputedCycle } from '../lib/timeline/cycles';
 import {
   addDays,
@@ -79,14 +79,40 @@ interface TimelineProps {
   // top→bottom, panel fills its parent's height — used by the mobile
   // page so the timeline can use the full screen height.
   orientation?: Orientation;
+  // 'panel' (default, legacy): horizontal mode renders with a fixed
+  // pixel height + a resize handle at the top, suited to a bottom
+  // banner. 'fill': horizontal mode stretches to fill its parent
+  // (used by the full-page TimelineWorkspace).
+  mode?: 'panel' | 'fill';
+  // When set, clicking an item invokes this callback instead of
+  // opening the inline edit modal. Used by the workspace to drive a
+  // bottom detail drawer that survives panning/zooming.
+  onItemClick?: (item: TimelineEvent) => void;
+  // ID of the currently-selected item (highlighted on the strip).
+  // Independent of the click handler — callers may show selection
+  // without a handler, e.g. when restoring a deep-linked selection.
+  selectedItemId?: string | null;
+  // External trigger: when this changes (new `nonce`), the Timeline
+  // opens its inline edit modal for the given item id. Used by the
+  // workspace to wire the detail drawer's "Edit" button through to
+  // the Timeline's existing modal without duplicating that form.
+  openEditForItemId?: { id: string; nonce: number } | null;
 }
 
 type EventModalState =
-  | { mode: 'add' }
+  | { mode: 'add'; itemType: TimelineItemType }
   | { mode: 'edit'; event: TimelineEvent };
 
-export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProps) {
+export function Timeline({
+  clusterId,
+  orientation = 'horizontal',
+  mode = 'panel',
+  onItemClick,
+  selectedItemId = null,
+  openEditForItemId = null,
+}: TimelineProps) {
   const isVertical = orientation === 'vertical';
+  const fillMode = mode === 'fill';
 
   const [overrides, setOverrides] = useState<TimelineCycleOverride[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
@@ -102,10 +128,16 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
 
   // ───── Event editor modal ─────────────────────────────────────────────
   const [eventModal, setEventModal] = useState<EventModalState | null>(null);
+  const [formItemType, setFormItemType] = useState<TimelineItemType>('event');
   const [formName, setFormName] = useState('');
   const [formStart, setFormStart] = useState('');
+  const [formStartTime, setFormStartTime] = useState('');
   const [formEnd, setFormEnd] = useState('');
   const [formLocation, setFormLocation] = useState('');
+  const [formMeetingType, setFormMeetingType] = useState('');
+  const [formAttendees, setFormAttendees] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const canManageEvents = useMemo(
     () => (callerCtx ? canManageClusterTimelineEvents(callerCtx, clusterId) : false),
@@ -608,55 +640,129 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
   };
 
   // ───── Event modal helpers ────────────────────────────────────────────
-  const openAddEvent = (defaultStart?: Date) => {
-    if (!canManageEvents) return;
+  const resetForm = () => {
     setFormName('');
-    setFormStart(defaultStart ? toDateInputValue(defaultStart) : '');
+    setFormStart('');
+    setFormStartTime('');
     setFormEnd('');
     setFormLocation('');
-    setEventModal({ mode: 'add' });
+    setFormMeetingType('');
+    setFormAttendees('');
+    setFormError(null);
+    setSaving(false);
+  };
+
+  const openAddEvent = (itemType: TimelineItemType = 'event', defaultStart?: Date) => {
+    if (!canManageEvents) return;
+    resetForm();
+    setFormItemType(itemType);
+    setFormStart(defaultStart ? toDateInputValue(defaultStart) : '');
+    setEventModal({ mode: 'add', itemType });
   };
 
   const openEditEvent = (event: TimelineEvent) => {
     if (!canManageEvents) return;
+    setFormItemType(event.itemType);
     setFormName(event.name);
     setFormStart(toDateInputValue(event.startDate));
+    setFormStartTime(event.startTime ?? '');
     setFormEnd(event.endDate ? toDateInputValue(event.endDate) : '');
     setFormLocation(event.location ?? '');
+    setFormMeetingType(event.meetingType ?? '');
+    setFormAttendees((event.attendees ?? []).join(', '));
     setEventModal({ mode: 'edit', event });
   };
 
   const closeEventModal = () => setEventModal(null);
 
+  // External "open edit modal" trigger from the workspace. We track
+  // the last-processed nonce so a stale prop value can't re-open the
+  // modal after the user has closed it.
+  const lastEditNonceRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!openEditForItemId) return;
+    if (lastEditNonceRef.current === openEditForItemId.nonce) return;
+    const target = events.find(e => e.id === openEditForItemId.id);
+    if (!target) return;
+    lastEditNonceRef.current = openEditForItemId.nonce;
+    openEditEvent(target);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openEditForItemId, events]);
+
   const saveEvent = async () => {
     if (!eventModal) return;
-    if (!formName.trim() || !formStart) return;
+    setFormError(null);
+    if (!formName.trim()) {
+      setFormError(
+        formItemType === 'meeting'
+          ? 'Meeting title is required.'
+          : 'Event name is required.',
+      );
+      return;
+    }
+    if (!formStart) {
+      setFormError('A date is required.');
+      return;
+    }
     const startDate = parseDateInput(formStart);
     const endDate = formEnd ? parseDateInput(formEnd) : null;
-    if (endDate && endDate < startDate) return;
+    if (endDate && endDate < startDate) {
+      setFormError('End date can’t be before the start date.');
+      return;
+    }
     const location = formLocation.trim() || null;
+    const startTime = formStartTime.trim() || null;
+    const meetingType =
+      formItemType === 'meeting' ? formMeetingType.trim() || null : null;
+    // Attendees are accepted as a comma-separated list in Phase 1; we
+    // store the trimmed names as-is in the `attendees` text[] column.
+    // Resolving these to person records is a Phase 2 concern.
+    const attendees =
+      formItemType === 'meeting'
+        ? formAttendees
+            .split(',')
+            .map(a => a.trim())
+            .filter(Boolean)
+        : [];
+    setSaving(true);
     try {
       if (eventModal.mode === 'add') {
         const newEvent = await addTimelineEvent({
+          itemType: formItemType,
           name: formName.trim(),
           startDate,
           endDate: endDate ?? undefined,
+          startTime: startTime ?? undefined,
           clusterId: clusterId ?? undefined,
           location: location ?? undefined,
+          meetingType: meetingType ?? undefined,
+          attendees,
         });
         setEvents(prev => [...prev, newEvent]);
       } else {
         const updated = await updateTimelineEvent(eventModal.event.id, {
+          itemType: formItemType,
           name: formName.trim(),
           startDate,
           endDate,
+          startTime,
           location,
+          meetingType,
+          attendees,
         });
         setEvents(prev => prev.map(e => (e.id === updated.id ? updated : e)));
       }
       closeEventModal();
-    } catch (err) {
+    } catch (err: any) {
+      // Surface the error inline so the user isn't left with a button
+      // that "doesn't do anything". The most common cause in a fresh
+      // environment is the Phase 1 migration not yet being applied —
+      // the message from PostgREST ("column ... does not exist") makes
+      // that obvious without us having to special-case it here.
       console.error('Failed to save event:', err);
+      setFormError(err?.message ?? 'Failed to save. Please try again.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -690,23 +796,33 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
     [events, visibleStart, visibleEnd],
   );
 
-  // Pack visible events into stacked lanes. Intervals are in pixel units
-  // (anchored on minDate) and we use a small pixel gap so single-day events
-  // never visually fuse on the same lane.
-  const sortedVisibleEvents = useMemo(() => {
-    return [...visibleEvents].sort((a, b) => {
-      const diff = a.startDate.getTime() - b.startDate.getTime();
-      if (diff !== 0) return diff;
-      const aDur = (a.endDate || a.startDate).getTime() - a.startDate.getTime();
-      const bDur = (b.endDate || b.startDate).getTime() - b.startDate.getTime();
-      return bDur - aDur;
-    });
-  }, [visibleEvents]);
+  // Pack visible items into stacked lanes. Intervals are in pixel units
+  // (anchored on minDate) and we use a small pixel gap so single-day items
+  // never visually fuse on the same lane. We stack events above the
+  // center axis and meetings below it — this keeps the two item types
+  // visually distinct AND lets each side pack its own lanes without
+  // either type pushing the other around.
+  const sortByStart = (a: TimelineEvent, b: TimelineEvent) => {
+    const diff = a.startDate.getTime() - b.startDate.getTime();
+    if (diff !== 0) return diff;
+    const aDur = (a.endDate || a.startDate).getTime() - a.startDate.getTime();
+    const bDur = (b.endDate || b.startDate).getTime() - b.startDate.getTime();
+    return bDur - aDur;
+  };
 
-  const eventLayout = useMemo(() => {
-    if (pxPerDay <= 0)
-      return { lanes: [] as number[], laneCount: 0 };
-    const intervals = sortedVisibleEvents.map(evt => {
+  const sortedVisibleEvents = useMemo(
+    () => visibleEvents.filter(e => e.itemType === 'event').sort(sortByStart),
+    [visibleEvents],
+  );
+
+  const sortedVisibleMeetings = useMemo(
+    () => visibleEvents.filter(e => e.itemType === 'meeting').sort(sortByStart),
+    [visibleEvents],
+  );
+
+  const computeLayout = (items: TimelineEvent[]) => {
+    if (pxPerDay <= 0) return { lanes: [] as number[], laneCount: 0 };
+    const intervals = items.map(evt => {
       const startPx = pixelAtDate(evt.startDate, minDate, pxPerDay);
       const endPx = evt.endDate
         ? pixelAtDate(evt.endDate, minDate, pxPerDay)
@@ -714,7 +830,18 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
       return { start: startPx, end: endPx };
     });
     return assignLanes(intervals, 4);
-  }, [sortedVisibleEvents, minDate, pxPerDay]);
+  };
+
+  const eventLayout = useMemo(
+    () => computeLayout(sortedVisibleEvents),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sortedVisibleEvents, minDate, pxPerDay],
+  );
+  const meetingLayout = useMemo(
+    () => computeLayout(sortedVisibleMeetings),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sortedVisibleMeetings, minDate, pxPerDay],
+  );
 
   // ───── Layer opacities (smooth fades driven by pxPerDay) ──────────────
   const cycleOpacity = fadeIn(pxPerDay, CYCLE_FADE[0], CYCLE_FADE[1]);
@@ -803,17 +930,23 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
     return css;
   };
 
-  // Event lane container. Events sit on the "before" side of the center
-  // axis (above in horizontal, left in vertical) and lanes stack outward
-  // from the center.
+  // Item lane containers. Events sit on the "before" side of the center
+  // axis (above in horizontal, left in vertical); meetings sit on the
+  // "after" side (below in horizontal, right in vertical). Each side
+  // stacks outward from the center, so neither type displaces the
+  // other when they overlap in time.
   const eventLanesContainerStyle: React.CSSProperties = isVertical
     ? { right: '55%', width: `${eventLayout.laneCount * 14 + 4}px` }
     : { bottom: '55%', height: `${eventLayout.laneCount * 14 + 4}px` };
+  const meetingLanesContainerStyle: React.CSSProperties = isVertical
+    ? { left: '55%', width: `${meetingLayout.laneCount * 16 + 8}px` }
+    : { top: '55%', height: `${meetingLayout.laneCount * 16 + 8}px` };
   const eventLanesContainerSpanClass = isVertical
     ? 'absolute top-0 bottom-0'
     : 'absolute left-0 right-0';
+  const meetingLanesContainerSpanClass = eventLanesContainerSpanClass;
 
-  // Position an event bar/dot on the timeline.
+  // Position an event bar/dot on the timeline (on the "before" side).
   const eventBarStyle = (
     offsetMain: number,
     lengthMain: number,
@@ -852,21 +985,51 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
     };
   };
 
+  // Meeting markers live on the "after" side. We render them as
+  // diamonds (rotated squares) so they read visually distinct from
+  // event bars at any zoom — at fit-all the rotation is the only
+  // affordance separating them from event dots.
+  const meetingMarkerStyle = (
+    offsetMain: number,
+    lengthMain: number,
+    laneOffsetCross: number,
+  ): React.CSSProperties => {
+    const size = 12;
+    if (isVertical) {
+      return {
+        top: `${offsetMain}px`,
+        height: `${Math.max(lengthMain, size)}px`,
+        left: `${laneOffsetCross}px`,
+        width: `${size}px`,
+      };
+    }
+    return {
+      left: `${offsetMain}px`,
+      width: `${Math.max(lengthMain, size)}px`,
+      top: `${laneOffsetCross}px`,
+      height: `${size}px`,
+    };
+  };
+
   // ───── Render ────────────────────────────────────────────────────────
-  // Root container chrome differs by orientation: horizontal sits as a
-  // bottom-of-screen panel with a resize handle and a fixed pixel height;
-  // vertical fills its parent (used by the mobile full-screen page).
-  const rootStyle: React.CSSProperties = isVertical
+  // Root container chrome varies by orientation + mode:
+  //   • vertical mode:  fills parent height (mobile full-screen page).
+  //   • horizontal + 'fill': fills parent height (workspace).
+  //   • horizontal + 'panel' (default): sits as a bottom-of-screen
+  //     banner with a fixed pixel height and a top resize handle.
+  const fillsParentHeight = isVertical || fillMode;
+  const rootStyle: React.CSSProperties = fillsParentHeight
     ? { height: '100%' }
     : { height: `${panelHeight}px` };
-  const rootClass = isVertical
+  const rootClass = fillsParentHeight
     ? 'bg-white flex flex-col font-sans relative z-40 h-full'
     : 'bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] flex flex-col font-sans relative z-40';
 
   return (
     <div className={rootClass} style={rootStyle}>
-      {/* Resize handle — desktop-only. */}
-      {!isVertical && (
+      {/* Resize handle — bottom-banner mode only. The workspace and the
+          mobile page hand height responsibility to their parent layout. */}
+      {!isVertical && !fillMode && (
         <div
           className="flex items-center justify-center gap-2 py-1 border-b border-gray-100 bg-gray-50/30 cursor-row-resize select-none"
           onMouseDown={e => {
@@ -936,13 +1099,22 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
             </div>
           )}
           {canManageEvents && (
-            <button
-              onClick={() => openAddEvent()}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100 transition-colors"
-            >
-              <PlusIcon className="w-3.5 h-3.5" />
-              Add Event
-            </button>
+            <>
+              <button
+                onClick={() => openAddEvent('event')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 text-xs font-bold rounded-lg hover:bg-blue-100 transition-colors"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
+                Add Event
+              </button>
+              <button
+                onClick={() => openAddEvent('meeting')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-800 text-xs font-bold rounded-lg hover:bg-amber-100 transition-colors"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
+                Add Meeting
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1167,7 +1339,7 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
                 );
               })}
 
-            {/* EVENT layer */}
+            {/* EVENT layer (above center axis) */}
             <div className={eventLanesContainerSpanClass} style={eventLanesContainerStyle}>
               {sortedVisibleEvents.map((e, i) => {
                 const isBar = e.endDate && e.endDate.getTime() > e.startDate.getTime();
@@ -1177,6 +1349,7 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
                   : startMain;
                 const row = eventLayout.lanes[i] ?? 0;
                 const laneOffset = row * 14 + 2;
+                const isSelected = selectedItemId === e.id;
                 const onMouseEnter = (ev: React.MouseEvent) => {
                   const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
                   setHoveredEvent({
@@ -1186,7 +1359,12 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
                   });
                 };
                 const onMouseLeave = () => setHoveredEvent(null);
-                const onClick = canManageEvents
+                // Workspace mode (onItemClick provided) opens the detail
+                // drawer. Legacy mode falls through to inline edit for
+                // users who can manage events — preserves existing UX.
+                const onClick = onItemClick
+                  ? () => onItemClick(e)
+                  : canManageEvents
                   ? () => openEditEvent(e)
                   : undefined;
                 const interactionClass = onClick ? 'cursor-pointer' : 'cursor-help';
@@ -1200,15 +1378,98 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
                       onMouseLeave={onMouseLeave}
                       onClick={onClick}
                     >
-                      <div className="w-full h-full bg-blue-400/80 rounded-sm border border-blue-500/50 hover:bg-blue-500/90 transition-colors" />
+                      <div
+                        className={`w-full h-full rounded-sm transition-colors ${
+                          isSelected
+                            ? 'bg-blue-600 border-2 border-blue-800 ring-2 ring-blue-300'
+                            : 'bg-blue-400/80 border border-blue-500/50 hover:bg-blue-500/90'
+                        }`}
+                      />
                     </div>
                   );
                 }
                 return (
                   <div
                     key={e.id}
-                    className={`absolute w-2.5 h-2.5 rounded-full bg-blue-500 hover:bg-blue-600 transition-colors ${interactionClass}`}
+                    className={`absolute w-2.5 h-2.5 rounded-full transition-colors ${interactionClass} ${
+                      isSelected
+                        ? 'bg-blue-700 ring-2 ring-blue-300'
+                        : 'bg-blue-500 hover:bg-blue-600'
+                    }`}
                     style={eventDotStyle(startMain, laneOffset)}
+                    onMouseEnter={onMouseEnter}
+                    onMouseLeave={onMouseLeave}
+                    onClick={onClick}
+                  />
+                );
+              })}
+            </div>
+
+            {/* MEETING layer (below center axis) — diamond markers in
+                an amber palette so they read distinct from events at
+                any zoom level. */}
+            <div
+              className={meetingLanesContainerSpanClass}
+              style={meetingLanesContainerStyle}
+            >
+              {sortedVisibleMeetings.map((m, i) => {
+                const isBar = m.endDate && m.endDate.getTime() > m.startDate.getTime();
+                const startMain = pixelAtDate(m.startDate, minDate, pxPerDay);
+                const endMain = isBar
+                  ? pixelAtDate(m.endDate!, minDate, pxPerDay)
+                  : startMain;
+                const row = meetingLayout.lanes[i] ?? 0;
+                const laneOffset = row * 16 + 4;
+                const isSelected = selectedItemId === m.id;
+                const onMouseEnter = (ev: React.MouseEvent) => {
+                  const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+                  setHoveredEvent({
+                    event: m,
+                    x: rect.left + rect.width / 2,
+                    y: rect.top,
+                  });
+                };
+                const onMouseLeave = () => setHoveredEvent(null);
+                const onClick = onItemClick
+                  ? () => onItemClick(m)
+                  : canManageEvents
+                  ? () => openEditEvent(m)
+                  : undefined;
+                const interactionClass = onClick ? 'cursor-pointer' : 'cursor-help';
+                if (isBar) {
+                  // Multi-day meetings (rare, but possible) render as a
+                  // light amber band with diamond end-caps would be
+                  // overkill — keep them as a striped band so they read
+                  // as "meeting" even when wide.
+                  return (
+                    <div
+                      key={m.id}
+                      className={`absolute ${interactionClass}`}
+                      style={meetingMarkerStyle(startMain, endMain - startMain, laneOffset)}
+                      onMouseEnter={onMouseEnter}
+                      onMouseLeave={onMouseLeave}
+                      onClick={onClick}
+                    >
+                      <div
+                        className={`w-full h-full rounded-sm transition-colors ${
+                          isSelected
+                            ? 'bg-amber-600 border-2 border-amber-800 ring-2 ring-amber-300'
+                            : 'bg-amber-400/80 border border-amber-500/60 hover:bg-amber-500/90'
+                        }`}
+                      />
+                    </div>
+                  );
+                }
+                // Single-occurrence meeting: diamond marker.
+                return (
+                  <div
+                    key={m.id}
+                    className={`absolute w-3 h-3 rotate-45 transition-colors ${interactionClass} ${
+                      isSelected
+                        ? 'bg-amber-700 ring-2 ring-amber-300'
+                        : 'bg-amber-500 hover:bg-amber-600'
+                    }`}
+                    style={meetingMarkerStyle(startMain, 0, laneOffset)}
                     onMouseEnter={onMouseEnter}
                     onMouseLeave={onMouseLeave}
                     onClick={onClick}
@@ -1262,11 +1523,15 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
               if (e.target === e.currentTarget) closeEventModal();
             }}
           >
-            <div className="bg-white rounded-2xl shadow-xl border border-gray-200 p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center mb-5">
+            <div className="bg-white rounded-2xl shadow-xl border border-gray-200 w-full max-w-md max-h-[90vh] flex flex-col">
+              <div className="flex justify-between items-center px-6 pt-6 pb-4 flex-shrink-0">
                 <h3 className="text-lg font-bold text-gray-900">
                   {eventModal.mode === 'add'
-                    ? 'Add Timeline Event'
+                    ? formItemType === 'meeting'
+                      ? 'Add Meeting'
+                      : 'Add Timeline Event'
+                    : formItemType === 'meeting'
+                    ? 'Edit Meeting'
                     : 'Edit Timeline Event'}
                 </h3>
                 <button
@@ -1276,24 +1541,62 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
                   <XIcon className="w-5 h-5" />
                 </button>
               </div>
-              <div className="space-y-4">
+              {/* Scrollable form region. Save / Cancel / Delete sit
+                  *outside* this region so they stay visible no matter
+                  how tall the form gets. */}
+              <div className="px-6 pb-2 overflow-y-auto space-y-4">
+                {/* Item type toggle — lets the user reclassify on edit
+                    and confirms the active type when adding. */}
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                    Event Name
+                    Item Type
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setFormItemType('event')}
+                      className={`px-3 py-2 rounded-xl text-sm font-semibold border transition-colors ${
+                        formItemType === 'event'
+                          ? 'bg-blue-50 border-blue-300 text-blue-800'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      Event
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setFormItemType('meeting')}
+                      className={`px-3 py-2 rounded-xl text-sm font-semibold border transition-colors ${
+                        formItemType === 'meeting'
+                          ? 'bg-amber-50 border-amber-300 text-amber-800'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      Meeting
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                    {formItemType === 'meeting' ? 'Meeting Title' : 'Event Name'}
                   </label>
                   <input
                     type="text"
                     value={formName}
                     onChange={e => setFormName(e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                    placeholder="e.g. Expansion Phase"
+                    placeholder={
+                      formItemType === 'meeting'
+                        ? 'e.g. Reflection Meeting'
+                        : 'e.g. Expansion Phase'
+                    }
                     autoFocus
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                      Start Date
+                      {formItemType === 'meeting' ? 'Date' : 'Start Date'}
                     </label>
                     <input
                       type="date"
@@ -1304,16 +1607,25 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-                      End Date{' '}
+                      {formItemType === 'meeting' ? 'Time' : 'End Date'}{' '}
                       <span className="text-gray-400 font-normal">(optional)</span>
                     </label>
-                    <input
-                      type="date"
-                      value={formEnd}
-                      onChange={e => setFormEnd(e.target.value)}
-                      min={formStart || undefined}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                    />
+                    {formItemType === 'meeting' ? (
+                      <input
+                        type="time"
+                        value={formStartTime}
+                        onChange={e => setFormStartTime(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      />
+                    ) : (
+                      <input
+                        type="date"
+                        value={formEnd}
+                        onChange={e => setFormEnd(e.target.value)}
+                        min={formStart || undefined}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                      />
+                    )}
                   </div>
                 </div>
                 <div>
@@ -1329,7 +1641,49 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
                     placeholder="e.g. Community Centre"
                   />
                 </div>
-                <div className="pt-2 flex gap-3 items-center">
+                {formItemType === 'meeting' && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                        Meeting Type{' '}
+                        <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={formMeetingType}
+                        onChange={e => setFormMeetingType(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                        placeholder="e.g. Reflection, Cluster Coordination, Accompaniment"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-1.5">
+                        Attendees{' '}
+                        <span className="text-gray-400 font-normal">
+                          (optional, comma-separated)
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        value={formAttendees}
+                        onChange={e => setFormAttendees(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
+                        placeholder="e.g. Maria, Reza, Aisha"
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+              {/* Footer (action bar). Stays pinned to the bottom of the
+                  modal — the form region above it scrolls when content
+                  overflows, so Save is always reachable. */}
+              <div className="px-6 pt-3 pb-6 border-t border-gray-100 flex-shrink-0">
+                {formError && (
+                  <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                    {formError}
+                  </div>
+                )}
+                <div className="flex gap-3 items-center">
                   {eventModal.mode === 'edit' && (
                     <button
                       onClick={deleteEvent}
@@ -1347,12 +1701,21 @@ export function Timeline({ clusterId, orientation = 'horizontal' }: TimelineProp
                   >
                     Cancel
                   </button>
+                  {/* Always clickable — validation runs in saveEvent so
+                      the user sees *why* a click didn't take, rather
+                      than being left with an inert grey button. */}
                   <button
                     onClick={saveEvent}
-                    disabled={!formName.trim() || !formStart}
-                    className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-50"
+                    disabled={saving}
+                    className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 disabled:opacity-60"
                   >
-                    {eventModal.mode === 'add' ? 'Save Event' : 'Save Changes'}
+                    {saving
+                      ? 'Saving…'
+                      : eventModal.mode === 'add'
+                      ? formItemType === 'meeting'
+                        ? 'Save Meeting'
+                        : 'Save Event'
+                      : 'Save Changes'}
                   </button>
                 </div>
               </div>

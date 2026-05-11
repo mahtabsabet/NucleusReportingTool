@@ -13,7 +13,15 @@ export const TEST_IDS = {
   // Second cluster/nucleus — used only to verify out-of-scope access is blocked
   cluster2Id:            '66666666-6666-6666-6666-666666666666',
   nucleus2Id:            '77777777-7777-7777-7777-777777777777',
+  // Timeline event fixture — clicked by the notes happy-path test to
+  // open the detail drawer. The name is unique enough to locate via
+  // a tooltip lookup on the strip.
+  timelineEventId:       '88888888-8888-8888-8888-888888888888',
 } as const;
+
+// Fixed name for the timeline event fixture. Exported so the e2e
+// spec can search for it without duplicating the literal.
+export const TEST_TIMELINE_EVENT_NAME = 'E2E Test Phase';
 
 // Permanent test users created (and kept) in dev for permission integration tests.
 // Credentials are fixed so permissions.setup.ts can log in without reading the DB.
@@ -155,7 +163,25 @@ export async function seed() {
   // Wipe all perm test user permissions before re-granting them below
   await supabase.from('user_permissions').delete().in('user_id', Object.values(permIds));
 
-  // Clear existing test data in FK-safe order
+  // Clear existing test data in FK-safe order. Notes cascade with their
+  // parent timeline_events row, but we delete them explicitly so a
+  // half-run seed (no event row but stale notes) reaches a clean state.
+  await supabase.from('timeline_item_notes').delete().eq('timeline_item_id', TEST_IDS.timelineEventId);
+  await supabase.from('timeline_events').delete().eq('id', TEST_IDS.timelineEventId);
+  // Sweep any ad-hoc notes/events created mid-test under our test cluster.
+  // Notes first (FK), then any cluster-scoped events with names that match
+  // our test prefix. We don't blanket-delete cluster events because some
+  // legitimate fixtures may live there.
+  const { data: leakedEvents } = await supabase
+    .from('timeline_events')
+    .select('id')
+    .eq('cluster_id', TEST_IDS.clusterId)
+    .ilike('name', 'E2E %');
+  if (leakedEvents && leakedEvents.length > 0) {
+    const leakedIds = leakedEvents.map((r: any) => r.id);
+    await supabase.from('timeline_item_notes').delete().in('timeline_item_id', leakedIds);
+    await supabase.from('timeline_events').delete().in('id', leakedIds);
+  }
   await supabase.from('user_permissions').delete().eq('cluster_id', TEST_IDS.clusterId);
   await supabase.from('user_permissions').delete().eq('cluster_id', TEST_IDS.cluster2Id);
   await supabase.from('activity_participants').delete().eq('activity_id', TEST_IDS.activityId);
@@ -229,6 +255,23 @@ export async function seed() {
     deleted_at: null,
   }, { onConflict: 'id' });
   if (activityErr) throw new Error(`Seed activity: ${activityErr.message}`);
+
+  // Timeline event fixture used by the "click → drawer → add note" e2e
+  // test. We pin a date inside the default 1-year initial window of the
+  // workspace so it's visible without panning. The timeline opens on
+  // "today" by default and our cycle range starts in 2026, so place the
+  // event a few weeks after the start of 2026 — well inside the
+  // initial viewport regardless of when the test runs.
+  const { error: timelineEvtErr } = await supabase.from('timeline_events').upsert({
+    id:         TEST_IDS.timelineEventId,
+    name:       TEST_TIMELINE_EVENT_NAME,
+    item_type:  'event',
+    start_date: '2026-02-01',
+    end_date:   '2026-02-28',
+    cluster_id: TEST_IDS.clusterId,
+    location:   'Test Cluster Hall',
+  }, { onConflict: 'id' });
+  if (timelineEvtErr) throw new Error(`Seed timeline event: ${timelineEvtErr.message}`);
 
   // ── Grant permissions ────────────────────────────────────────────────────────
 

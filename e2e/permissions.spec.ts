@@ -20,7 +20,7 @@
  */
 
 import { test, expect, type Page } from '@playwright/test';
-import { TEST_IDS } from '../scripts/seed';
+import { TEST_IDS, TEST_TIMELINE_EVENT_NAME } from '../scripts/seed';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -968,4 +968,124 @@ test.describe('timeline — Add Event button', () => {
       await expect(page.getByRole('button', { name: /add event/i })).not.toBeVisible();
     });
   });
+});
+
+// ── Timeline: Add Meeting button visibility ──────────────────────────────────
+//
+// Mirrors the Add Event tests above. Meetings use the same permission
+// rule as events (`manage_timeline_meetings` → CC and higher), so the
+// expected visibility is identical — but we assert each role
+// independently to catch any future drift between the two rules.
+
+test.describe('timeline — Add Meeting button', () => {
+  test.describe('cluster coordinator sees Add Meeting button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
+    test('Add Meeting visible in own cluster timeline', async ({ page }) => {
+      await openTimelineForTestCluster(page);
+      await expect(page.getByRole('button', { name: /add meeting/i })).toBeVisible({ timeout: 10000 });
+    });
+  });
+
+  test.describe('nucleus collaborator does not see Add Meeting button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+    test('Add Meeting absent — NC cannot manage timeline meetings', async ({ page }) => {
+      await openTimelineForTestCluster(page);
+      await expect(page.getByRole('button', { name: /add meeting/i })).not.toBeVisible();
+    });
+  });
+
+  test.describe('activity lead does not see Add Meeting button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-lead.json' });
+    test('Add Meeting absent — AL cannot manage timeline meetings', async ({ page }) => {
+      await openTimelineForTestCluster(page);
+      await expect(page.getByRole('button', { name: /add meeting/i })).not.toBeVisible();
+    });
+  });
+
+  test.describe('regional viewer does not see Add Meeting button', () => {
+    test.use({ storageState: 'e2e/.auth/perm-regional.json' });
+    test('Add Meeting absent — Regional is view-only', async ({ page }) => {
+      await openTimelineForTestCluster(page);
+      await expect(page.getByRole('button', { name: /add meeting/i })).not.toBeVisible();
+    });
+  });
+});
+
+// ── Timeline: notes attached to a timeline item ──────────────────────────────
+//
+// Deep-links into the workspace with ?item= so the detail drawer
+// opens on mount — avoids having to find the marker by pixel-position
+// on the strip (which depends on today's date relative to the
+// timeline's year range). Exercises the full client→RLS→DB path for
+// the new timeline_item_notes table.
+
+/** Open the workspace with the seeded test event auto-selected. */
+async function openTestEventDrawer(page: Page): Promise<void> {
+  await page.goto(
+    `/timeline?cluster=${TEST_IDS.clusterId}&item=${TEST_IDS.timelineEventId}`,
+  );
+  await page.waitForLoadState('networkidle');
+  // Drawer renders the event name as an h2 — wait for it before
+  // interacting with the tabs / forms inside.
+  await expect(
+    page.getByRole('heading', { name: TEST_TIMELINE_EVENT_NAME }),
+  ).toBeVisible({ timeout: 15000 });
+}
+
+test.describe('timeline — notes and documents', () => {
+  test.describe('cluster coordinator can attach a pasted note', () => {
+    test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
+
+    test('paste a text note and see it listed in the drawer', async ({ page }) => {
+      await openTestEventDrawer(page);
+
+      // Switch to the Notes & Documents tab.
+      await page.getByRole('button', { name: /notes & documents/i }).click();
+
+      // Open the pasted-note form. Unique-ish body text so the assertion
+      // can't collide with note bodies from prior runs.
+      const noteBody = `Reflection notes captured ${Date.now()}`;
+      await page.getByRole('button', { name: /paste note/i }).click();
+      await page
+        .getByPlaceholder(/paste your meeting notes here/i)
+        .fill(noteBody);
+      await page.getByRole('button', { name: /^save$/i }).click();
+
+      // The note should appear inline in the list, with a "Note" kind
+      // badge to distinguish it from documents / links.
+      await expect(page.getByText(noteBody)).toBeVisible({ timeout: 10000 });
+      await expect(page.getByText(/^note$/i).first()).toBeVisible();
+
+      // Tidy up — leaves the database in the state the seed expects on
+      // its next run. We re-fetch the just-created note via the
+      // delete-confirm dialog, accepting it to keep the cleanup local.
+      page.once('dialog', d => d.accept());
+      await page
+        .locator('li', { hasText: noteBody })
+        .getByRole('button', { name: /delete/i })
+        .click();
+      await expect(page.getByText(noteBody)).not.toBeVisible({ timeout: 10000 });
+    });
+  });
+
+  test.describe('nucleus collaborator cannot attach notes', () => {
+    test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+
+    test('drawer opens for NC but the add-note buttons are absent', async ({ page }) => {
+      await openTestEventDrawer(page);
+      await page.getByRole('button', { name: /notes & documents/i }).click();
+      // NC has cluster-read access (via nucleus→cluster) so the drawer
+      // and the existing notes list are visible — but the add-note
+      // affordances are gated on canManageClusterTimelineNotes.
+      await expect(page.getByRole('button', { name: /paste note/i })).not.toBeVisible();
+      await expect(page.getByRole('button', { name: /upload document/i })).not.toBeVisible();
+      await expect(page.getByRole('button', { name: /add link/i })).not.toBeVisible();
+    });
+  });
+
+  // Regional viewers are not covered here: timeline_events doesn't yet
+  // have a Regional-read RLS policy (events are scoped via
+  // user_has_cluster_access, which excludes is_regional_viewer). Adding
+  // that read path is a separate enhancement; once it lands the NC test
+  // above can be mirrored for the regional role.
 });
