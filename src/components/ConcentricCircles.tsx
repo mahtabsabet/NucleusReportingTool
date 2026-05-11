@@ -556,6 +556,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     return (
       <div
         key={entry.id}
+        data-node="true"
         aria-label={entry.name}
         draggable={!readOnly}
         onDragStart={readOnly ? undefined : e => handleDragStart(e, entry.id, level)}
@@ -575,6 +576,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           zIndex: isHovered ? 30 : 20,
           transition: 'transform 0.18s ease, box-shadow 0.18s ease',
           cursor: 'pointer',
+          pointerEvents: 'auto',
         }}
       >
         <div
@@ -1037,11 +1039,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
                 circles[level].map((entry, i) => {
                   const pos = nodePositions[level][i];
                   if (!pos) return null;
-                  return (
-                    <div key={entry.id} data-node="true" style={{ pointerEvents: 'auto' }}>
-                      {renderNode(entry, level, pos.x, pos.y)}
-                    </div>
-                  );
+                  return renderNode(entry, level, pos.x, pos.y);
                 })
               )}
             </div>
