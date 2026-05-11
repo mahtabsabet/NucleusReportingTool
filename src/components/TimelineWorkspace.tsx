@@ -199,7 +199,7 @@ export function TimelineWorkspace() {
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 font-sans">
-      <header className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 sm:py-4 flex items-center gap-3 z-10 shadow-sm">
+      <header className="bg-white border-b border-gray-200 px-3 sm:px-6 py-3 sm:py-4 flex items-center gap-3 relative z-50 shadow-sm">
         <button
           onClick={() => navigate('/')}
           aria-label="Back"

@@ -62,13 +62,14 @@ export function TimelineItemDetailDrawer({
   const [notes, setNotes] = useState<TimelineItemNote[]>([]);
   const [notesLoading, setNotesLoading] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
-  // Default height aims to show the header + the full Details tab
-  // (or the first ~3 notes on the Notes tab) without scrolling, while
-  // still leaving the timeline strip room to breathe above. ~55% of
-  // the viewport hits both targets on typical laptop heights.
+  // Default height aims to fit the header + Details tab content
+  // *and* a couple of notes without internal scrolling, while still
+  // leaving the timeline strip a usable band above. ~65% of the
+  // viewport (with a 400px floor for short laptop screens) hits both
+  // targets in practice.
   const [drawerHeight, setDrawerHeight] = useState(() => {
-    if (typeof window === 'undefined') return 480;
-    return Math.round(window.innerHeight * 0.55);
+    if (typeof window === 'undefined') return 520;
+    return Math.max(400, Math.round(window.innerHeight * 0.65));
   });
   // Mobile bottom sheet has a single collapsed / expanded state, so
   // users can keep a thumbprint of the timeline visible.
