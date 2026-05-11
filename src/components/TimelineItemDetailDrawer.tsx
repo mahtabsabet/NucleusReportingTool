@@ -62,7 +62,14 @@ export function TimelineItemDetailDrawer({
   const [notes, setNotes] = useState<TimelineItemNote[]>([]);
   const [notesLoading, setNotesLoading] = useState(true);
   const [notesError, setNotesError] = useState<string | null>(null);
-  const [drawerHeight, setDrawerHeight] = useState(320);
+  // Default height aims to show the header + the full Details tab
+  // (or the first ~3 notes on the Notes tab) without scrolling, while
+  // still leaving the timeline strip room to breathe above. ~55% of
+  // the viewport hits both targets on typical laptop heights.
+  const [drawerHeight, setDrawerHeight] = useState(() => {
+    if (typeof window === 'undefined') return 480;
+    return Math.round(window.innerHeight * 0.55);
+  });
   // Mobile bottom sheet has a single collapsed / expanded state, so
   // users can keep a thumbprint of the timeline visible.
   const [mobileExpanded, setMobileExpanded] = useState(false);
@@ -207,7 +214,11 @@ export function TimelineItemDetailDrawer({
 
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-[0_-8px_30px_-4px_rgba(0,0,0,0.15)] z-50 flex flex-col font-sans"
+      // Flex sibling of the Timeline (not a fixed overlay), so the
+      // strip shrinks to make room and stays fully usable above the
+      // drawer. The shadow and top border maintain the visual
+      // separation between the two panes.
+      className="bg-white border-t border-gray-200 shadow-[0_-8px_30px_-4px_rgba(0,0,0,0.08)] flex flex-col font-sans flex-shrink-0"
       style={rootStyle}
       role="dialog"
       aria-label={`Details for ${item.name}`}
@@ -230,7 +241,12 @@ export function TimelineItemDetailDrawer({
             const startH = drawerHeight;
             const onMove = (ev: MouseEvent) => {
               const next = startH - (ev.clientY - startY);
-              setDrawerHeight(Math.max(180, Math.min(window.innerHeight * 0.85, next)));
+              // Cap at 75vh so the timeline above always has at least
+              // a usable strip of vertical room. Floor at 240 so the
+              // drawer can't collapse below "header + one note" height.
+              setDrawerHeight(
+                Math.max(240, Math.min(window.innerHeight * 0.75, next)),
+              );
             };
             const onUp = () => {
               window.removeEventListener('mousemove', onMove);

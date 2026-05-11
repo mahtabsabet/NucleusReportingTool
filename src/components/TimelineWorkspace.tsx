@@ -58,6 +58,14 @@ export function TimelineWorkspace() {
       .then(c => {
         if (cancelled) return;
         setClusters(c);
+        // For users with access to only one cluster, default the
+        // viewport to that cluster instead of the (RLS-equivalent but
+        // misleadingly-labeled) "All Clusters" view. Only kicks in
+        // when there's no explicit ?cluster= in the URL — explicit
+        // deep links always win.
+        if (!initialCluster && c.length === 1) {
+          setClusterId(c[0].id);
+        }
       })
       .catch(() => { /* keep empty */ })
       .finally(() => {
@@ -67,7 +75,15 @@ export function TimelineWorkspace() {
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Whether the cluster picker should expose a dropdown. Users with
+  // RLS-granted access to multiple clusters (admins, regional viewers,
+  // multi-cluster coordinators) get the switcher; single-cluster users
+  // see the cluster name as a static label so they aren't offered a
+  // "choice" that has only one option.
+  const canSwitchClusters = clusters.length > 1;
 
   // If a deep link includes an item id, fetch it once the cluster
   // is known. The Timeline component owns its own item list, but
@@ -175,13 +191,11 @@ export function TimelineWorkspace() {
     return () => document.removeEventListener('mousedown', onClick);
   }, [clusterDropdownOpen]);
 
-  // Reserve vertical room for the drawer so the timeline doesn't
-  // shrink unexpectedly as the user drags the drawer handle. On
-  // desktop the drawer is `position: fixed` and overlays the
-  // strip's lower half — that's fine because the strip has plenty
-  // of vertical room (events on top, meetings below the axis), and
-  // the user can still pan/zoom because the drawer doesn't capture
-  // wheel/touch events directed at the timeline above it.
+  // The drawer is a flex sibling of the Timeline (not a fixed
+  // overlay), so opening it shrinks the strip rather than covering
+  // it. That keeps the full timeline visible and lets the drawer
+  // grow tall enough to show the notes & documents tab without
+  // crowding either pane.
 
   return (
     <div className="flex flex-col h-screen bg-gray-50 font-sans">
@@ -213,63 +227,87 @@ export function TimelineWorkspace() {
           </div>
         )}
 
-        {/* Cluster picker — same dropdown pattern as the map sidebar so
-            users can flip between clusters without leaving the workspace. */}
+        {/* Cluster picker. Rendered as a dropdown for users with RLS
+            access to >1 cluster; otherwise as a static label so the
+            current scope is always visible without offering an
+            illusory choice. */}
         <div className="relative flex-shrink-0" ref={clusterDropdownRef}>
-          <button
-            onClick={() => setClusterDropdownOpen(v => !v)}
-            disabled={clustersLoading}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-sm font-semibold text-gray-700 max-w-[200px]"
-          >
-            {clusterId ? (
-              <MapIcon className="w-4 h-4 text-blue-500 flex-shrink-0" />
-            ) : (
-              <GlobeIcon className="w-4 h-4 text-gray-500 flex-shrink-0" />
-            )}
-            <span className="truncate">
-              {currentClusterName ?? 'All Clusters'}
-            </span>
-            <ChevronDownIcon
-              className={`w-4 h-4 text-gray-400 transition-transform ${
-                clusterDropdownOpen ? 'rotate-180' : ''
-              }`}
-            />
-          </button>
-          {clusterDropdownOpen && (
-            <div className="absolute right-0 mt-1 w-64 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg z-20 p-1">
+          {canSwitchClusters ? (
+            <>
               <button
-                onClick={() => {
-                  setClusterId(null);
-                  setClusterDropdownOpen(false);
-                }}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm font-semibold ${
-                  clusterId === null
-                    ? 'bg-blue-50 text-blue-800'
-                    : 'hover:bg-gray-50 text-gray-700'
-                }`}
+                onClick={() => setClusterDropdownOpen(v => !v)}
+                disabled={clustersLoading}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-sm font-semibold text-gray-700 max-w-[220px]"
               >
-                <GlobeIcon className="w-4 h-4 text-gray-400" /> All Clusters
-              </button>
-              {clusters.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => {
-                    setClusterId(c.id);
-                    setClusterDropdownOpen(false);
-                    // Clear selection when switching cluster — the
-                    // previously-selected item likely lives in another scope.
-                    setSelectedItemId(null);
-                    setSelectedItem(null);
-                  }}
-                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm font-semibold ${
-                    clusterId === c.id
-                      ? 'bg-blue-50 text-blue-800'
-                      : 'hover:bg-gray-50 text-gray-700'
+                {clusterId ? (
+                  <MapIcon className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                ) : (
+                  <GlobeIcon className="w-4 h-4 text-gray-500 flex-shrink-0" />
+                )}
+                <span className="truncate">
+                  {currentClusterName ?? 'All Clusters'}
+                </span>
+                <ChevronDownIcon
+                  className={`w-4 h-4 text-gray-400 transition-transform ${
+                    clusterDropdownOpen ? 'rotate-180' : ''
                   }`}
-                >
-                  <MapIcon className="w-4 h-4 text-blue-500" /> {c.name}
-                </button>
-              ))}
+                />
+              </button>
+              {clusterDropdownOpen && (
+                <div className="absolute right-0 mt-1 w-64 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-xl shadow-lg z-20 p-1">
+                  <button
+                    onClick={() => {
+                      setClusterId(null);
+                      setClusterDropdownOpen(false);
+                      setSelectedItemId(null);
+                      setSelectedItem(null);
+                    }}
+                    className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm font-semibold ${
+                      clusterId === null
+                        ? 'bg-blue-50 text-blue-800'
+                        : 'hover:bg-gray-50 text-gray-700'
+                    }`}
+                  >
+                    <GlobeIcon className="w-4 h-4 text-gray-400" /> All Clusters
+                  </button>
+                  {clusters.map(c => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setClusterId(c.id);
+                        setClusterDropdownOpen(false);
+                        // Clear selection when switching cluster — the
+                        // previously-selected item likely lives in another scope.
+                        setSelectedItemId(null);
+                        setSelectedItem(null);
+                      }}
+                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-left text-sm font-semibold ${
+                        clusterId === c.id
+                          ? 'bg-blue-50 text-blue-800'
+                          : 'hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      <MapIcon className="w-4 h-4 text-blue-500" /> {c.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div
+              className="flex items-center gap-2 px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-sm font-semibold text-gray-700 max-w-[220px]"
+              aria-label="Cluster"
+            >
+              {clusterId ? (
+                <MapIcon className="w-4 h-4 text-blue-500 flex-shrink-0" />
+              ) : (
+                <GlobeIcon className="w-4 h-4 text-gray-500 flex-shrink-0" />
+              )}
+              <span className="truncate">
+                {clustersLoading
+                  ? '…'
+                  : currentClusterName ?? 'All Clusters'}
+              </span>
             </div>
           )}
         </div>
@@ -281,18 +319,20 @@ export function TimelineWorkspace() {
         </div>
       )}
 
-      <main className="flex-1 min-h-0 relative">
-        <Timeline
-          // Re-mount on reload-token bumps so the Timeline picks up
-          // newly-deleted items without us reaching into its state.
-          key={`tl-${clusterId ?? 'all'}-${reloadToken}`}
-          clusterId={clusterId}
-          orientation="horizontal"
-          mode="fill"
-          onItemClick={handleItemClick}
-          selectedItemId={selectedItemId}
-          openEditForItemId={editItemSignal}
-        />
+      <main className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 relative">
+          <Timeline
+            // Re-mount on reload-token bumps so the Timeline picks up
+            // newly-deleted items without us reaching into its state.
+            key={`tl-${clusterId ?? 'all'}-${reloadToken}`}
+            clusterId={clusterId}
+            orientation="horizontal"
+            mode="fill"
+            onItemClick={handleItemClick}
+            selectedItemId={selectedItemId}
+            openEditForItemId={editItemSignal}
+          />
+        </div>
         {selectedItem && (
           <TimelineItemDetailDrawer
             item={selectedItem}
