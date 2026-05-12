@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeftIcon,
@@ -8,6 +8,9 @@ import {
   ClockIcon,
   FileTextIcon,
   Trash2Icon,
+  PlayCircleIcon,
+  CheckCircleIcon,
+  XCircleIcon,
 } from 'lucide-react';
 import {
   fetchActivityDetail,
@@ -16,14 +19,82 @@ import {
   updateActivityDetails,
   activityDeletePermission,
   deleteActivity,
+  setActivityLifecycle,
 } from '../lib/db/nucleus';
 import { submitPermissionRequest } from '../lib/db/requests';
 import { getCallerContext } from '../lib/db/users';
 import { isRegionalOnly } from '../lib/permissions';
 import { markPersonUnplaced } from '../lib/unplacedTracker';
-import { Activity } from '../types';
+import {
+  Activity,
+  ActivityLifecycle,
+  ActivitySchedulingMode,
+} from '../types';
 import { PersonNameCombobox } from './PersonNameCombobox';
 import { GlobalSearch } from './GlobalSearch';
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function formatDateForInput(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseDateFromInput(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+// Build a one-line read-only summary of the schedule. Used at
+// the top of the activity detail header so the schedule is
+// visible even when the editor is collapsed.
+function buildScheduleSummary(opts: {
+  schedulingMode: ActivitySchedulingMode;
+  schedule: string;
+  daysOfWeek: number[];
+  time: string;
+  intervalWeeks: number;
+  startDate: string;
+  endDate: string;
+}): string {
+  switch (opts.schedulingMode) {
+    case 'sporadic_ongoing':
+      return opts.schedule.trim() || 'Sporadic / ongoing';
+    case 'short_duration': {
+      if (opts.startDate && opts.endDate) {
+        return `${opts.startDate} → ${opts.endDate}`;
+      }
+      return 'Short duration (dates not yet set)';
+    }
+    case 'structured_recurring': {
+      const days = opts.daysOfWeek.map(d => DAY_LABELS[d]).join(', ');
+      const everyN = opts.intervalWeeks <= 1
+        ? 'Weekly'
+        : opts.intervalWeeks === 2
+          ? 'Biweekly'
+          : `Every ${opts.intervalWeeks} weeks`;
+      const t = opts.time ? ` at ${opts.time}` : '';
+      const d = days ? ` on ${days}` : '';
+      return `${everyN}${d}${t}`.trim();
+    }
+  }
+}
+
+const LIFECYCLE_LABELS: Record<ActivityLifecycle, string> = {
+  planned: 'Planned',
+  active: 'Active',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+
+const LIFECYCLE_BADGE: Record<ActivityLifecycle, string> = {
+  planned: 'bg-amber-50 text-amber-800 border-amber-200',
+  active: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  completed: 'bg-gray-100 text-gray-700 border-gray-300',
+  cancelled: 'bg-rose-50 text-rose-700 border-rose-200',
+};
 
 // DB role enum keys for each activity type
 const ROLES_FOR_TYPE: Record<string, string[]> = {
@@ -59,6 +130,19 @@ export function ActivityDetail() {
   const [saved, setSaved] = useState(false);
   const [schedule, setSchedule] = useState('');
   const [notes, setNotes] = useState('');
+  // Scheduling-mode editor state. All four fields are tracked
+  // locally so the user can switch modes without losing a partial
+  // entry; we only persist whatever fields are relevant to the
+  // active mode on Save.
+  const [schedulingMode, setSchedulingMode] =
+    useState<ActivitySchedulingMode>('sporadic_ongoing');
+  const [daysOfWeek, setDaysOfWeek] = useState<number[]>([]);
+  const [time, setTime] = useState('');
+  const [intervalWeeks, setIntervalWeeks] = useState<number>(1);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [lifecycleSaving, setLifecycleSaving] = useState(false);
   const [deletePermission, setDeletePermission] = useState<'direct' | 'request' | 'none'>('none');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
@@ -85,6 +169,12 @@ export function ActivityDetail() {
         setPersonNames(pNames);
         setSchedule(a.schedule ?? '');
         setNotes(a.notes ?? '');
+        setSchedulingMode(a.schedulingMode ?? 'sporadic_ongoing');
+        setDaysOfWeek(a.daysOfWeek ?? []);
+        setTime(a.time ?? '');
+        setIntervalWeeks(a.intervalWeeks ?? 1);
+        setStartDate(a.startDate ? formatDateForInput(a.startDate) : '');
+        setEndDate(a.endDate ? formatDateForInput(a.endDate) : '');
         // Pre-fill expected roles
         const expectedRoles = ROLES_FOR_TYPE[a.type] ?? [];
         const initialParticipants = { ...a.participants };
@@ -97,6 +187,23 @@ export function ActivityDetail() {
     });
     activityDeletePermission(activityId).then(setDeletePermission);
   }, [activityId]);
+
+  // Schedule summary memo — must live ABOVE the `if (loading)` /
+  // `if (!activity)` early returns below or React will flag a
+  // hook-count change between the loading render (which doesn't
+  // reach this line) and the loaded render (which does), and the
+  // whole component unmounts to a blank screen. The inputs are
+  // all local state with sensible initial values, so it's safe
+  // to compute even before fetchActivityDetail resolves.
+  const scheduleSummary = useMemo(() => buildScheduleSummary({
+    schedulingMode,
+    schedule,
+    daysOfWeek,
+    time,
+    intervalWeeks,
+    startDate,
+    endDate,
+  }), [schedulingMode, schedule, daysOfWeek, time, intervalWeeks, startDate, endDate]);
 
   if (loading) {
     return (
@@ -177,21 +284,116 @@ export function ActivityDetail() {
   };
 
   const handleSave = async () => {
+    setScheduleError(null);
+    // We only need to validate schedule fields when they're actually
+    // editable — for a locked (completed/cancelled) activity the
+    // schedule isn't being touched, so its existing values can stay
+    // as-is even if they wouldn't pass new-input validation.
+    const localScheduleLocked =
+      activity && (activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled');
+    if (!localScheduleLocked && schedulingMode === 'short_duration') {
+      if (!startDate || !endDate) {
+        setScheduleError('Short-duration activities need both a start and end date.');
+        return;
+      }
+      if (new Date(endDate) < new Date(startDate)) {
+        setScheduleError('End date can’t be before the start date.');
+        return;
+      }
+    }
     try {
-      await updateActivityDetails(activityId!, {
-        scheduleNotes: schedule,
-        notes,
-      });
+      // When the schedule is locked, persist only notes — the user
+      // is editing the running record of a finished activity, not
+      // its calendar. updateActivityDetails skips undefined keys.
+      const params: Parameters<typeof updateActivityDetails>[1] = { notes };
+      if (!localScheduleLocked) {
+        params.schedulingMode = schedulingMode;
+        params.scheduleNotes = schedulingMode === 'sporadic_ongoing' ? schedule : '';
+        params.daysOfWeek = schedulingMode === 'structured_recurring' ? daysOfWeek : [];
+        params.time = schedulingMode === 'structured_recurring' ? (time || null) : null;
+        params.intervalWeeks = schedulingMode === 'structured_recurring' ? intervalWeeks : null;
+        params.startDate =
+          (schedulingMode === 'short_duration' || schedulingMode === 'structured_recurring')
+            ? (startDate ? parseDateFromInput(startDate) : null)
+            : null;
+        params.endDate = schedulingMode === 'short_duration'
+          ? (endDate ? parseDateFromInput(endDate) : null)
+          : null;
+      }
+      await updateActivityDetails(activityId!, params);
+      // Refresh the local view so the lifecycle pill / sync chip
+      // reflects what's now in the DB (the sync helper may have
+      // generated/refreshed a timeline_events row).
+      const fresh = await fetchActivityDetail(activityId!);
+      if (fresh) setActivity(fresh.activity);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to save activity:', err);
+      setScheduleError(err?.message ?? 'Failed to save activity.');
     }
+  };
+
+  const handleLifecycleChange = async (next: ActivityLifecycle) => {
+    if (!activity) return;
+    if (next === activity.lifecycle) return;
+
+    // Reactivation nudge. Moving an activity from a terminal state
+    // (completed / cancelled) back to active or planned is a real
+    // workflow — for example, finishing one cohort and starting
+    // another — but the more common case is a fresh effort that
+    // happens to look similar. We prompt rather than block so the
+    // user can confirm intent, and the message explicitly suggests
+    // creating a new activity to preserve the historical record of
+    // the one being reactivated.
+    const isReactivation =
+      (activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled')
+      && (next === 'active' || next === 'planned');
+    if (isReactivation) {
+      const ok = window.confirm(
+        `Reactivate "${activity.name}"?\n\n` +
+        `This activity is currently ${activity.lifecycle}. Reactivating it ` +
+        `reopens it for scheduling and puts its meetings back on the nucleus ` +
+        `timeline.\n\n` +
+        `If you're starting a fresh effort, the better path is usually to ` +
+        `create a NEW activity — that way the record of this one stays ` +
+        `intact as history. Reactivate is the right choice when you're ` +
+        `genuinely continuing the same activity (e.g. it was paused, ` +
+        `not really finished).`,
+      );
+      if (!ok) return;
+    }
+
+    setLifecycleSaving(true);
+    try {
+      await setActivityLifecycle(activityId!, next);
+      const fresh = await fetchActivityDetail(activityId!);
+      if (fresh) setActivity(fresh.activity);
+    } catch (err) {
+      console.error('Failed to update lifecycle:', err);
+    } finally {
+      setLifecycleSaving(false);
+    }
+  };
+
+  const toggleDay = (day: number) => {
+    setDaysOfWeek(prev =>
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort(),
+    );
   };
 
   const expectedRoles = ROLES_FOR_TYPE[activity.type] ?? [];
   const extraRoles = Object.keys(participants).filter(r => !expectedRoles.includes(r));
   const roles = [...expectedRoles.filter(r => r in participants), ...extraRoles];
+
+  // Schedule editing is locked while the activity is in a terminal
+  // state — the user has to flip it back to active/planned (via the
+  // reactivation confirm) before mode chips, day pickers, or date
+  // fields can be changed. regionalOnly retains its existing
+  // read-only force.
+  const scheduleLocked =
+    activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled';
+  const scheduleReadOnly = regionalOnly || scheduleLocked;
 
   return (
     <div className="min-h-screen bg-gray-50/50 font-sans">
@@ -235,17 +437,29 @@ export function ActivityDetail() {
               <span className="text-xs text-amber-700 font-medium">Deletion requested</span>
             )}
           </div>
-          {activity.currentBook && (
-            <p className="text-sm font-medium text-blue-600 mt-1.5 bg-blue-50 inline-block px-2.5 py-1 rounded-md">
-              Current: {activity.currentBook}
-            </p>
-          )}
-          {activity.schedule && (
-            <p className="text-sm font-medium text-gray-500 mt-1.5 flex items-center gap-1.5">
-              <ClockIcon className="w-3.5 h-3.5" />
-              {activity.schedule}
-            </p>
-          )}
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border ${LIFECYCLE_BADGE[activity.lifecycle]}`}
+              title="Lifecycle state"
+            >
+              {activity.lifecycle === 'completed' && <CheckCircleIcon className="w-3.5 h-3.5" />}
+              {activity.lifecycle === 'cancelled' && <XCircleIcon className="w-3.5 h-3.5" />}
+              {activity.lifecycle === 'active' && <PlayCircleIcon className="w-3.5 h-3.5" />}
+              {activity.lifecycle === 'planned' && <ClockIcon className="w-3.5 h-3.5" />}
+              {LIFECYCLE_LABELS[activity.lifecycle]}
+            </span>
+            {activity.currentBook && (
+              <span className="text-sm font-medium text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
+                Current: {activity.currentBook}
+              </span>
+            )}
+            {scheduleSummary && (
+              <span className="text-sm font-medium text-gray-500 flex items-center gap-1.5">
+                <ClockIcon className="w-3.5 h-3.5" />
+                {scheduleSummary}
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
@@ -358,131 +572,288 @@ export function ActivityDetail() {
         </div>
       )}
 
-      <div className="max-w-5xl mx-auto p-4 sm:p-8 space-y-6">
-        {/* Schedule & Notes */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8 space-y-6">
-          <div>
-            <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
-              <ClockIcon className="w-4 h-4 text-gray-400" />
-              Schedule
-            </h3>
-            <input
-              type="text"
-              value={schedule}
-              onChange={e => setSchedule(e.target.value)}
-              placeholder="e.g. Saturdays at 10:00 AM, Every other Tuesday at 7 PM, Bi-weekly..."
-              readOnly={regionalOnly}
-              className={`w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium shadow-sm ${
-                regionalOnly
-                  ? 'bg-gray-50 text-gray-700 cursor-default focus:outline-none'
-                  : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-              }`}
-            />
-          </div>
-
-          <div>
-            <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
-              <FileTextIcon className="w-4 h-4 text-gray-400" />
-              Notes
-            </h3>
-            <textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              placeholder={regionalOnly && !notes ? 'No notes for this activity.' : 'Write any notes about this activity here...'}
-              readOnly={regionalOnly}
-              className={`w-full min-h-[120px] px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
-                regionalOnly
-                  ? 'bg-gray-50 cursor-default focus:outline-none'
-                  : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-              }`}
-            />
-          </div>
-        </div>
-
-        {/* Participants */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
-          <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-6">
-            Participants by Role
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {roles.map(role => (
-              <div key={role} className="space-y-4">
-                <h3 className="font-bold text-gray-900 capitalize border-b border-gray-100 pb-3 tracking-tight">
-                  {ROLE_DISPLAY[role] ?? role}
-                </h3>
-                <div className="space-y-2.5">
-                  {(participants[role] ?? []).map(pid => {
-                    const name = personNames[pid] ?? pid;
-                    return (
-                      <div
-                        key={pid}
-                        className="flex items-center justify-between bg-gray-50/80 border border-gray-100 px-3.5 py-2.5 rounded-xl group hover:border-blue-200 transition-colors duration-200"
-                      >
-                        <button
-                          onClick={() => navigate(`/individual/${pid}`)}
-                          className="text-sm font-semibold flex items-center gap-2 text-blue-700 hover:text-blue-900"
-                        >
-                          <div className="p-1 rounded-full bg-blue-100">
-                            <UserIcon className="w-3 h-3" />
-                          </div>
-                          {name}
-                        </button>
-                        {!regionalOnly && (
-                          <button
-                            onClick={() => removeParticipant(role, pid)}
-                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all duration-200"
+      <div className="max-w-6xl mx-auto p-4 sm:p-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* ─── Main column: participants + notes ─────────────────────────
+              The "meat" of an activity is who's in it and what's being
+              learned, so these get the full width on mobile and 2/3 on
+              desktop. The schedule / lifecycle controls live in the
+              sidebar at right, deliberately quiet. */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
+              <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-6">
+                Participants by Role
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {roles.map(role => (
+                  <div key={role} className="space-y-4">
+                    <h3 className="font-bold text-gray-900 capitalize border-b border-gray-100 pb-3 tracking-tight">
+                      {ROLE_DISPLAY[role] ?? role}
+                    </h3>
+                    <div className="space-y-2.5">
+                      {(participants[role] ?? []).map(pid => {
+                        const name = personNames[pid] ?? pid;
+                        return (
+                          <div
+                            key={pid}
+                            className="flex items-center justify-between bg-gray-50/80 border border-gray-100 px-3.5 py-2.5 rounded-xl group hover:border-blue-200 transition-colors duration-200"
                           >
-                            <XIcon className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
+                            <button
+                              onClick={() => navigate(`/individual/${pid}`)}
+                              className="text-sm font-semibold flex items-center gap-2 text-blue-700 hover:text-blue-900"
+                            >
+                              <div className="p-1 rounded-full bg-blue-100">
+                                <UserIcon className="w-3 h-3" />
+                              </div>
+                              {name}
+                            </button>
+                            {!regionalOnly && (
+                              <button
+                                onClick={() => removeParticipant(role, pid)}
+                                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all duration-200"
+                              >
+                                <XIcon className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {!regionalOnly && (
+                      <PersonNameCombobox
+                        placeholder="Add name..."
+                        onAdd={params => addParticipantToRole(role, params)}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {activity.type === 'study-circle' && activity.currentBook && (
+                <div className="mt-8 pt-8 border-t border-gray-100">
+                  <button className="px-5 py-2.5 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition-all shadow-sm hover:shadow-md">
+                    Mark Book Completed
+                  </button>
+                  <p className="text-sm font-medium text-gray-500 mt-2.5">
+                    This will update all participants' profiles to show completion of{' '}
+                    {activity.currentBook}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
+              <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
+                <FileTextIcon className="w-4 h-4 text-gray-400" />
+                Notes
+              </h3>
+              <textarea
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder={regionalOnly && !notes ? 'No notes for this activity.' : 'Write any notes about this activity here...'}
+                readOnly={regionalOnly}
+                className={`w-full min-h-[200px] px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
+                  regionalOnly
+                    ? 'bg-gray-50 cursor-default focus:outline-none'
+                    : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                }`}
+              />
+            </div>
+
+            {!regionalOnly && (
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => navigate(`/nucleus/${nucleusId}`)}
+                  className="px-6 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
+                >
+                  Save Changes
+                </button>
+                {saved && (
+                  <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
+                    <CheckIcon className="w-4 h-4" />
+                    Saved!
+                  </span>
+                )}
+                {scheduleError && (
+                  <span className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg">
+                    {scheduleError}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ─── Sidebar: status + schedule ────────────────────────────────
+              Small, quiet cards. Labels are self-explanatory; no prose
+              explanations. On mobile this stack appears below the main
+              column. */}
+          <aside className="space-y-4">
+            {/* Status */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-4">
+              <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                Status
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(['planned', 'active', 'completed', 'cancelled'] as ActivityLifecycle[]).map(state => {
+                  const isCurrent = activity.lifecycle === state;
+                  const baseClass = isCurrent
+                    ? LIFECYCLE_BADGE[state]
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50';
+                  return (
+                    <button
+                      key={state}
+                      type="button"
+                      disabled={lifecycleSaving || regionalOnly}
+                      onClick={() => handleLifecycleChange(state)}
+                      className={`px-2 py-1 rounded-md text-xs font-semibold border transition-colors ${baseClass} ${lifecycleSaving || regionalOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    >
+                      {LIFECYCLE_LABELS[state]}
+                    </button>
+                  );
+                })}
+              </div>
+              {activity.completedAt && (
+                <div className="text-[11px] text-gray-400 mt-2">
+                  Changed {activity.completedAt.toLocaleDateString()}
+                </div>
+              )}
+            </div>
+
+            {/* Schedule — locked when the activity is in a terminal
+                state. The fields stay visible (so the user can read
+                what the schedule was) but become non-interactive
+                and visually dimmed. */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-4">
+              <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                Schedule
+              </div>
+              {scheduleLocked && (
+                <div className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-md px-2 py-1.5 mb-3 leading-snug">
+                  Locked while {activity.lifecycle}. Set status back to
+                  active or planned to edit — or, ideally, create a new
+                  activity so this one's record stays intact.
+                </div>
+              )}
+              <div className={scheduleLocked ? 'opacity-60' : ''}>
+                <div className="flex flex-wrap gap-1 mb-3">
+                  {[
+                    { value: 'structured_recurring' as const, label: 'Recurring' },
+                    { value: 'sporadic_ongoing' as const, label: 'Sporadic' },
+                    { value: 'short_duration' as const, label: 'Short' },
+                  ].map(opt => {
+                    const selected = schedulingMode === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        disabled={scheduleReadOnly}
+                        onClick={() => setSchedulingMode(opt.value)}
+                        className={`px-2 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                          selected
+                            ? 'bg-blue-50 border-blue-300 text-blue-800'
+                            : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                        } ${scheduleReadOnly ? 'cursor-not-allowed' : ''}`}
+                      >
+                        {opt.label}
+                      </button>
                     );
                   })}
                 </div>
-                {!regionalOnly && (
-                  <PersonNameCombobox
-                    placeholder="Add name..."
-                    onAdd={params => addParticipantToRole(role, params)}
+
+                {schedulingMode === 'structured_recurring' && (
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap gap-1">
+                      {DAY_LABELS.map((d, i) => {
+                        const selected = daysOfWeek.includes(i);
+                        return (
+                          <button
+                            key={d}
+                            type="button"
+                            disabled={scheduleReadOnly}
+                            onClick={() => toggleDay(i)}
+                            className={`w-7 h-7 rounded text-[11px] font-bold border transition-colors ${
+                              selected
+                                ? 'bg-blue-600 text-white border-blue-700'
+                                : 'bg-white text-gray-500 border-gray-200 hover:border-blue-200'
+                            } ${scheduleReadOnly ? 'cursor-not-allowed' : ''}`}
+                          >
+                            {d[0]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="time"
+                        value={time}
+                        onChange={e => setTime(e.target.value)}
+                        readOnly={scheduleReadOnly}
+                        placeholder="Time"
+                        className="px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                      />
+                      <select
+                        value={intervalWeeks}
+                        onChange={e => setIntervalWeeks(parseInt(e.target.value, 10))}
+                        disabled={scheduleReadOnly}
+                        className="px-2 py-1.5 border border-gray-200 rounded-md text-xs bg-white"
+                      >
+                        <option value={1}>Weekly</option>
+                        <option value={2}>Biweekly</option>
+                        <option value={4}>Monthly</option>
+                      </select>
+                    </div>
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={e => setStartDate(e.target.value)}
+                      readOnly={scheduleReadOnly}
+                      title="Activity start date"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                    />
+                  </div>
+                )}
+
+                {schedulingMode === 'sporadic_ongoing' && (
+                  <input
+                    type="text"
+                    value={schedule}
+                    onChange={e => setSchedule(e.target.value)}
+                    placeholder="When does this happen?"
+                    readOnly={scheduleReadOnly}
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
                   />
                 )}
+
+                {schedulingMode === 'short_duration' && (
+                  <div className="space-y-2">
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={e => setStartDate(e.target.value)}
+                      readOnly={scheduleReadOnly}
+                      title="Start date"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                    />
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={e => setEndDate(e.target.value)}
+                      min={startDate || undefined}
+                      readOnly={scheduleReadOnly}
+                      title="End date"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                    />
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
-
-          {activity.type === 'study-circle' && activity.currentBook && (
-            <div className="mt-8 pt-8 border-t border-gray-100">
-              <button className="px-5 py-2.5 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition-all shadow-sm hover:shadow-md">
-                Mark Book Completed
-              </button>
-              <p className="text-sm font-medium text-gray-500 mt-2.5">
-                This will update all participants' profiles to show completion of{' '}
-                {activity.currentBook}
-              </p>
             </div>
-          )}
-
-          {!regionalOnly && (
-            <div className="flex items-center gap-3 mt-8 pt-8 border-t border-gray-100">
-              <button
-                onClick={() => navigate(`/nucleus/${nucleusId}`)}
-                className="px-6 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
-              >
-                Save Changes
-              </button>
-              {saved && (
-                <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
-                  <CheckIcon className="w-4 h-4" />
-                  Saved!
-                </span>
-              )}
-            </div>
-          )}
+          </aside>
         </div>
       </div>
     </div>

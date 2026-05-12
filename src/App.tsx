@@ -18,15 +18,17 @@ import { MobileReports } from './components/MobileReports';
 import { MobileTimeline } from './components/MobileTimeline';
 import { MobileNetwork } from './components/MobileNetwork';
 import { TimelineWorkspace } from './components/TimelineWorkspace';
+import { NucleusTimeline } from './components/NucleusTimeline';
 import { useIsMobile } from './lib/useIsMobile';
 
 function AppRoutes() {
   const { user, loading } = useAuth();
   const isMobile = useIsMobile();
   const location = useLocation();
-  // The nucleus dashboard renders its own AccountMenu inline in its compact
-  // header, so suppress the global floating chip there.
-  const nucleusDetailRoute = /^\/nucleus\/[^/]+$/.test(location.pathname);
+  // The nucleus dashboard / nucleus timeline render their own AccountMenu
+  // inline in their compact header, so suppress the global floating chip
+  // on those routes to avoid a duplicate avatar.
+  const nucleusDetailRoute = /^\/nucleus\/[^/]+(?:\/timeline)?$/.test(location.pathname);
 
   if (loading) {
     return (
@@ -53,6 +55,7 @@ function AppRoutes() {
       <Route path="/timeline" element={<TimelineWorkspace />} />
       <Route path="/guide" element={<UserGuide />} />
       <Route path="/nucleus/:id" element={<NucleusDashboard />} />
+      <Route path="/nucleus/:id/timeline" element={<NucleusTimeline />} />
       <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
       <Route path="/individual/:id" element={<IndividualProfile />} />
       <Route path="/report/:type" element={<ActivityTypeReport />} />

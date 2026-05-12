@@ -43,6 +43,7 @@ import { getCallerContext } from '../lib/db/users';
 import {
   type CallerContext,
   canManageClusterTimelineEvents,
+  canManageNucleusTimelineEvents,
 } from '../lib/permissions';
 
 type TimelineCycleOverride = TimelineCycle;
@@ -74,6 +75,13 @@ const CYCLE_EDIT_MIN_PX = 140;
 
 interface TimelineProps {
   clusterId: string | null;
+  // When set, the Timeline scopes its event reads/writes to this
+  // nucleus instead of the cluster. The cycle ladder still comes
+  // from the parent cluster's overrides (cycles are administrative
+  // and apply at the cluster level), but cycle boundary editing is
+  // suppressed in nucleus mode so two nucleus coordinators can't
+  // accidentally fork the same cluster's calendar.
+  nucleusId?: string | null;
   // 'horizontal' (default): time runs left→right, panel sits at the
   // bottom of the screen with a resize handle. 'vertical': time runs
   // top→bottom, panel fills its parent's height — used by the mobile
@@ -97,6 +105,19 @@ interface TimelineProps {
   // workspace to wire the detail drawer's "Edit" button through to
   // the Timeline's existing modal without duplicating that form.
   openEditForItemId?: { id: string; nonce: number } | null;
+  // Read-only synthesized items the caller wants rendered alongside
+  // the fetched events. Used by the nucleus timeline to fan out
+  // recurring activities into one marker per occurrence without
+  // persisting hundreds of rows. They're treated as immutable: no
+  // edit modal, no delete, but they DO participate in click handling
+  // (so a click can navigate to the source activity).
+  extraItems?: TimelineEvent[];
+  // Activity IDs whose persisted timeline_events rows should be
+  // suppressed — e.g. when the caller is supplying synthesized
+  // recurring occurrences for an activity whose stale single-row
+  // entry from a previous version still lives in the database.
+  // Keeps the strip clean without forcing a DB cleanup pass.
+  hiddenActivityIds?: ReadonlySet<string>;
 }
 
 type EventModalState =
@@ -105,14 +126,26 @@ type EventModalState =
 
 export function Timeline({
   clusterId,
+  nucleusId = null,
   orientation = 'horizontal',
   mode = 'panel',
   onItemClick,
   selectedItemId = null,
   openEditForItemId = null,
+  extraItems,
+  hiddenActivityIds,
 }: TimelineProps) {
   const isVertical = orientation === 'vertical';
   const fillMode = mode === 'fill';
+  const isNucleusScope = !!nucleusId;
+  // Memoize so identity changes only when contents change. The visible-
+  // events memo below depends on these, and we'd otherwise rebuild it
+  // on every parent render.
+  const stableExtraItems = useMemo(() => extraItems ?? [], [extraItems]);
+  const stableHiddenActivityIds = useMemo(
+    () => hiddenActivityIds ?? new Set<string>(),
+    [hiddenActivityIds],
+  );
 
   const [overrides, setOverrides] = useState<TimelineCycleOverride[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
@@ -140,8 +173,13 @@ export function Timeline({
   const [saving, setSaving] = useState(false);
 
   const canManageEvents = useMemo(
-    () => (callerCtx ? canManageClusterTimelineEvents(callerCtx, clusterId) : false),
-    [callerCtx, clusterId],
+    () => {
+      if (!callerCtx) return false;
+      return isNucleusScope
+        ? canManageNucleusTimelineEvents(callerCtx, { clusterId, nucleusId })
+        : canManageClusterTimelineEvents(callerCtx, clusterId);
+    },
+    [callerCtx, clusterId, nucleusId, isNucleusScope],
   );
 
   // ───── Data loading ───────────────────────────────────────────────────
@@ -151,7 +189,11 @@ export function Timeline({
       .catch(() => setOverrides([]));
 
   const reloadEvents = () =>
-    fetchTimelineEvents({ clusterId: clusterId ?? undefined })
+    fetchTimelineEvents(
+      isNucleusScope
+        ? { nucleusId: nucleusId ?? undefined }
+        : { clusterId: clusterId ?? undefined },
+    )
       .then(setEvents)
       .catch(() => {});
 
@@ -160,7 +202,7 @@ export function Timeline({
     reloadEvents();
     setPendingShifts({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clusterId]);
+  }, [clusterId, nucleusId]);
 
   useEffect(() => {
     getCallerContext().then(setCallerCtx).catch(() => setCallerCtx(null));
@@ -734,6 +776,7 @@ export function Timeline({
           endDate: endDate ?? undefined,
           startTime: startTime ?? undefined,
           clusterId: clusterId ?? undefined,
+          nucleusId: nucleusId ?? undefined,
           location: location ?? undefined,
           meetingType: meetingType ?? undefined,
           attendees,
@@ -788,12 +831,23 @@ export function Timeline({
     useState<{ event: TimelineEvent; x: number; y: number } | null>(null);
 
   const visibleEvents = useMemo(
-    () =>
-      events.filter(e => {
+    () => {
+      // Merge fetched + synthesized streams, hiding any fetched row
+      // whose source activity is now being rendered via synthesized
+      // occurrences (so the strip doesn't show both a lone start-
+      // date marker and the new fan-out for the same activity).
+      const merged: TimelineEvent[] = [];
+      for (const e of events) {
+        if (e.activityId && stableHiddenActivityIds.has(e.activityId)) continue;
+        merged.push(e);
+      }
+      for (const e of stableExtraItems) merged.push(e);
+      return merged.filter(e => {
         const evtEnd = e.endDate ?? e.startDate;
         return evtEnd >= visibleStart && e.startDate <= visibleEnd;
-      }),
-    [events, visibleStart, visibleEnd],
+      });
+    },
+    [events, stableExtraItems, stableHiddenActivityIds, visibleStart, visibleEnd],
   );
 
   // Pack visible items into stacked lanes. Intervals are in pixel units
@@ -1173,8 +1227,12 @@ export function Timeline({
                 );
                 const lengthPx = endMain - startMain;
                 const pending = (pendingShifts[cycle.id] ?? 0) !== 0;
+                // Cycle ladder is administrative; only admins can shift its
+                // boundaries, and only on the cluster view. The nucleus
+                // timeline shows the same ladder for context but never
+                // exposes the +/- editor here.
                 const showEdit =
-                  callerCtx?.isAdmin && lengthPx >= CYCLE_EDIT_MIN_PX;
+                  callerCtx?.isAdmin && lengthPx >= CYCLE_EDIT_MIN_PX && !isNucleusScope;
                 const showLabel = lengthPx >= 50;
                 // Boundary tick: a short stripe across the center axis,
                 // on the start (leading) edge of the cycle.

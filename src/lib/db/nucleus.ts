@@ -1,8 +1,86 @@
 import { supabase } from '../supabase';
-import type { Activity } from '../../types';
+import type {
+  Activity,
+  ActivityLifecycle,
+  ActivitySchedulingMode,
+} from '../../types';
 import type { PersonProfile, CourseRow } from './clusterProfile';
 import { actionPermission, canDirectly } from '../permissions';
 import { getCallerContext } from './users';
+
+// Date columns on `activities` are Postgres `date` (calendar date,
+// no time zone) — same convention as timeline_events. We parse them
+// as local-calendar dates here so they don't shift by ±1 across UTC.
+function parseLocalDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+function formatLocalDate(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+const ACTIVITY_BASE_COLUMNS =
+  'id, nucleus_id, name, type, schedule_notes, schedule_day_of_week, ' +
+  'schedule_days_of_week, schedule_time, schedule_interval_weeks, ' +
+  'lifecycle_state, scheduling_mode, start_date, end_date, ' +
+  'completed_at, is_active, notes, current_course_id';
+
+// Pre-20260512-migration column set. Used as a fallback for read
+// queries so a deployment running the new code against an un-
+// migrated database still renders the nucleus dashboard — the
+// alternative was a "Nucleus not found" misfire when the wider
+// SELECT failed and bubbled all the way up to Promise.all in the
+// dashboard loader.
+const ACTIVITY_LEGACY_COLUMNS =
+  'id, nucleus_id, name, type, schedule_notes, schedule_day_of_week, ' +
+  'schedule_time, schedule_interval_weeks, is_active, notes, current_course_id';
+
+// PostgREST returns SQLSTATE 42703 ("undefined_column") when a
+// SELECT references a column that isn't in the live schema. We
+// match on both the code and the message because PostgREST has
+// historically been inconsistent about which it populates.
+function isMissingColumnError(err: any): boolean {
+  if (!err) return false;
+  if (err.code === '42703') return true;
+  const msg = String(err.message ?? '');
+  return /column .* does not exist/i.test(msg);
+}
+
+function mapActivityRow(a: any, participants: Record<string, string[]>): Activity {
+  // Tolerate older DBs that haven't run the lifecycle migration yet —
+  // is_active still tells us "this is an active activity" in that case.
+  const lifecycle = (a.lifecycle_state ?? (a.is_active === false ? 'completed' : 'active')) as ActivityLifecycle;
+  const schedulingMode = (a.scheduling_mode ?? 'sporadic_ongoing') as ActivitySchedulingMode;
+  // schedule_days_of_week is the canonical array; fall back to the
+  // legacy single-day column when the array is empty so old rows
+  // continue to render their day-of-week.
+  const daysArr: number[] = Array.isArray(a.schedule_days_of_week) ? a.schedule_days_of_week : [];
+  const daysOfWeek = daysArr.length > 0
+    ? daysArr
+    : (typeof a.schedule_day_of_week === 'number' ? [a.schedule_day_of_week] : []);
+  return {
+    id: a.id,
+    nucleusId: a.nucleus_id,
+    name: a.name,
+    type: (DB_TO_APP_TYPE[a.type] ?? 'other') as Activity['type'],
+    participants,
+    schedule: a.schedule_notes ?? undefined,
+    notes: a.notes ?? undefined,
+    currentBook: a.current_course_id ?? undefined,
+    lifecycle,
+    schedulingMode,
+    daysOfWeek: daysOfWeek.length > 0 ? daysOfWeek : undefined,
+    time: a.schedule_time ?? undefined,
+    intervalWeeks: a.schedule_interval_weeks ?? undefined,
+    startDate: a.start_date ? parseLocalDate(a.start_date) : undefined,
+    endDate: a.end_date ? parseLocalDate(a.end_date) : undefined,
+    completedAt: a.completed_at ? new Date(a.completed_at) : undefined,
+  };
+}
 
 export type { PersonProfile, CourseRow };
 
@@ -48,14 +126,33 @@ export async function fetchNucleus(nucleusId: string): Promise<NucleusDetail | n
   };
 }
 
-export async function fetchActivitiesForNucleus(nucleusId: string): Promise<Activity[]> {
-  const { data, error } = await supabase
-    .from('activities')
-    .select('id, nucleus_id, name, type, schedule_notes, notes, current_course_id, activity_participants(person_id, role, deleted_at)')
-    .eq('nucleus_id', nucleusId)
-    .is('deleted_at', null)
-    .eq('is_active', true)
-    .order('name');
+// Default lists every activity the user can see in their nucleus —
+// including completed and cancelled ones — so the dashboard can
+// surface historical activities without a separate query. Callers
+// that only want active rows pass { includeInactive: false }.
+export async function fetchActivitiesForNucleus(
+  nucleusId: string,
+  opts: { includeInactive?: boolean } = {},
+): Promise<Activity[]> {
+  const includeInactive = opts.includeInactive ?? true;
+  const run = async (cols: string) => {
+    let q = supabase
+      .from('activities')
+      .select(`${cols}, activity_participants(person_id, role, deleted_at)`)
+      .eq('nucleus_id', nucleusId)
+      .is('deleted_at', null)
+      .order('name');
+    if (!includeInactive) q = q.eq('is_active', true);
+    return q;
+  };
+
+  let { data, error } = await run(ACTIVITY_BASE_COLUMNS);
+  if (error && isMissingColumnError(error)) {
+    // Migration not yet applied — retry with the columns that
+    // existed before 20260512. mapActivityRow tolerates the
+    // missing fields via defaults.
+    ({ data, error } = await run(ACTIVITY_LEGACY_COLUMNS));
+  }
   if (error) throw error;
 
   return (data as any[]).map(a => {
@@ -66,33 +163,51 @@ export async function fetchActivitiesForNucleus(nucleusId: string): Promise<Acti
         if (!participants[p.role]) participants[p.role] = [];
         participants[p.role].push(p.person_id);
       });
-    return {
-      id: a.id,
-      nucleusId: a.nucleus_id,
-      name: a.name,
-      type: (DB_TO_APP_TYPE[a.type] ?? 'other') as Activity['type'],
-      participants,
-      schedule: a.schedule_notes ?? undefined,
-      notes: a.notes ?? undefined,
-      currentBook: a.current_course_id ?? undefined,
-    };
+    return mapActivityRow(a, participants);
   });
 }
 
-export async function createActivity(params: {
+export interface CreateActivityParams {
   nucleusId: string;
   name: string;
   type: Activity['type'];
-}): Promise<Activity> {
+  // Optional initial scheduling info. When provided, the activity is
+  // saved in the requested mode and (for structured_recurring /
+  // short_duration) an associated nucleus-timeline row is synced so
+  // the nucleus timeline doesn't require manual duplicate entry.
+  schedulingMode?: ActivitySchedulingMode;
+  lifecycle?: ActivityLifecycle;
+  schedule?: string;
+  daysOfWeek?: number[];
+  time?: string;
+  intervalWeeks?: number;
+  startDate?: Date;
+  endDate?: Date;
+}
+
+export async function createActivity(params: CreateActivityParams): Promise<Activity> {
+  const lifecycle = params.lifecycle ?? 'active';
+  const schedulingMode = params.schedulingMode ?? 'sporadic_ongoing';
+  const insertRow: Record<string, any> = {
+    nucleus_id: params.nucleusId,
+    name: params.name,
+    type: APP_TO_DB_TYPE[params.type] as any,
+    is_active: lifecycle === 'active' || lifecycle === 'planned',
+    lifecycle_state: lifecycle,
+    scheduling_mode: schedulingMode,
+    schedule_notes: params.schedule ?? null,
+    schedule_days_of_week: params.daysOfWeek ?? [],
+    schedule_day_of_week:
+      params.daysOfWeek && params.daysOfWeek.length > 0 ? params.daysOfWeek[0] : null,
+    schedule_time: params.time ?? null,
+    schedule_interval_weeks: params.intervalWeeks ?? null,
+    start_date: params.startDate ? formatLocalDate(params.startDate) : null,
+    end_date: params.endDate ? formatLocalDate(params.endDate) : null,
+  };
   const { data, error } = await supabase
     .from('activities')
-    .insert({
-      nucleus_id: params.nucleusId,
-      name: params.name,
-      type: APP_TO_DB_TYPE[params.type] as any,
-      is_active: true,
-    })
-    .select('id, nucleus_id, name, type')
+    .insert(insertRow)
+    .select(ACTIVITY_BASE_COLUMNS)
     .single();
   if (error) throw error;
 
@@ -105,20 +220,16 @@ export async function createActivity(params: {
   await supabase.from('event_log').insert({
     type: 'activity_created',
     cluster_id: (nucleus as any)?.cluster_id ?? null,
-    nucleus_id: data.nucleus_id,
-    activity_id: data.id,
+    nucleus_id: (data as any).nucleus_id,
+    activity_id: (data as any).id,
     user_id: user?.id ?? null,
-    description: `Created activity "${data.name}"`,
-    details: { activityName: data.name, activityType: data.type },
+    description: `Created activity "${(data as any).name}"`,
+    details: { activityName: (data as any).name, activityType: (data as any).type },
   });
 
-  return {
-    id: data.id,
-    nucleusId: data.nucleus_id,
-    name: data.name,
-    type: (DB_TO_APP_TYPE[data.type] ?? 'other') as Activity['type'],
-    participants: {},
-  };
+  await syncActivityTimelineEntry(mapActivityRow(data, {}), { clusterId: (nucleus as any)?.cluster_id ?? null });
+
+  return mapActivityRow(data, {});
 }
 
 export async function updateNucleusNotes(nucleusId: string, notes: string): Promise<void> {
@@ -235,12 +346,18 @@ export interface ActivityDetailResult {
 }
 
 export async function fetchActivityDetail(activityId: string): Promise<ActivityDetailResult | null> {
-  const { data, error } = await supabase
-    .from('activities')
-    .select('id, nucleus_id, name, type, schedule_notes, notes, current_course_id, nuclei(name), activity_participants(person_id, role, deleted_at)')
-    .eq('id', activityId)
-    .is('deleted_at', null)
-    .single();
+  const run = (cols: string) =>
+    supabase
+      .from('activities')
+      .select(`${cols}, nuclei(name), activity_participants(person_id, role, deleted_at)`)
+      .eq('id', activityId)
+      .is('deleted_at', null)
+      .single();
+
+  let { data, error } = await run(ACTIVITY_BASE_COLUMNS);
+  if (error && isMissingColumnError(error)) {
+    ({ data, error } = await run(ACTIVITY_LEGACY_COLUMNS));
+  }
   if (error) return null;
 
   const a = data as any;
@@ -273,13 +390,7 @@ export async function fetchActivityDetail(activityId: string): Promise<ActivityD
   }
 
   const activity: Activity = {
-    id: a.id,
-    nucleusId: a.nucleus_id,
-    name: a.name,
-    type: (DB_TO_APP_TYPE[a.type] ?? 'other') as Activity['type'],
-    participants,
-    schedule: a.schedule_notes ?? undefined,
-    notes: a.notes ?? undefined,
+    ...mapActivityRow(a, participants),
     currentBook,
   };
 
@@ -467,6 +578,10 @@ export async function deleteActivity(activityId: string): Promise<void> {
     .eq('activity_id', activityId)
     .is('deleted_at', null);
 
+  // Tear down the derived timeline_events row (best-effort; the
+  // outer activity soft-delete is what the caller cares about).
+  await supabase.from('timeline_events').delete().eq('activity_id', activityId);
+
   const { error } = await supabase
     .from('activities')
     .update({ deleted_at: now })
@@ -484,15 +599,152 @@ export async function deleteActivity(activityId: string): Promise<void> {
   });
 }
 
+export interface UpdateActivityDetailsParams {
+  scheduleNotes?: string;
+  notes?: string;
+  schedulingMode?: ActivitySchedulingMode;
+  daysOfWeek?: number[] | null;
+  time?: string | null;
+  intervalWeeks?: number | null;
+  startDate?: Date | null;
+  endDate?: Date | null;
+}
+
 export async function updateActivityDetails(
   activityId: string,
-  params: { scheduleNotes?: string; notes?: string }
+  params: UpdateActivityDetailsParams,
 ): Promise<void> {
   const update: Record<string, any> = {};
   if (params.scheduleNotes !== undefined) update.schedule_notes = params.scheduleNotes || null;
   if (params.notes !== undefined) update.notes = params.notes || null;
-  const { error } = await supabase.from('activities').update(update).eq('id', activityId);
+  if (params.schedulingMode !== undefined) update.scheduling_mode = params.schedulingMode;
+  if (params.daysOfWeek !== undefined) {
+    const arr = params.daysOfWeek ?? [];
+    update.schedule_days_of_week = arr;
+    update.schedule_day_of_week = arr.length > 0 ? arr[0] : null;
+  }
+  if (params.time !== undefined) update.schedule_time = params.time;
+  if (params.intervalWeeks !== undefined) update.schedule_interval_weeks = params.intervalWeeks;
+  if (params.startDate !== undefined) update.start_date = params.startDate ? formatLocalDate(params.startDate) : null;
+  if (params.endDate !== undefined) update.end_date = params.endDate ? formatLocalDate(params.endDate) : null;
+  if (Object.keys(update).length === 0) return;
+
+  const { data, error } = await supabase
+    .from('activities')
+    .update(update)
+    .eq('id', activityId)
+    .select(`${ACTIVITY_BASE_COLUMNS}, nuclei(cluster_id)`)
+    .single();
   if (error) throw error;
+
+  await syncActivityTimelineEntry(
+    mapActivityRow(data, {}),
+    { clusterId: ((data as any).nuclei as any)?.cluster_id ?? null },
+  );
+}
+
+// Transition the activity's lifecycle. The activity row is
+// PRESERVED in place (not soft-deleted) regardless of which state
+// it moves to — completed and cancelled activities continue to
+// surface in the dashboard's activity list and in reports as
+// historical records. Their timeline presence is what changes:
+// syncActivityTimelineEntry below removes any persisted row, and
+// the synthesis pass on the nucleus timeline skips them too. The
+// schedule fields (daysOfWeek, intervalWeeks, startDate, endDate)
+// stay intact so that a deliberate reactivation can restore the
+// activity to the calendar exactly as it was.
+export async function setActivityLifecycle(
+  activityId: string,
+  lifecycle: ActivityLifecycle,
+): Promise<void> {
+  const update: Record<string, any> = {
+    lifecycle_state: lifecycle,
+    is_active: lifecycle === 'active' || lifecycle === 'planned',
+    completed_at:
+      lifecycle === 'completed' || lifecycle === 'cancelled'
+        ? new Date().toISOString()
+        : null,
+  };
+
+  const { data, error } = await supabase
+    .from('activities')
+    .update(update)
+    .eq('id', activityId)
+    .select(`${ACTIVITY_BASE_COLUMNS}, nuclei(cluster_id)`)
+    .single();
+  if (error) throw error;
+
+  await syncActivityTimelineEntry(
+    mapActivityRow(data, {}),
+    { clusterId: ((data as any).nuclei as any)?.cluster_id ?? null },
+  );
+}
+
+// Mirror short-duration activities into a single timeline_events row
+// tagged with this activity_id. Structured-recurring activities are
+// NOT persisted as timeline rows — the nucleus timeline view
+// synthesizes one marker per occurrence at render time. Completed
+// and cancelled activities have no timeline presence at all (their
+// row is removed) — the timeline is a forward-looking calendar,
+// not a historical log.
+//
+// Rules:
+//   • short_duration AND start_date set AND lifecycle ∈ {active, planned}
+//                                                              → one row (event bar)
+//   • everything else                                            → no row
+//
+// Implementation is delete-then-conditionally-insert. That handles
+// the previously-recurring-now-something-else case correctly even
+// if a stale row was written by an older version of this function
+// (and even if multiple stale rows accumulated, which an earlier
+// version using .maybeSingle() would have failed to clean up).
+// We only touch rows we generated ourselves — i.e. those whose
+// activity_id matches this activity. User-created timeline rows
+// are never affected.
+export async function syncActivityTimelineEntry(
+  activity: Activity,
+  ctx: { clusterId: string | null },
+): Promise<void> {
+  // 1. Tear down ALL derived rows for this activity. Idempotent —
+  //    a no-op when no row exists, and resilient when more than
+  //    one accumulated from earlier buggy syncs.
+  const { error: delErr } = await supabase
+    .from('timeline_events')
+    .delete()
+    .eq('activity_id', activity.id);
+  if (delErr) {
+    // Log but don't throw — we still want to attempt the insert
+    // when the activity should have an entry. A failure here is
+    // usually a transient RLS issue and is recoverable on the
+    // next save.
+    console.warn(
+      'syncActivityTimelineEntry: cleanup failed for activity', activity.id, delErr,
+    );
+  }
+
+  const isActiveOrPlanned =
+    activity.lifecycle === 'active' || activity.lifecycle === 'planned';
+  const shouldExist =
+    isActiveOrPlanned
+    && activity.schedulingMode === 'short_duration'
+    && !!activity.startDate;
+  if (!shouldExist) return;
+
+  // 2. Insert the fresh row. For an activity that's just been edited
+  //    but kept as short-duration + active, this is functionally an
+  //    update via the delete-then-insert.
+  const startDate = activity.startDate!;
+  const endDate = activity.endDate ?? null;
+
+  await supabase.from('timeline_events').insert({
+    name: activity.name,
+    start_date: formatLocalDate(startDate),
+    end_date: endDate ? formatLocalDate(endDate) : null,
+    item_type: 'event',
+    cluster_id: ctx.clusterId,
+    nucleus_id: activity.nucleusId,
+    activity_id: activity.id,
+  });
 }
 
 export interface NucleusEnrollmentEntry {

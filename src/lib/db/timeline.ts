@@ -31,7 +31,7 @@ function formatLocalDate(d: Date): string {
 // The columns we select for every timeline item. Listed in one constant
 // so insert/update/select queries stay in sync as new fields are added.
 const TIMELINE_ITEM_COLUMNS =
-  'id, name, start_date, end_date, cluster_id, nucleus_id, location, ' +
+  'id, name, start_date, end_date, cluster_id, nucleus_id, activity_id, location, ' +
   'item_type, start_time, meeting_type, attendees, created_by, created_at';
 
 function mapTimelineItem(row: any): TimelineEvent {
@@ -44,6 +44,7 @@ function mapTimelineItem(row: any): TimelineEvent {
     startTime: row.start_time ?? undefined,
     clusterId: row.cluster_id ?? undefined,
     nucleusId: row.nucleus_id ?? undefined,
+    activityId: row.activity_id ?? undefined,
     location: row.location ?? undefined,
     meetingType: row.meeting_type ?? undefined,
     attendees: (row.attendees as string[] | null) ?? [],
@@ -77,12 +78,23 @@ export async function fetchTimelineCycles(params: { clusterId?: string } = {}): 
   }));
 }
 
-export async function fetchTimelineEvents(params: { clusterId?: string }): Promise<TimelineEvent[]> {
+// Scope is either cluster-only or nucleus-only. The two cases
+// pull a disjoint set of rows — cluster view shows cluster-wide
+// items (and any nucleus rows whose cluster_id matches, e.g.
+// auto-generated activity rows), while the nucleus view shows
+// only rows tagged with that nucleus_id.
+export async function fetchTimelineEvents(
+  params: { clusterId?: string; nucleusId?: string },
+): Promise<TimelineEvent[]> {
   let query = supabase
     .from('timeline_events')
     .select(TIMELINE_ITEM_COLUMNS)
     .order('start_date');
-  if (params.clusterId) query = query.eq('cluster_id', params.clusterId);
+  if (params.nucleusId) {
+    query = query.eq('nucleus_id', params.nucleusId);
+  } else if (params.clusterId) {
+    query = query.eq('cluster_id', params.clusterId).is('nucleus_id', null);
+  }
   const { data, error } = await query;
   if (error) throw error;
   return ((data ?? []) as any[]).map(mapTimelineItem);
@@ -137,6 +149,7 @@ export interface AddTimelineItemParams {
   endDate?: Date;
   startTime?: string;
   clusterId?: string;
+  nucleusId?: string;
   location?: string;
   meetingType?: string;
   attendees?: string[];
@@ -156,6 +169,7 @@ export async function addTimelineEvent(params: AddTimelineItemParams): Promise<T
       end_date: params.endDate ? formatLocalDate(params.endDate) : null,
       start_time: params.startTime ?? null,
       cluster_id: params.clusterId ?? null,
+      nucleus_id: params.nucleusId ?? null,
       location: params.location ?? null,
       meeting_type: itemType === 'meeting' ? params.meetingType ?? null : null,
       attendees: params.attendees ?? [],

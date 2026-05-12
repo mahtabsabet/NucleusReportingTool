@@ -265,7 +265,8 @@ export interface ActionTarget {
 // Cluster-level timeline events: super_admins, admins, and the cluster's
 // coordinator(s) can create/edit/delete events. This mirrors the RLS policy
 // "Cluster coordinators manage timeline events" in supabase/schema.sql.
-// Nucleus-level timelines will get their own helper when that scope ships.
+// Nucleus-level timelines have their own helper below — they widen the
+// permitted set to include the nucleus's collaborators.
 export function canManageClusterTimelineEvents(
   ctx: CallerContext,
   clusterId: string | null,
@@ -273,6 +274,21 @@ export function canManageClusterTimelineEvents(
   if (ctx.isAdmin || ctx.isSuperAdmin) return true;
   if (!clusterId) return false;
   return coordinatorClusterIds(ctx).includes(clusterId);
+}
+
+// Nucleus-level timeline events. Admins / Super Admins manage everywhere;
+// the parent cluster's coordinator manages every nucleus in that cluster;
+// the nucleus's own collaborators manage their nucleus. Activity Leads
+// and Regional viewers can read but not write — mirrors the RLS policies
+// added in the 20260512 migration.
+export function canManageNucleusTimelineEvents(
+  ctx: CallerContext,
+  scope: { clusterId: string | null; nucleusId: string | null },
+): boolean {
+  if (ctx.isAdmin || ctx.isSuperAdmin) return true;
+  if (scope.clusterId && coordinatorClusterIds(ctx).includes(scope.clusterId)) return true;
+  if (scope.nucleusId && collaboratorNucleusIds(ctx).includes(scope.nucleusId)) return true;
+  return false;
 }
 
 // Cluster-level timeline meetings — same rule as events (Cluster
