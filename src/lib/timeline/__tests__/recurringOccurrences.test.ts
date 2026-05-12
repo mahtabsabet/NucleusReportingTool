@@ -46,6 +46,18 @@ describe('computeRecurringOccurrences', () => {
     )).toEqual([]);
   });
 
+  it('still synthesizes occurrences for "planned" activities — calendar planning relies on it', () => {
+    // Planned recurring activities haven't started running yet but
+    // SHOULD appear on the timeline so the user can see what's
+    // coming and adjust scheduling. Only cancelled activities are
+    // suppressed entirely.
+    const out = computeRecurringOccurrences(
+      activity({ lifecycle: 'planned' }),
+      { start: new Date(2026, 0, 1), end: new Date(2026, 0, 31) },
+    );
+    expect(out.length).toBeGreaterThan(0);
+  });
+
   it('emits one occurrence per week for weekly recurrence', () => {
     const out = computeRecurringOccurrences(activity({}), {
       start: new Date(2026, 0, 1),
