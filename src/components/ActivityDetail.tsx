@@ -190,6 +190,23 @@ export function ActivityDetail() {
     activityDeletePermission(activityId).then(setDeletePermission);
   }, [activityId]);
 
+  // Schedule summary memo — must live ABOVE the `if (loading)` /
+  // `if (!activity)` early returns below or React will flag a
+  // hook-count change between the loading render (which doesn't
+  // reach this line) and the loaded render (which does), and the
+  // whole component unmounts to a blank screen. The inputs are
+  // all local state with sensible initial values, so it's safe
+  // to compute even before fetchActivityDetail resolves.
+  const scheduleSummary = useMemo(() => buildScheduleSummary({
+    schedulingMode,
+    schedule,
+    daysOfWeek,
+    time,
+    intervalWeeks,
+    startDate,
+    endDate,
+  }), [schedulingMode, schedule, daysOfWeek, time, intervalWeeks, startDate, endDate]);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -332,16 +349,6 @@ export function ActivityDetail() {
       prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort(),
     );
   };
-
-  const scheduleSummary = useMemo(() => buildScheduleSummary({
-    schedulingMode,
-    schedule,
-    daysOfWeek,
-    time,
-    intervalWeeks,
-    startDate,
-    endDate,
-  }), [schedulingMode, schedule, daysOfWeek, time, intervalWeeks, startDate, endDate]);
 
   const expectedRoles = ROLES_FOR_TYPE[activity.type] ?? [];
   const extraRoles = Object.keys(participants).filter(r => !expectedRoles.includes(r));
