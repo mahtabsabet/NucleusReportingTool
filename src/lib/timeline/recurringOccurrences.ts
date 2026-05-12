@@ -24,20 +24,21 @@ export function computeRecurringOccurrences(
   window: RecurringWindow,
 ): TimelineEvent[] {
   if (activity.schedulingMode !== 'structured_recurring') return [];
-  if (activity.lifecycle === 'cancelled') return [];
+  // Only currently-running and not-yet-started activities appear on
+  // the timeline. Completed and cancelled activities are preserved
+  // in the system as historical records but disappear from the
+  // calendar — the timeline is a forward-looking view of what's
+  // actually being scheduled, not a log of everything that ever
+  // happened.
+  if (activity.lifecycle !== 'active' && activity.lifecycle !== 'planned') return [];
   if (!activity.daysOfWeek || activity.daysOfWeek.length === 0) return [];
 
   // Recurrence anchored on the activity's startDate (or window.start
-  // as a defensive fallback). For a completed activity we cap at
-  // endDate / completedAt so historical entries stop where they
-  // actually stopped.
+  // as a defensive fallback). endDate caps the series for the rare
+  // case where someone explicitly set one — most recurring activities
+  // leave it null and the synthesis runs to window.end.
   const seriesStart = startOfDay(activity.startDate ?? window.start);
-  const seriesEnd =
-    activity.endDate
-      ? startOfDay(activity.endDate)
-      : activity.lifecycle === 'completed' && activity.completedAt
-        ? startOfDay(activity.completedAt)
-        : window.end;
+  const seriesEnd = activity.endDate ? startOfDay(activity.endDate) : window.end;
 
   const iterStart = maxDate(seriesStart, window.start);
   const iterEnd = minDate(seriesEnd, window.end);
