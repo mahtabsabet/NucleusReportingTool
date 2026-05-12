@@ -105,6 +105,19 @@ interface TimelineProps {
   // workspace to wire the detail drawer's "Edit" button through to
   // the Timeline's existing modal without duplicating that form.
   openEditForItemId?: { id: string; nonce: number } | null;
+  // Read-only synthesized items the caller wants rendered alongside
+  // the fetched events. Used by the nucleus timeline to fan out
+  // recurring activities into one marker per occurrence without
+  // persisting hundreds of rows. They're treated as immutable: no
+  // edit modal, no delete, but they DO participate in click handling
+  // (so a click can navigate to the source activity).
+  extraItems?: TimelineEvent[];
+  // Activity IDs whose persisted timeline_events rows should be
+  // suppressed — e.g. when the caller is supplying synthesized
+  // recurring occurrences for an activity whose stale single-row
+  // entry from a previous version still lives in the database.
+  // Keeps the strip clean without forcing a DB cleanup pass.
+  hiddenActivityIds?: ReadonlySet<string>;
 }
 
 type EventModalState =
@@ -119,10 +132,20 @@ export function Timeline({
   onItemClick,
   selectedItemId = null,
   openEditForItemId = null,
+  extraItems,
+  hiddenActivityIds,
 }: TimelineProps) {
   const isVertical = orientation === 'vertical';
   const fillMode = mode === 'fill';
   const isNucleusScope = !!nucleusId;
+  // Memoize so identity changes only when contents change. The visible-
+  // events memo below depends on these, and we'd otherwise rebuild it
+  // on every parent render.
+  const stableExtraItems = useMemo(() => extraItems ?? [], [extraItems]);
+  const stableHiddenActivityIds = useMemo(
+    () => hiddenActivityIds ?? new Set<string>(),
+    [hiddenActivityIds],
+  );
 
   const [overrides, setOverrides] = useState<TimelineCycleOverride[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
@@ -808,12 +831,23 @@ export function Timeline({
     useState<{ event: TimelineEvent; x: number; y: number } | null>(null);
 
   const visibleEvents = useMemo(
-    () =>
-      events.filter(e => {
+    () => {
+      // Merge fetched + synthesized streams, hiding any fetched row
+      // whose source activity is now being rendered via synthesized
+      // occurrences (so the strip doesn't show both a lone start-
+      // date marker and the new fan-out for the same activity).
+      const merged: TimelineEvent[] = [];
+      for (const e of events) {
+        if (e.activityId && stableHiddenActivityIds.has(e.activityId)) continue;
+        merged.push(e);
+      }
+      for (const e of stableExtraItems) merged.push(e);
+      return merged.filter(e => {
         const evtEnd = e.endDate ?? e.startDate;
         return evtEnd >= visibleStart && e.startDate <= visibleEnd;
-      }),
-    [events, visibleStart, visibleEnd],
+      });
+    },
+    [events, stableExtraItems, stableHiddenActivityIds, visibleStart, visibleEnd],
   );
 
   // Pack visible items into stacked lanes. Intervals are in pixel units

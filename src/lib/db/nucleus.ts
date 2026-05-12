@@ -689,20 +689,23 @@ export async function setActivityLifecycle(
   );
 }
 
-// Mirror the activity's structured scheduling info into a single
-// timeline_events row tagged with this activity_id. The row is
-// inserted, updated, or removed as needed so the nucleus timeline
-// reflects the activity without the user having to keep both
-// records in sync by hand.
+// Mirror short-duration activities into a single timeline_events row
+// tagged with this activity_id. Structured-recurring activities are
+// NOT persisted as timeline rows — the nucleus timeline view
+// synthesizes one marker per occurrence at render time from the
+// activity's daysOfWeek + intervalWeeks, so a weekly study circle
+// shows every Tuesday rather than a lone marker on its start date.
 //
 // Rules:
-//   • scheduling_mode = 'short_duration' AND start+end present  → upsert (event bar)
-//   • scheduling_mode = 'structured_recurring' AND start_date    → upsert open-ended (ends when completed)
-//   • scheduling_mode = 'sporadic_ongoing'                      → delete the row (no auto-entry)
+//   • short_duration AND start_date set                         → upsert (event bar)
+//   • structured_recurring                                       → never persist (and clean up any
+//                                                                  stale row from earlier saves)
+//   • sporadic_ongoing                                           → delete the row (no auto-entry)
 //   • lifecycle = 'cancelled'                                    → delete the row
-// We never delete user-edited timeline rows — only those that
-// were originally generated from this activity (i.e. the unique
-// row with activity_id = this activity's id).
+//
+// We never touch user-edited timeline rows — only those that were
+// originally generated from this activity (i.e. the unique row with
+// activity_id = this activity's id).
 export async function syncActivityTimelineEntry(
   activity: Activity,
   ctx: { clusterId: string | null },
@@ -715,10 +718,9 @@ export async function syncActivityTimelineEntry(
     .maybeSingle();
 
   const shouldExist =
-    activity.lifecycle !== 'cancelled' && (
-      (activity.schedulingMode === 'short_duration' && !!activity.startDate)
-      || (activity.schedulingMode === 'structured_recurring' && !!activity.startDate)
-    );
+    activity.lifecycle !== 'cancelled'
+    && activity.schedulingMode === 'short_duration'
+    && !!activity.startDate;
 
   if (!shouldExist) {
     if (existing) {
@@ -727,9 +729,8 @@ export async function syncActivityTimelineEntry(
     return;
   }
 
-  // Compute end date: explicit end_date when set; for a recurring
-  // activity we leave end_date null (open-ended bar) unless the
-  // activity is completed.
+  // Short-duration bar: explicit start/end (or completedAt fallback
+  // for an activity finished without an explicit end_date).
   const startDate = activity.startDate!;
   let endDate: Date | null = activity.endDate ?? null;
   if (activity.lifecycle === 'completed' && !endDate) {

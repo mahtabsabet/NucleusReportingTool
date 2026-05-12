@@ -8,11 +8,9 @@ import {
   ClockIcon,
   FileTextIcon,
   Trash2Icon,
-  CalendarIcon,
   PlayCircleIcon,
   CheckCircleIcon,
   XCircleIcon,
-  RotateCcwIcon,
 } from 'lucide-react';
 import {
   fetchActivityDetail,
@@ -531,110 +529,192 @@ export function ActivityDetail() {
         </div>
       )}
 
-      <div className="max-w-5xl mx-auto p-4 sm:p-8 space-y-6">
-        {/* Lifecycle controls */}
-        {!regionalOnly && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
-            <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
-              <PlayCircleIcon className="w-4 h-4 text-gray-400" />
-              Lifecycle
-            </h3>
-            <p className="text-sm text-gray-500 mb-4">
-              Completed and cancelled activities stay visible in the system as
-              historical records — moving an activity through these states
-              preserves its data rather than removing it.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {(['planned', 'active', 'completed', 'cancelled'] as ActivityLifecycle[]).map(state => {
-                const isCurrent = activity.lifecycle === state;
-                return (
-                  <button
-                    key={state}
-                    type="button"
-                    disabled={lifecycleSaving}
-                    onClick={() => handleLifecycleChange(state)}
-                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-colors ${
-                      isCurrent
-                        ? LIFECYCLE_BADGE[state]
-                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
-                    } ${lifecycleSaving ? 'opacity-60 cursor-not-allowed' : ''}`}
-                  >
-                    {state === 'planned' && <ClockIcon className="w-4 h-4" />}
-                    {state === 'active' && <PlayCircleIcon className="w-4 h-4" />}
-                    {state === 'completed' && <CheckCircleIcon className="w-4 h-4" />}
-                    {state === 'cancelled' && <XCircleIcon className="w-4 h-4" />}
-                    {LIFECYCLE_LABELS[state]}
+      <div className="max-w-6xl mx-auto p-4 sm:p-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* ─── Main column: participants + notes ─────────────────────────
+              The "meat" of an activity is who's in it and what's being
+              learned, so these get the full width on mobile and 2/3 on
+              desktop. The schedule / lifecycle controls live in the
+              sidebar at right, deliberately quiet. */}
+          <div className="lg:col-span-2 space-y-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
+              <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-6">
+                Participants by Role
+              </h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {roles.map(role => (
+                  <div key={role} className="space-y-4">
+                    <h3 className="font-bold text-gray-900 capitalize border-b border-gray-100 pb-3 tracking-tight">
+                      {ROLE_DISPLAY[role] ?? role}
+                    </h3>
+                    <div className="space-y-2.5">
+                      {(participants[role] ?? []).map(pid => {
+                        const name = personNames[pid] ?? pid;
+                        return (
+                          <div
+                            key={pid}
+                            className="flex items-center justify-between bg-gray-50/80 border border-gray-100 px-3.5 py-2.5 rounded-xl group hover:border-blue-200 transition-colors duration-200"
+                          >
+                            <button
+                              onClick={() => navigate(`/individual/${pid}`)}
+                              className="text-sm font-semibold flex items-center gap-2 text-blue-700 hover:text-blue-900"
+                            >
+                              <div className="p-1 rounded-full bg-blue-100">
+                                <UserIcon className="w-3 h-3" />
+                              </div>
+                              {name}
+                            </button>
+                            {!regionalOnly && (
+                              <button
+                                onClick={() => removeParticipant(role, pid)}
+                                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all duration-200"
+                              >
+                                <XIcon className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {!regionalOnly && (
+                      <PersonNameCombobox
+                        placeholder="Add name..."
+                        onAdd={params => addParticipantToRole(role, params)}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {activity.type === 'study-circle' && activity.currentBook && (
+                <div className="mt-8 pt-8 border-t border-gray-100">
+                  <button className="px-5 py-2.5 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition-all shadow-sm hover:shadow-md">
+                    Mark Book Completed
                   </button>
-                );
-              })}
-              {(activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled') && (
-                <button
-                  type="button"
-                  disabled={lifecycleSaving}
-                  onClick={() => handleLifecycleChange('active')}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
-                >
-                  <RotateCcwIcon className="w-4 h-4" />
-                  Reactivate
-                </button>
+                  <p className="text-sm font-medium text-gray-500 mt-2.5">
+                    This will update all participants' profiles to show completion of{' '}
+                    {activity.currentBook}
+                  </p>
+                </div>
               )}
             </div>
-            {activity.completedAt && (
-              <p className="text-xs text-gray-500 mt-3">
-                {activity.lifecycle === 'completed' ? 'Marked completed' : 'Status updated'} on{' '}
-                {activity.completedAt.toLocaleDateString()}
-              </p>
-            )}
-          </div>
-        )}
 
-        {/* Schedule & Notes */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8 space-y-6">
-          <div>
-            <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
-              <CalendarIcon className="w-4 h-4 text-gray-400" />
-              Scheduling
-            </h3>
-            <p className="text-sm text-gray-500 mb-3">
-              {schedulingMode === 'structured_recurring'
-                ? 'Recurring schedules auto-populate the nucleus timeline.'
-                : schedulingMode === 'short_duration'
-                  ? 'Short-duration activities appear as a date-range bar on the nucleus timeline.'
-                  : 'Sporadic activities stay in the system but don\'t auto-populate the nucleus timeline.'}
-            </p>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
-              {[
-                { value: 'structured_recurring' as const, label: 'Structured recurring' },
-                { value: 'sporadic_ongoing' as const, label: 'Sporadic / ongoing' },
-                { value: 'short_duration' as const, label: 'Short duration' },
-              ].map(opt => {
-                const selected = schedulingMode === opt.value;
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    disabled={regionalOnly}
-                    onClick={() => setSchedulingMode(opt.value)}
-                    className={`px-3 py-2 rounded-xl text-sm font-semibold border text-left transition-colors ${
-                      selected
-                        ? 'bg-blue-50 border-blue-300 text-blue-800'
-                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                    } ${regionalOnly ? 'cursor-default' : ''}`}
-                  >
-                    {opt.label}
-                  </button>
-                );
-              })}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
+              <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
+                <FileTextIcon className="w-4 h-4 text-gray-400" />
+                Notes
+              </h3>
+              <textarea
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder={regionalOnly && !notes ? 'No notes for this activity.' : 'Write any notes about this activity here...'}
+                readOnly={regionalOnly}
+                className={`w-full min-h-[200px] px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
+                  regionalOnly
+                    ? 'bg-gray-50 cursor-default focus:outline-none'
+                    : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                }`}
+              />
             </div>
 
-            {schedulingMode === 'structured_recurring' && (
-              <div className="space-y-3 rounded-xl bg-gray-50/60 border border-gray-200 p-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Day(s) of the week
-                  </label>
-                  <div className="flex flex-wrap gap-1.5">
+            {!regionalOnly && (
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => navigate(`/nucleus/${nucleusId}`)}
+                  className="px-6 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
+                >
+                  Save Changes
+                </button>
+                {saved && (
+                  <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
+                    <CheckIcon className="w-4 h-4" />
+                    Saved!
+                  </span>
+                )}
+                {scheduleError && (
+                  <span className="text-sm text-red-700 bg-red-50 border border-red-200 px-3 py-1.5 rounded-lg">
+                    {scheduleError}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ─── Sidebar: status + schedule ────────────────────────────────
+              Small, quiet cards. Labels are self-explanatory; no prose
+              explanations. On mobile this stack appears below the main
+              column. */}
+          <aside className="space-y-4">
+            {/* Status */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-4">
+              <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                Status
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {(['planned', 'active', 'completed', 'cancelled'] as ActivityLifecycle[]).map(state => {
+                  const isCurrent = activity.lifecycle === state;
+                  const baseClass = isCurrent
+                    ? LIFECYCLE_BADGE[state]
+                    : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50';
+                  return (
+                    <button
+                      key={state}
+                      type="button"
+                      disabled={lifecycleSaving || regionalOnly}
+                      onClick={() => handleLifecycleChange(state)}
+                      className={`px-2 py-1 rounded-md text-xs font-semibold border transition-colors ${baseClass} ${lifecycleSaving || regionalOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    >
+                      {LIFECYCLE_LABELS[state]}
+                    </button>
+                  );
+                })}
+              </div>
+              {activity.completedAt && (
+                <div className="text-[11px] text-gray-400 mt-2">
+                  Changed {activity.completedAt.toLocaleDateString()}
+                </div>
+              )}
+            </div>
+
+            {/* Schedule */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-4">
+              <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
+                Schedule
+              </div>
+              <div className="flex flex-wrap gap-1 mb-3">
+                {[
+                  { value: 'structured_recurring' as const, label: 'Recurring' },
+                  { value: 'sporadic_ongoing' as const, label: 'Sporadic' },
+                  { value: 'short_duration' as const, label: 'Short' },
+                ].map(opt => {
+                  const selected = schedulingMode === opt.value;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      disabled={regionalOnly}
+                      onClick={() => setSchedulingMode(opt.value)}
+                      className={`px-2 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                        selected
+                          ? 'bg-blue-50 border-blue-300 text-blue-800'
+                          : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                      } ${regionalOnly ? 'cursor-default' : ''}`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {schedulingMode === 'structured_recurring' && (
+                <div className="space-y-2.5">
+                  <div className="flex flex-wrap gap-1">
                     {DAY_LABELS.map((d, i) => {
                       const selected = daysOfWeek.includes(i);
                       return (
@@ -643,218 +723,82 @@ export function ActivityDetail() {
                           type="button"
                           disabled={regionalOnly}
                           onClick={() => toggleDay(i)}
-                          className={`px-2.5 py-1 rounded-md text-xs font-bold border transition-colors ${
+                          className={`w-7 h-7 rounded text-[11px] font-bold border transition-colors ${
                             selected
                               ? 'bg-blue-600 text-white border-blue-700'
-                              : 'bg-white text-gray-600 border-gray-200 hover:border-blue-200'
+                              : 'bg-white text-gray-500 border-gray-200 hover:border-blue-200'
                           }`}
                         >
-                          {d}
+                          {d[0]}
                         </button>
                       );
                     })}
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                      Time <span className="text-gray-400 font-normal">(optional)</span>
-                    </label>
+                  <div className="grid grid-cols-2 gap-2">
                     <input
                       type="time"
                       value={time}
                       onChange={e => setTime(e.target.value)}
                       readOnly={regionalOnly}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      placeholder="Time"
+                      className="px-2 py-1.5 border border-gray-200 rounded-md text-xs"
                     />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                      Recurrence
-                    </label>
                     <select
                       value={intervalWeeks}
                       onChange={e => setIntervalWeeks(parseInt(e.target.value, 10))}
                       disabled={regionalOnly}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                      className="px-2 py-1.5 border border-gray-200 rounded-md text-xs bg-white"
                     >
                       <option value={1}>Weekly</option>
                       <option value={2}>Biweekly</option>
-                      <option value={4}>Monthly (~4 weeks)</option>
+                      <option value={4}>Monthly</option>
                     </select>
                   </div>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Activity start date <span className="text-gray-400 font-normal">(optional)</span>
-                  </label>
                   <input
                     type="date"
                     value={startDate}
                     onChange={e => setStartDate(e.target.value)}
                     readOnly={regionalOnly}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    title="Activity start date"
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
                   />
                 </div>
-              </div>
-            )}
+              )}
 
-            {schedulingMode === 'sporadic_ongoing' && (
-              <div className="rounded-xl bg-gray-50/60 border border-gray-200 p-4">
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  Schedule description
-                </label>
+              {schedulingMode === 'sporadic_ongoing' && (
                 <input
                   type="text"
                   value={schedule}
                   onChange={e => setSchedule(e.target.value)}
-                  placeholder="e.g. occasional Saturday gatherings, accompaniment visits"
+                  placeholder="When does this happen?"
                   readOnly={regionalOnly}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
                 />
-              </div>
-            )}
+              )}
 
-            {schedulingMode === 'short_duration' && (
-              <div className="grid grid-cols-2 gap-3 rounded-xl bg-gray-50/60 border border-gray-200 p-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    Start date
-                  </label>
+              {schedulingMode === 'short_duration' && (
+                <div className="space-y-2">
                   <input
                     type="date"
                     value={startDate}
                     onChange={e => setStartDate(e.target.value)}
                     readOnly={regionalOnly}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    title="Start date"
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                    End date
-                  </label>
                   <input
                     type="date"
                     value={endDate}
                     onChange={e => setEndDate(e.target.value)}
                     min={startDate || undefined}
                     readOnly={regionalOnly}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    title="End date"
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
                   />
                 </div>
-              </div>
-            )}
-
-            {scheduleError && (
-              <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
-                {scheduleError}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
-              <FileTextIcon className="w-4 h-4 text-gray-400" />
-              Notes
-            </h3>
-            <textarea
-              value={notes}
-              onChange={e => setNotes(e.target.value)}
-              placeholder={regionalOnly && !notes ? 'No notes for this activity.' : 'Write any notes about this activity here...'}
-              readOnly={regionalOnly}
-              className={`w-full min-h-[120px] px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
-                regionalOnly
-                  ? 'bg-gray-50 cursor-default focus:outline-none'
-                  : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-              }`}
-            />
-          </div>
-        </div>
-
-        {/* Participants */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
-          <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-6">
-            Participants by Role
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {roles.map(role => (
-              <div key={role} className="space-y-4">
-                <h3 className="font-bold text-gray-900 capitalize border-b border-gray-100 pb-3 tracking-tight">
-                  {ROLE_DISPLAY[role] ?? role}
-                </h3>
-                <div className="space-y-2.5">
-                  {(participants[role] ?? []).map(pid => {
-                    const name = personNames[pid] ?? pid;
-                    return (
-                      <div
-                        key={pid}
-                        className="flex items-center justify-between bg-gray-50/80 border border-gray-100 px-3.5 py-2.5 rounded-xl group hover:border-blue-200 transition-colors duration-200"
-                      >
-                        <button
-                          onClick={() => navigate(`/individual/${pid}`)}
-                          className="text-sm font-semibold flex items-center gap-2 text-blue-700 hover:text-blue-900"
-                        >
-                          <div className="p-1 rounded-full bg-blue-100">
-                            <UserIcon className="w-3 h-3" />
-                          </div>
-                          {name}
-                        </button>
-                        {!regionalOnly && (
-                          <button
-                            onClick={() => removeParticipant(role, pid)}
-                            className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all duration-200"
-                          >
-                            <XIcon className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                {!regionalOnly && (
-                  <PersonNameCombobox
-                    placeholder="Add name..."
-                    onAdd={params => addParticipantToRole(role, params)}
-                  />
-                )}
-              </div>
-            ))}
-          </div>
-
-          {activity.type === 'study-circle' && activity.currentBook && (
-            <div className="mt-8 pt-8 border-t border-gray-100">
-              <button className="px-5 py-2.5 bg-green-600 text-white font-semibold rounded-xl hover:bg-green-700 transition-all shadow-sm hover:shadow-md">
-                Mark Book Completed
-              </button>
-              <p className="text-sm font-medium text-gray-500 mt-2.5">
-                This will update all participants' profiles to show completion of{' '}
-                {activity.currentBook}
-              </p>
-            </div>
-          )}
-
-          {!regionalOnly && (
-            <div className="flex items-center gap-3 mt-8 pt-8 border-t border-gray-100">
-              <button
-                onClick={() => navigate(`/nucleus/${nucleusId}`)}
-                className="px-6 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                className="px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
-              >
-                Save Changes
-              </button>
-              {saved && (
-                <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
-                  <CheckIcon className="w-4 h-4" />
-                  Saved!
-                </span>
               )}
             </div>
-          )}
+          </aside>
         </div>
       </div>
     </div>
