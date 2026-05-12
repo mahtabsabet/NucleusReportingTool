@@ -142,14 +142,26 @@ export function NucleusDashboard() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
+    // Each fetch is isolated so a single failure (e.g. activities
+    // SELECT errors because a pending migration hasn't been
+    // applied) can't prevent the rest of the dashboard from
+    // rendering — and, critically, can't blank `nucleus` and
+    // trigger the "Nucleus not found" branch when the nucleus row
+    // itself loaded fine.
+    const safe = <T,>(p: Promise<T>, fallback: T, label: string): Promise<T> =>
+      p.catch(err => {
+        console.error(`Failed to load ${label}:`, err);
+        return fallback;
+      });
+
     Promise.all([
-      fetchNucleus(id),
-      fetchActivitiesForNucleus(id),
-      fetchPersonsForNucleus(id),
-      fetchCourses(),
-      canRenameNucleus(id),
-      canDeleteNucleus(id),
-      getCallerContext(),
+      safe(fetchNucleus(id), null, 'nucleus'),
+      safe(fetchActivitiesForNucleus(id), [] as Activity[], 'activities'),
+      safe(fetchPersonsForNucleus(id), [] as PersonProfile[], 'persons'),
+      safe(fetchCourses(), [] as CourseRow[], 'courses'),
+      safe(canRenameNucleus(id), false, 'rename permission'),
+      safe(canDeleteNucleus(id), false, 'delete permission'),
+      safe(getCallerContext(), null, 'caller context'),
     ]).then(([n, acts, persons, courseList, renameAllowed, deleteAllowed, ctx]) => {
       const target = { nucleusId: id, clusterId: n?.clusterId ?? null };
       setRegionalOnly(ctx ? isRegionalOnly(ctx) : false);
@@ -165,9 +177,6 @@ export function NucleusDashboard() {
         setNotes(n.notes);
         setBannerImageState(n.bannerImageUrl);
       }
-      setLoading(false);
-    }).catch(err => {
-      console.error('Failed to load nucleus data:', err);
       setLoading(false);
     });
   }, [id]);
