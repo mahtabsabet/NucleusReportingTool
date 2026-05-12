@@ -96,17 +96,22 @@ export function NucleusTimeline() {
     [activities],
   );
 
-  // Some existing nucleus deployments still hold a stale single-row
-  // timeline entry for each recurring activity from before the sync
-  // rules changed (an earlier draft of this feature persisted one
-  // marker on the activity's start date). Tell the Timeline to
-  // suppress fetched rows tied to a structured-recurring activity
-  // so the strip shows only the synthesized fan-out — no DB cleanup
-  // pass required.
+  // Suppress any fetched timeline row whose source activity isn't a
+  // short-duration activity in its current mode. Two cases this
+  // covers:
+  //   • A structured-recurring activity that still has a stale
+  //     single-row entry from an older buggy sync — the synthesized
+  //     fan-out is what we want shown, not the leftover dot.
+  //   • A sporadic_ongoing activity that previously was recurring or
+  //     short-duration and got a row written by an older version —
+  //     sporadic shouldn't surface on the timeline at all.
+  // Only short_duration activities are allowed to keep their fetched
+  // row visible, because that's the one mode that legitimately
+  // persists a derived row in the current implementation.
   const hiddenActivityIds = useMemo<Set<string>>(
     () => new Set(
       activities
-        .filter(a => a.schedulingMode === 'structured_recurring')
+        .filter(a => a.schedulingMode !== 'short_duration')
         .map(a => a.id),
     ),
     [activities],

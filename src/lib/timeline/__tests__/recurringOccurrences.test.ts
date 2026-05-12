@@ -53,7 +53,7 @@ describe('computeRecurringOccurrences', () => {
     });
     // Tuesdays in Jan 2026: 6, 13, 20, 27.
     expect(out.map(o => o.startDate.getDate())).toEqual([6, 13, 20, 27]);
-    expect(out.every(o => o.itemType === 'meeting')).toBe(true);
+    expect(out.every(o => o.itemType === 'event')).toBe(true);
     expect(out.every(o => o.activityId === 'a1')).toBe(true);
   });
 

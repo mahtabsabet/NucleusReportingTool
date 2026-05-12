@@ -697,47 +697,55 @@ export async function setActivityLifecycle(
 // shows every Tuesday rather than a lone marker on its start date.
 //
 // Rules:
-//   • short_duration AND start_date set                         → upsert (event bar)
-//   • structured_recurring                                       → never persist (and clean up any
-//                                                                  stale row from earlier saves)
-//   • sporadic_ongoing                                           → delete the row (no auto-entry)
-//   • lifecycle = 'cancelled'                                    → delete the row
+//   • short_duration AND start_date set                         → one row (event bar)
+//   • structured_recurring                                       → no row (occurrences are derived at render)
+//   • sporadic_ongoing                                           → no row
+//   • lifecycle = 'cancelled'                                    → no row
 //
-// We never touch user-edited timeline rows — only those that were
-// originally generated from this activity (i.e. the unique row with
-// activity_id = this activity's id).
+// Implementation is delete-then-conditionally-insert. That handles
+// the previously-recurring-now-something-else case correctly even
+// if a stale row was written by an older version of this function
+// (and even if multiple stale rows accumulated, which an earlier
+// version using .maybeSingle() would have failed to clean up).
+// We only touch rows we generated ourselves — i.e. those whose
+// activity_id matches this activity. User-created timeline rows
+// are never affected.
 export async function syncActivityTimelineEntry(
   activity: Activity,
   ctx: { clusterId: string | null },
 ): Promise<void> {
-  // Look up the existing derived row (at most one per activity).
-  const { data: existing } = await supabase
+  // 1. Tear down ALL derived rows for this activity. Idempotent —
+  //    a no-op when no row exists, and resilient when more than
+  //    one accumulated from earlier buggy syncs.
+  const { error: delErr } = await supabase
     .from('timeline_events')
-    .select('id, start_date, end_date, name, item_type')
-    .eq('activity_id', activity.id)
-    .maybeSingle();
+    .delete()
+    .eq('activity_id', activity.id);
+  if (delErr) {
+    // Log but don't throw — we still want to attempt the insert
+    // when the activity should have an entry. A failure here is
+    // usually a transient RLS issue and is recoverable on the
+    // next save.
+    console.warn(
+      'syncActivityTimelineEntry: cleanup failed for activity', activity.id, delErr,
+    );
+  }
 
   const shouldExist =
     activity.lifecycle !== 'cancelled'
     && activity.schedulingMode === 'short_duration'
     && !!activity.startDate;
+  if (!shouldExist) return;
 
-  if (!shouldExist) {
-    if (existing) {
-      await supabase.from('timeline_events').delete().eq('id', (existing as any).id);
-    }
-    return;
-  }
-
-  // Short-duration bar: explicit start/end (or completedAt fallback
-  // for an activity finished without an explicit end_date).
+  // 2. Insert the fresh row. For an activity that's just been edited
+  //    but kept as short-duration, this is functionally an update.
   const startDate = activity.startDate!;
   let endDate: Date | null = activity.endDate ?? null;
   if (activity.lifecycle === 'completed' && !endDate) {
     endDate = activity.completedAt ?? new Date();
   }
 
-  const row: Record<string, any> = {
+  await supabase.from('timeline_events').insert({
     name: activity.name,
     start_date: formatLocalDate(startDate),
     end_date: endDate ? formatLocalDate(endDate) : null,
@@ -745,16 +753,7 @@ export async function syncActivityTimelineEntry(
     cluster_id: ctx.clusterId,
     nucleus_id: activity.nucleusId,
     activity_id: activity.id,
-  };
-
-  if (existing) {
-    await supabase
-      .from('timeline_events')
-      .update(row)
-      .eq('id', (existing as any).id);
-  } else {
-    await supabase.from('timeline_events').insert(row);
-  }
+  });
 }
 
 export interface NucleusEnrollmentEntry {

@@ -71,7 +71,12 @@ function makeOccurrence(activity: Activity, date: Date): TimelineEvent {
     // diff doesn't rebuild every marker on every pan/zoom. Encoding
     // both the activity id and the calendar date is sufficient.
     id: `recur:${activity.id}:${formatDateKey(date)}`,
-    itemType: 'meeting',
+    // Render as an event (blue dot above the centre axis) rather than
+    // a meeting (amber diamond below) — recurring activities are part
+    // of the nucleus's ongoing programme, not one-off meetings, and
+    // visually mixing diamonds with the short-duration event bars
+    // confused the read.
+    itemType: 'event',
     name: activity.name,
     startDate: date,
     startTime: activity.time,
