@@ -29,6 +29,27 @@ const ACTIVITY_BASE_COLUMNS =
   'lifecycle_state, scheduling_mode, start_date, end_date, ' +
   'completed_at, is_active, notes, current_course_id';
 
+// Pre-20260512-migration column set. Used as a fallback for read
+// queries so a deployment running the new code against an un-
+// migrated database still renders the nucleus dashboard — the
+// alternative was a "Nucleus not found" misfire when the wider
+// SELECT failed and bubbled all the way up to Promise.all in the
+// dashboard loader.
+const ACTIVITY_LEGACY_COLUMNS =
+  'id, nucleus_id, name, type, schedule_notes, schedule_day_of_week, ' +
+  'schedule_time, schedule_interval_weeks, is_active, notes, current_course_id';
+
+// PostgREST returns SQLSTATE 42703 ("undefined_column") when a
+// SELECT references a column that isn't in the live schema. We
+// match on both the code and the message because PostgREST has
+// historically been inconsistent about which it populates.
+function isMissingColumnError(err: any): boolean {
+  if (!err) return false;
+  if (err.code === '42703') return true;
+  const msg = String(err.message ?? '');
+  return /column .* does not exist/i.test(msg);
+}
+
 function mapActivityRow(a: any, participants: Record<string, string[]>): Activity {
   // Tolerate older DBs that haven't run the lifecycle migration yet —
   // is_active still tells us "this is an active activity" in that case.
@@ -114,16 +135,24 @@ export async function fetchActivitiesForNucleus(
   opts: { includeInactive?: boolean } = {},
 ): Promise<Activity[]> {
   const includeInactive = opts.includeInactive ?? true;
-  let query = supabase
-    .from('activities')
-    .select(
-      `${ACTIVITY_BASE_COLUMNS}, activity_participants(person_id, role, deleted_at)`,
-    )
-    .eq('nucleus_id', nucleusId)
-    .is('deleted_at', null)
-    .order('name');
-  if (!includeInactive) query = query.eq('is_active', true);
-  const { data, error } = await query;
+  const run = async (cols: string) => {
+    let q = supabase
+      .from('activities')
+      .select(`${cols}, activity_participants(person_id, role, deleted_at)`)
+      .eq('nucleus_id', nucleusId)
+      .is('deleted_at', null)
+      .order('name');
+    if (!includeInactive) q = q.eq('is_active', true);
+    return q;
+  };
+
+  let { data, error } = await run(ACTIVITY_BASE_COLUMNS);
+  if (error && isMissingColumnError(error)) {
+    // Migration not yet applied — retry with the columns that
+    // existed before 20260512. mapActivityRow tolerates the
+    // missing fields via defaults.
+    ({ data, error } = await run(ACTIVITY_LEGACY_COLUMNS));
+  }
   if (error) throw error;
 
   return (data as any[]).map(a => {
@@ -317,14 +346,18 @@ export interface ActivityDetailResult {
 }
 
 export async function fetchActivityDetail(activityId: string): Promise<ActivityDetailResult | null> {
-  const { data, error } = await supabase
-    .from('activities')
-    .select(
-      `${ACTIVITY_BASE_COLUMNS}, nuclei(name), activity_participants(person_id, role, deleted_at)`,
-    )
-    .eq('id', activityId)
-    .is('deleted_at', null)
-    .single();
+  const run = (cols: string) =>
+    supabase
+      .from('activities')
+      .select(`${cols}, nuclei(name), activity_participants(person_id, role, deleted_at)`)
+      .eq('id', activityId)
+      .is('deleted_at', null)
+      .single();
+
+  let { data, error } = await run(ACTIVITY_BASE_COLUMNS);
+  if (error && isMissingColumnError(error)) {
+    ({ data, error } = await run(ACTIVITY_LEGACY_COLUMNS));
+  }
   if (error) return null;
 
   const a = data as any;
