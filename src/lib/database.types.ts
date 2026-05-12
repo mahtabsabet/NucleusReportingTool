@@ -3,6 +3,8 @@ export type ActivityType = 'children_class' | 'junior_youth' | 'study_circle' | 
 export type ParticipantRole = 'teacher' | 'animator' | 'tutor' | 'child' | 'junior_youth' | 'parent' | 'host' | 'attendee' | 'participant' | 'other';
 export type PermissionRole = 'cluster_coordinator' | 'nucleus_collaborator' | 'activity_lead' | 'viewer';
 export type CourseStatus = 'in_progress' | 'completed';
+export type ActivityLifecycleEnum = 'planned' | 'active' | 'completed' | 'cancelled';
+export type ActivitySchedulingModeEnum = 'structured_recurring' | 'sporadic_ongoing' | 'short_duration';
 export type EventLogType = 'activity_created' | 'participant_added' | 'participant_removed' | 'circle_movement' | 'course_completed' | 'course_started' | 'person_created' | 'person_deleted' | 'nucleus_created' | 'nucleus_deleted' | 'activity_deleted' | 'session_logged' | 'profile_updated' | 'permission_request_submitted' | 'permission_request_resolved' | 'user_role_changed' | 'user_deleted';
 
 export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
@@ -115,12 +117,18 @@ export interface Database {
           name: string;
           type: ActivityType;
           schedule_day_of_week: number | null;
+          schedule_days_of_week: number[];
           schedule_time: string | null;
           schedule_interval_weeks: number | null;
           schedule_notes: string | null;
           location: string | null;
           current_course_id: string | null;
           is_active: boolean;
+          lifecycle_state: ActivityLifecycleEnum;
+          scheduling_mode: ActivitySchedulingModeEnum;
+          start_date: string | null;
+          end_date: string | null;
+          completed_at: string | null;
           notes: string | null;
           deleted_at: string | null;
         };
@@ -193,6 +201,7 @@ export interface Database {
           end_date: string | null;
           cluster_id: string | null;
           nucleus_id: string | null;
+          activity_id: string | null;
           location: string | null;
         };
         Insert: Omit<Database['public']['Tables']['timeline_events']['Row'], 'id'> & { id?: string };

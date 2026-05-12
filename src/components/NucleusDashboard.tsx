@@ -22,13 +22,14 @@ import {
   ListIcon,
   BarChart3Icon,
   FileTextIcon,
+  CalendarIcon,
   InfoIcon,
 } from 'lucide-react';
 import { ConcentricCircles } from './ConcentricCircles';
 import { InNucleusNetworkView } from './InNucleusNetworkView';
 import { GlobalSearch } from './GlobalSearch';
 import { AccountMenu } from './AccountMenu';
-import { Activity } from '../types';
+import { Activity, ActivitySchedulingMode } from '../types';
 import {
   fetchNucleus,
   fetchActivitiesForNucleus,
@@ -80,6 +81,21 @@ export function NucleusDashboard() {
   const [newActivityType, setNewActivityType] = useState<string>('children-class');
   const [newActivityName, setNewActivityName] = useState('');
   const [customTypeName, setCustomTypeName] = useState('');
+  // Scheduling mode picker — the user explicitly opts into a mode
+  // because, per the spec, activity *type* doesn't determine
+  // scheduling (a study circle can be either recurring or short-
+  // duration). We default to "structured recurring" because the
+  // bulk of nucleus activities fit that pattern, but the picker
+  // makes the choice deliberate.
+  const [newSchedulingMode, setNewSchedulingMode] =
+    useState<ActivitySchedulingMode>('structured_recurring');
+  const [newScheduleNotes, setNewScheduleNotes] = useState('');
+  const [newDaysOfWeek, setNewDaysOfWeek] = useState<number[]>([]);
+  const [newTime, setNewTime] = useState('');
+  const [newIntervalWeeks, setNewIntervalWeeks] = useState<number>(1);
+  const [newStartDate, setNewStartDate] = useState('');
+  const [newEndDate, setNewEndDate] = useState('');
+  const [addActivityError, setAddActivityError] = useState<string | null>(null);
   const [bannerImage, setBannerImageState] = useState<string | null>(null);
   const [notes, setNotes] = useState('');
   const [notesSaved, setNotesSaved] = useState(false);
@@ -227,20 +243,74 @@ export function NucleusDashboard() {
   const getActivityParticipantCount = (activity: Activity) =>
     Object.values(activity.participants).flat().length;
 
+  const resetAddActivityForm = () => {
+    setNewActivityType('children-class');
+    setNewActivityName('');
+    setCustomTypeName('');
+    setNewSchedulingMode('structured_recurring');
+    setNewScheduleNotes('');
+    setNewDaysOfWeek([]);
+    setNewTime('');
+    setNewIntervalWeeks(1);
+    setNewStartDate('');
+    setNewEndDate('');
+    setAddActivityError(null);
+  };
+
   const handleCreateActivity = async () => {
+    setAddActivityError(null);
     const type = newActivityType as Activity['type'];
     const typeName = newActivityType === 'other' ? customTypeName : activityTypeLabels[newActivityType];
     const name = newActivityName.trim() || `${typeName} - ${nucleus.name}`;
+
+    // Per the spec, the mode picker drives which fields are
+    // required — short-duration must have explicit dates so the
+    // timeline can render a bar, structured recurring needs at
+    // least one day-of-week so the schedule reads meaningfully,
+    // and sporadic_ongoing has no hard requirements.
+    if (newSchedulingMode === 'short_duration') {
+      if (!newStartDate || !newEndDate) {
+        setAddActivityError('Short-duration activities need both a start and end date.');
+        return;
+      }
+      if (new Date(newEndDate) < new Date(newStartDate)) {
+        setAddActivityError('End date can’t be before the start date.');
+        return;
+      }
+    }
+    if (newSchedulingMode === 'structured_recurring' && newDaysOfWeek.length === 0) {
+      setAddActivityError('Pick at least one day of the week, or switch to "Sporadic" if the schedule is irregular.');
+      return;
+    }
+
     try {
-      const newActivity = await createActivity({ nucleusId: id!, name, type });
+      const newActivity = await createActivity({
+        nucleusId: id!,
+        name,
+        type,
+        schedulingMode: newSchedulingMode,
+        schedule: newSchedulingMode === 'sporadic_ongoing' ? newScheduleNotes.trim() || undefined : undefined,
+        daysOfWeek: newSchedulingMode === 'structured_recurring' && newDaysOfWeek.length > 0 ? newDaysOfWeek : undefined,
+        time: newSchedulingMode === 'structured_recurring' ? newTime || undefined : undefined,
+        intervalWeeks: newSchedulingMode === 'structured_recurring' ? newIntervalWeeks : undefined,
+        startDate: newSchedulingMode === 'short_duration' || (newSchedulingMode === 'structured_recurring' && newStartDate)
+          ? new Date(newStartDate)
+          : undefined,
+        endDate: newSchedulingMode === 'short_duration' ? new Date(newEndDate) : undefined,
+      });
       setActivities(prev => [...prev, newActivity]);
       setShowAddActivity(false);
-      setNewActivityType('children-class');
-      setNewActivityName('');
-      setCustomTypeName('');
-    } catch (err) {
+      resetAddActivityForm();
+    } catch (err: any) {
       console.error('Failed to create activity:', err);
+      setAddActivityError(err?.message ?? 'Failed to create activity.');
     }
+  };
+
+  const toggleNewDay = (day: number) => {
+    setNewDaysOfWeek(prev =>
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort(),
+    );
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -542,14 +612,45 @@ export function NucleusDashboard() {
                         </tr>
                       </thead>
                       <tbody>
-                        {activities.map((activity, index) => (
+                        {activities.map((activity, index) => {
+                          const lifecycleLabel =
+                            activity.lifecycle === 'completed'
+                              ? 'Completed'
+                              : activity.lifecycle === 'cancelled'
+                                ? 'Cancelled'
+                                : activity.lifecycle === 'planned'
+                                  ? 'Planned'
+                                  : null;
+                          // Completed/cancelled rows visually de-emphasize but
+                          // stay in the table so the historical record is
+                          // preserved — the spec calls this out explicitly.
+                          const lifecycleClass =
+                            activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled'
+                              ? 'opacity-70'
+                              : '';
+                          return (
                           <tr
                             key={activity.id}
                             onClick={() => navigate(`/nucleus/${id}/activity/${activity.id}`)}
-                            className={`border-b border-gray-200/80 last:border-b-0 hover:bg-blue-50/50 transition-colors duration-200 cursor-pointer ${index % 2 === 1 ? 'bg-gray-50/30' : ''}`}
+                            className={`border-b border-gray-200/80 last:border-b-0 hover:bg-blue-50/50 transition-colors duration-200 cursor-pointer ${index % 2 === 1 ? 'bg-gray-50/30' : ''} ${lifecycleClass}`}
                           >
                             <td className="py-3 sm:py-4 px-3 sm:px-5 text-sm font-medium text-gray-900">
-                              <div>{activity.name}</div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span>{activity.name}</span>
+                                {lifecycleLabel && (
+                                  <span
+                                    className={`text-[10px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded ${
+                                      activity.lifecycle === 'completed'
+                                        ? 'bg-gray-200 text-gray-700'
+                                        : activity.lifecycle === 'cancelled'
+                                          ? 'bg-rose-100 text-rose-700'
+                                          : 'bg-amber-100 text-amber-800'
+                                    }`}
+                                  >
+                                    {lifecycleLabel}
+                                  </span>
+                                )}
+                              </div>
                               {activity.schedule && (
                                 <div className="text-xs text-gray-500 mt-0.5">{activity.schedule}</div>
                               )}
@@ -577,7 +678,8 @@ export function NucleusDashboard() {
                               </div>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                         {activities.length === 0 && (
                           <tr>
                             <td colSpan={3} className="py-10 text-center text-gray-400 italic text-sm">
@@ -881,6 +983,21 @@ export function NucleusDashboard() {
                 </div>
               </div>
 
+              {/* Nucleus Timeline card — mirrors the cluster timeline at the
+                  nucleus level. Auto-populated by recurring + short-duration
+                  activities so users don't maintain a parallel calendar. */}
+              <div className={cardBase} onClick={() => navigate(`/nucleus/${id}/timeline`)}>
+                {cardHeader('Nucleus Timeline', 'Activities and events on the nucleus calendar.')}
+                <div className="flex flex-col items-center justify-center flex-1 py-4 gap-2 rounded-xl bg-indigo-50/60">
+                  <CalendarIcon className="w-8 h-8 text-indigo-400" />
+                  <p className="text-sm font-medium text-indigo-700">Open nucleus timeline</p>
+                  <p className="text-xs text-gray-500 text-center px-4">
+                    Same zoom and navigation as the cluster timeline. Recurring and
+                    short-duration activities appear automatically.
+                  </p>
+                </div>
+              </div>
+
             </div>
 
             {/* Dashboard hint */}
@@ -945,7 +1062,7 @@ export function NucleusDashboard() {
       {/* Add Activity Modal */}
       {showAddActivity && (
         <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-7 max-h-[92vh] overflow-y-auto">
             <h2 className="text-xl font-bold text-gray-900 mb-5">Add New Activity</h2>
             <div className="space-y-5">
               <div>
@@ -983,6 +1100,7 @@ export function NucleusDashboard() {
                   />
                 )}
               </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Activity Name (optional)
@@ -995,13 +1113,180 @@ export function NucleusDashboard() {
                   placeholder={`e.g. Children's Class - ${nucleus.name}`}
                 />
               </div>
+
+              {/* Scheduling mode picker — three exclusive options, each
+                  surfaces its own fields below. */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  How is this activity scheduled?
+                </label>
+                <div className="space-y-2">
+                  {[
+                    {
+                      value: 'structured_recurring' as const,
+                      label: 'Structured recurring',
+                      hint: 'Regular meetings on chosen days (JY groups, classes, devotionals, study circles).',
+                    },
+                    {
+                      value: 'sporadic_ongoing' as const,
+                      label: 'Sporadic / ongoing',
+                      hint: 'Irregular but ongoing — describe the schedule in free text.',
+                    },
+                    {
+                      value: 'short_duration' as const,
+                      label: 'Short duration',
+                      hint: 'Has a clear start and end (camp, intensive, short course).',
+                    },
+                  ].map(opt => (
+                    <label key={opt.value} className={`flex items-start gap-2 cursor-pointer p-2 rounded-lg border ${newSchedulingMode === opt.value ? 'border-blue-300 bg-blue-50/50' : 'border-gray-200 hover:bg-gray-50'}`}>
+                      <input
+                        type="radio"
+                        name="scheduling-mode"
+                        checked={newSchedulingMode === opt.value}
+                        onChange={() => setNewSchedulingMode(opt.value)}
+                        className="mt-1 w-4 h-4 text-blue-600"
+                      />
+                      <div>
+                        <div className="text-sm font-semibold text-gray-800">{opt.label}</div>
+                        <div className="text-xs text-gray-500">{opt.hint}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Structured recurring fields */}
+              {newSchedulingMode === 'structured_recurring' && (
+                <div className="space-y-3 p-3 rounded-xl bg-gray-50/60 border border-gray-200">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Day(s) of the week
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => {
+                        const selected = newDaysOfWeek.includes(i);
+                        return (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => toggleNewDay(i)}
+                            className={`px-2.5 py-1 rounded-md text-xs font-bold border transition-colors ${selected ? 'bg-blue-600 text-white border-blue-700' : 'bg-white text-gray-600 border-gray-200 hover:border-blue-200'}`}
+                          >
+                            {d}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Time <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <input
+                        type="time"
+                        value={newTime}
+                        onChange={e => setNewTime(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Recurrence
+                      </label>
+                      <select
+                        value={newIntervalWeeks}
+                        onChange={e => setNewIntervalWeeks(parseInt(e.target.value, 10))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                      >
+                        <option value={1}>Weekly</option>
+                        <option value={2}>Biweekly</option>
+                        <option value={4}>Monthly (~4 weeks)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Activity start date <span className="text-gray-400 font-normal">(optional)</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={newStartDate}
+                      onChange={e => setNewStartDate(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Used as the left edge of the activity's bar on the nucleus timeline.
+                      Defaults to today if left blank.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Sporadic field */}
+              {newSchedulingMode === 'sporadic_ongoing' && (
+                <div className="p-3 rounded-xl bg-gray-50/60 border border-gray-200">
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Schedule description
+                  </label>
+                  <textarea
+                    value={newScheduleNotes}
+                    onChange={e => setNewScheduleNotes(e.target.value)}
+                    placeholder="e.g. occasional Saturday gatherings, accompaniment visits as needed"
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Sporadic activities stay visible in the system but don't auto-populate the timeline.
+                  </p>
+                </div>
+              )}
+
+              {/* Short-duration fields */}
+              {newSchedulingMode === 'short_duration' && (
+                <div className="space-y-3 p-3 rounded-xl bg-gray-50/60 border border-gray-200">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        Start date
+                      </label>
+                      <input
+                        type="date"
+                        value={newStartDate}
+                        onChange={e => setNewStartDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                        End date
+                      </label>
+                      <input
+                        type="date"
+                        value={newEndDate}
+                        onChange={e => setNewEndDate(e.target.value)}
+                        min={newStartDate || undefined}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-500">
+                    Short-duration activities show as a multi-day bar on the nucleus timeline and can be marked completed when the end date is reached.
+                  </p>
+                </div>
+              )}
+
+              {addActivityError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
+                  {addActivityError}
+                </div>
+              )}
+
               <div className="flex gap-3 pt-4 border-t border-gray-100">
                 <button
                   onClick={() => {
                     setShowAddActivity(false);
-                    setNewActivityType('children-class');
-                    setNewActivityName('');
-                    setCustomTypeName('');
+                    resetAddActivityForm();
                   }}
                   className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors"
                 >

@@ -21,6 +21,26 @@ export interface ActivityParticipation {
   role: string;
 }
 
+// Lifecycle for an activity. The system preserves completed and
+// cancelled activities historically rather than deleting them —
+// the dashboard and reports filter on this column instead of
+// hiding rows behind a soft-delete.
+export type ActivityLifecycle =
+  | 'planned'
+  | 'active'
+  | 'completed'
+  | 'cancelled';
+
+// Scheduling mode the user picked for the activity. The three
+// modes are mutually exclusive at the data level — the UI only
+// asks for the fields that apply to the chosen mode, and the
+// nucleus timeline only auto-populates entries when the chosen
+// mode carries enough structured information to do so.
+export type ActivitySchedulingMode =
+  | 'structured_recurring'  // recurring meetings (children's classes, devotionals, JY groups…)
+  | 'sporadic_ongoing'      // ongoing but irregular (accompaniment, service)
+  | 'short_duration';       // finite start/end (camps, intensives)
+
 export interface Activity {
   id: string;
   nucleusId: string;
@@ -35,8 +55,26 @@ export interface Activity {
     [role: string]: string[]; // role -> participant IDs
   };
   currentBook?: string;
+  /** @deprecated use `lifecycle` instead */
   completed?: boolean;
+  // Lifecycle state — defaults to 'active' when omitted (for back-
+  // compat with older callers that only know about `is_active`).
+  lifecycle: ActivityLifecycle;
+  schedulingMode: ActivitySchedulingMode;
+  // Free-text description; the primary schedule field for
+  // sporadic_ongoing, and a fallback caption for the other modes.
   schedule?: string;
+  // Structured recurring fields (0 = Sunday … 6 = Saturday). The
+  // array supports multi-day activities (e.g. "Tue + Thu").
+  daysOfWeek?: number[];
+  time?: string;             // "HH:MM" (24-hour)
+  intervalWeeks?: number;    // 1 = weekly, 2 = biweekly, 4 ≈ monthly
+  // Short-duration fields. Optional on structured_recurring
+  // activities too — start_date represents "began on", end_date
+  // becomes set when a recurring activity is marked completed.
+  startDate?: Date;
+  endDate?: Date;
+  completedAt?: Date;
   notes?: string;
 }
 
@@ -90,6 +128,12 @@ export interface TimelineEvent {
   startTime?: string;
   clusterId?: string;
   nucleusId?: string;
+  // When this timeline row was auto-generated from an activity,
+  // activityId points back to the source. The nucleus timeline
+  // uses this to navigate from the strip to the activity detail
+  // page and to render a subtle "auto-generated" affordance so
+  // editors aren't surprised when a manual edit gets re-synced.
+  activityId?: string;
   location?: string;
   meetingType?: string;
   attendees: string[];

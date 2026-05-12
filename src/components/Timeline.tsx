@@ -43,6 +43,7 @@ import { getCallerContext } from '../lib/db/users';
 import {
   type CallerContext,
   canManageClusterTimelineEvents,
+  canManageNucleusTimelineEvents,
 } from '../lib/permissions';
 
 type TimelineCycleOverride = TimelineCycle;
@@ -74,6 +75,13 @@ const CYCLE_EDIT_MIN_PX = 140;
 
 interface TimelineProps {
   clusterId: string | null;
+  // When set, the Timeline scopes its event reads/writes to this
+  // nucleus instead of the cluster. The cycle ladder still comes
+  // from the parent cluster's overrides (cycles are administrative
+  // and apply at the cluster level), but cycle boundary editing is
+  // suppressed in nucleus mode so two nucleus coordinators can't
+  // accidentally fork the same cluster's calendar.
+  nucleusId?: string | null;
   // 'horizontal' (default): time runs left→right, panel sits at the
   // bottom of the screen with a resize handle. 'vertical': time runs
   // top→bottom, panel fills its parent's height — used by the mobile
@@ -105,6 +113,7 @@ type EventModalState =
 
 export function Timeline({
   clusterId,
+  nucleusId = null,
   orientation = 'horizontal',
   mode = 'panel',
   onItemClick,
@@ -113,6 +122,7 @@ export function Timeline({
 }: TimelineProps) {
   const isVertical = orientation === 'vertical';
   const fillMode = mode === 'fill';
+  const isNucleusScope = !!nucleusId;
 
   const [overrides, setOverrides] = useState<TimelineCycleOverride[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
@@ -140,8 +150,13 @@ export function Timeline({
   const [saving, setSaving] = useState(false);
 
   const canManageEvents = useMemo(
-    () => (callerCtx ? canManageClusterTimelineEvents(callerCtx, clusterId) : false),
-    [callerCtx, clusterId],
+    () => {
+      if (!callerCtx) return false;
+      return isNucleusScope
+        ? canManageNucleusTimelineEvents(callerCtx, { clusterId, nucleusId })
+        : canManageClusterTimelineEvents(callerCtx, clusterId);
+    },
+    [callerCtx, clusterId, nucleusId, isNucleusScope],
   );
 
   // ───── Data loading ───────────────────────────────────────────────────
@@ -151,7 +166,11 @@ export function Timeline({
       .catch(() => setOverrides([]));
 
   const reloadEvents = () =>
-    fetchTimelineEvents({ clusterId: clusterId ?? undefined })
+    fetchTimelineEvents(
+      isNucleusScope
+        ? { nucleusId: nucleusId ?? undefined }
+        : { clusterId: clusterId ?? undefined },
+    )
       .then(setEvents)
       .catch(() => {});
 
@@ -160,7 +179,7 @@ export function Timeline({
     reloadEvents();
     setPendingShifts({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clusterId]);
+  }, [clusterId, nucleusId]);
 
   useEffect(() => {
     getCallerContext().then(setCallerCtx).catch(() => setCallerCtx(null));
@@ -734,6 +753,7 @@ export function Timeline({
           endDate: endDate ?? undefined,
           startTime: startTime ?? undefined,
           clusterId: clusterId ?? undefined,
+          nucleusId: nucleusId ?? undefined,
           location: location ?? undefined,
           meetingType: meetingType ?? undefined,
           attendees,
@@ -1173,8 +1193,12 @@ export function Timeline({
                 );
                 const lengthPx = endMain - startMain;
                 const pending = (pendingShifts[cycle.id] ?? 0) !== 0;
+                // Cycle ladder is administrative; only admins can shift its
+                // boundaries, and only on the cluster view. The nucleus
+                // timeline shows the same ladder for context but never
+                // exposes the +/- editor here.
                 const showEdit =
-                  callerCtx?.isAdmin && lengthPx >= CYCLE_EDIT_MIN_PX;
+                  callerCtx?.isAdmin && lengthPx >= CYCLE_EDIT_MIN_PX && !isNucleusScope;
                 const showLabel = lengthPx >= 50;
                 // Boundary tick: a short stripe across the center axis,
                 // on the start (leading) edge of the cycle.

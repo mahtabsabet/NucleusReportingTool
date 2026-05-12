@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeftIcon,
@@ -8,6 +8,11 @@ import {
   ClockIcon,
   FileTextIcon,
   Trash2Icon,
+  CalendarIcon,
+  PlayCircleIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  RotateCcwIcon,
 } from 'lucide-react';
 import {
   fetchActivityDetail,
@@ -16,14 +21,82 @@ import {
   updateActivityDetails,
   activityDeletePermission,
   deleteActivity,
+  setActivityLifecycle,
 } from '../lib/db/nucleus';
 import { submitPermissionRequest } from '../lib/db/requests';
 import { getCallerContext } from '../lib/db/users';
 import { isRegionalOnly } from '../lib/permissions';
 import { markPersonUnplaced } from '../lib/unplacedTracker';
-import { Activity } from '../types';
+import {
+  Activity,
+  ActivityLifecycle,
+  ActivitySchedulingMode,
+} from '../types';
 import { PersonNameCombobox } from './PersonNameCombobox';
 import { GlobalSearch } from './GlobalSearch';
+
+const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+function formatDateForInput(d: Date): string {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseDateFromInput(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+// Build a one-line read-only summary of the schedule. Used at
+// the top of the activity detail header so the schedule is
+// visible even when the editor is collapsed.
+function buildScheduleSummary(opts: {
+  schedulingMode: ActivitySchedulingMode;
+  schedule: string;
+  daysOfWeek: number[];
+  time: string;
+  intervalWeeks: number;
+  startDate: string;
+  endDate: string;
+}): string {
+  switch (opts.schedulingMode) {
+    case 'sporadic_ongoing':
+      return opts.schedule.trim() || 'Sporadic / ongoing';
+    case 'short_duration': {
+      if (opts.startDate && opts.endDate) {
+        return `${opts.startDate} → ${opts.endDate}`;
+      }
+      return 'Short duration (dates not yet set)';
+    }
+    case 'structured_recurring': {
+      const days = opts.daysOfWeek.map(d => DAY_LABELS[d]).join(', ');
+      const everyN = opts.intervalWeeks <= 1
+        ? 'Weekly'
+        : opts.intervalWeeks === 2
+          ? 'Biweekly'
+          : `Every ${opts.intervalWeeks} weeks`;
+      const t = opts.time ? ` at ${opts.time}` : '';
+      const d = days ? ` on ${days}` : '';
+      return `${everyN}${d}${t}`.trim();
+    }
+  }
+}
+
+const LIFECYCLE_LABELS: Record<ActivityLifecycle, string> = {
+  planned: 'Planned',
+  active: 'Active',
+  completed: 'Completed',
+  cancelled: 'Cancelled',
+};
+
+const LIFECYCLE_BADGE: Record<ActivityLifecycle, string> = {
+  planned: 'bg-amber-50 text-amber-800 border-amber-200',
+  active: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  completed: 'bg-gray-100 text-gray-700 border-gray-300',
+  cancelled: 'bg-rose-50 text-rose-700 border-rose-200',
+};
 
 // DB role enum keys for each activity type
 const ROLES_FOR_TYPE: Record<string, string[]> = {
@@ -59,6 +132,19 @@ export function ActivityDetail() {
   const [saved, setSaved] = useState(false);
   const [schedule, setSchedule] = useState('');
   const [notes, setNotes] = useState('');
+  // Scheduling-mode editor state. All four fields are tracked
+  // locally so the user can switch modes without losing a partial
+  // entry; we only persist whatever fields are relevant to the
+  // active mode on Save.
+  const [schedulingMode, setSchedulingMode] =
+    useState<ActivitySchedulingMode>('sporadic_ongoing');
+  const [daysOfWeek, setDaysOfWeek] = useState<number[]>([]);
+  const [time, setTime] = useState('');
+  const [intervalWeeks, setIntervalWeeks] = useState<number>(1);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [lifecycleSaving, setLifecycleSaving] = useState(false);
   const [deletePermission, setDeletePermission] = useState<'direct' | 'request' | 'none'>('none');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteConfirmInput, setDeleteConfirmInput] = useState('');
@@ -85,6 +171,12 @@ export function ActivityDetail() {
         setPersonNames(pNames);
         setSchedule(a.schedule ?? '');
         setNotes(a.notes ?? '');
+        setSchedulingMode(a.schedulingMode ?? 'sporadic_ongoing');
+        setDaysOfWeek(a.daysOfWeek ?? []);
+        setTime(a.time ?? '');
+        setIntervalWeeks(a.intervalWeeks ?? 1);
+        setStartDate(a.startDate ? formatDateForInput(a.startDate) : '');
+        setEndDate(a.endDate ? formatDateForInput(a.endDate) : '');
         // Pre-fill expected roles
         const expectedRoles = ROLES_FOR_TYPE[a.type] ?? [];
         const initialParticipants = { ...a.participants };
@@ -177,17 +269,79 @@ export function ActivityDetail() {
   };
 
   const handleSave = async () => {
+    setScheduleError(null);
+    if (schedulingMode === 'short_duration') {
+      if (!startDate || !endDate) {
+        setScheduleError('Short-duration activities need both a start and end date.');
+        return;
+      }
+      if (new Date(endDate) < new Date(startDate)) {
+        setScheduleError('End date can’t be before the start date.');
+        return;
+      }
+    }
     try {
+      // Persist mode-relevant fields and clear the others so we
+      // don't leave stale leftovers (e.g. a stale end_date hanging
+      // off an activity that's now ongoing).
       await updateActivityDetails(activityId!, {
-        scheduleNotes: schedule,
         notes,
+        schedulingMode,
+        scheduleNotes: schedulingMode === 'sporadic_ongoing' ? schedule : '',
+        daysOfWeek: schedulingMode === 'structured_recurring' ? daysOfWeek : [],
+        time: schedulingMode === 'structured_recurring' ? (time || null) : null,
+        intervalWeeks: schedulingMode === 'structured_recurring' ? intervalWeeks : null,
+        startDate:
+          (schedulingMode === 'short_duration' || schedulingMode === 'structured_recurring')
+            ? (startDate ? parseDateFromInput(startDate) : null)
+            : null,
+        endDate: schedulingMode === 'short_duration'
+          ? (endDate ? parseDateFromInput(endDate) : null)
+          : null,
       });
+      // Refresh the local view so the lifecycle pill / sync chip
+      // reflects what's now in the DB (the sync helper may have
+      // generated/refreshed a timeline_events row).
+      const fresh = await fetchActivityDetail(activityId!);
+      if (fresh) setActivity(fresh.activity);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to save activity:', err);
+      setScheduleError(err?.message ?? 'Failed to save activity.');
     }
   };
+
+  const handleLifecycleChange = async (next: ActivityLifecycle) => {
+    if (!activity) return;
+    if (next === activity.lifecycle) return;
+    setLifecycleSaving(true);
+    try {
+      await setActivityLifecycle(activityId!, next);
+      const fresh = await fetchActivityDetail(activityId!);
+      if (fresh) setActivity(fresh.activity);
+    } catch (err) {
+      console.error('Failed to update lifecycle:', err);
+    } finally {
+      setLifecycleSaving(false);
+    }
+  };
+
+  const toggleDay = (day: number) => {
+    setDaysOfWeek(prev =>
+      prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day].sort(),
+    );
+  };
+
+  const scheduleSummary = useMemo(() => buildScheduleSummary({
+    schedulingMode,
+    schedule,
+    daysOfWeek,
+    time,
+    intervalWeeks,
+    startDate,
+    endDate,
+  }), [schedulingMode, schedule, daysOfWeek, time, intervalWeeks, startDate, endDate]);
 
   const expectedRoles = ROLES_FOR_TYPE[activity.type] ?? [];
   const extraRoles = Object.keys(participants).filter(r => !expectedRoles.includes(r));
@@ -235,17 +389,29 @@ export function ActivityDetail() {
               <span className="text-xs text-amber-700 font-medium">Deletion requested</span>
             )}
           </div>
-          {activity.currentBook && (
-            <p className="text-sm font-medium text-blue-600 mt-1.5 bg-blue-50 inline-block px-2.5 py-1 rounded-md">
-              Current: {activity.currentBook}
-            </p>
-          )}
-          {activity.schedule && (
-            <p className="text-sm font-medium text-gray-500 mt-1.5 flex items-center gap-1.5">
-              <ClockIcon className="w-3.5 h-3.5" />
-              {activity.schedule}
-            </p>
-          )}
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-bold border ${LIFECYCLE_BADGE[activity.lifecycle]}`}
+              title="Lifecycle state"
+            >
+              {activity.lifecycle === 'completed' && <CheckCircleIcon className="w-3.5 h-3.5" />}
+              {activity.lifecycle === 'cancelled' && <XCircleIcon className="w-3.5 h-3.5" />}
+              {activity.lifecycle === 'active' && <PlayCircleIcon className="w-3.5 h-3.5" />}
+              {activity.lifecycle === 'planned' && <ClockIcon className="w-3.5 h-3.5" />}
+              {LIFECYCLE_LABELS[activity.lifecycle]}
+            </span>
+            {activity.currentBook && (
+              <span className="text-sm font-medium text-blue-600 bg-blue-50 px-2.5 py-1 rounded-md">
+                Current: {activity.currentBook}
+              </span>
+            )}
+            {scheduleSummary && (
+              <span className="text-sm font-medium text-gray-500 flex items-center gap-1.5">
+                <ClockIcon className="w-3.5 h-3.5" />
+                {scheduleSummary}
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
@@ -359,25 +525,224 @@ export function ActivityDetail() {
       )}
 
       <div className="max-w-5xl mx-auto p-4 sm:p-8 space-y-6">
+        {/* Lifecycle controls */}
+        {!regionalOnly && (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
+            <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
+              <PlayCircleIcon className="w-4 h-4 text-gray-400" />
+              Lifecycle
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Completed and cancelled activities stay visible in the system as
+              historical records — moving an activity through these states
+              preserves its data rather than removing it.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {(['planned', 'active', 'completed', 'cancelled'] as ActivityLifecycle[]).map(state => {
+                const isCurrent = activity.lifecycle === state;
+                return (
+                  <button
+                    key={state}
+                    type="button"
+                    disabled={lifecycleSaving}
+                    onClick={() => handleLifecycleChange(state)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border transition-colors ${
+                      isCurrent
+                        ? LIFECYCLE_BADGE[state]
+                        : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
+                    } ${lifecycleSaving ? 'opacity-60 cursor-not-allowed' : ''}`}
+                  >
+                    {state === 'planned' && <ClockIcon className="w-4 h-4" />}
+                    {state === 'active' && <PlayCircleIcon className="w-4 h-4" />}
+                    {state === 'completed' && <CheckCircleIcon className="w-4 h-4" />}
+                    {state === 'cancelled' && <XCircleIcon className="w-4 h-4" />}
+                    {LIFECYCLE_LABELS[state]}
+                  </button>
+                );
+              })}
+              {(activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled') && (
+                <button
+                  type="button"
+                  disabled={lifecycleSaving}
+                  onClick={() => handleLifecycleChange('active')}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                >
+                  <RotateCcwIcon className="w-4 h-4" />
+                  Reactivate
+                </button>
+              )}
+            </div>
+            {activity.completedAt && (
+              <p className="text-xs text-gray-500 mt-3">
+                {activity.lifecycle === 'completed' ? 'Marked completed' : 'Status updated'} on{' '}
+                {activity.completedAt.toLocaleDateString()}
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Schedule & Notes */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8 space-y-6">
           <div>
             <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
-              <ClockIcon className="w-4 h-4 text-gray-400" />
-              Schedule
+              <CalendarIcon className="w-4 h-4 text-gray-400" />
+              Scheduling
             </h3>
-            <input
-              type="text"
-              value={schedule}
-              onChange={e => setSchedule(e.target.value)}
-              placeholder="e.g. Saturdays at 10:00 AM, Every other Tuesday at 7 PM, Bi-weekly..."
-              readOnly={regionalOnly}
-              className={`w-full px-4 py-2.5 border border-gray-300 rounded-xl text-sm font-medium shadow-sm ${
-                regionalOnly
-                  ? 'bg-gray-50 text-gray-700 cursor-default focus:outline-none'
-                  : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-              }`}
-            />
+            <p className="text-sm text-gray-500 mb-3">
+              {schedulingMode === 'structured_recurring'
+                ? 'Recurring schedules auto-populate the nucleus timeline.'
+                : schedulingMode === 'short_duration'
+                  ? 'Short-duration activities appear as a date-range bar on the nucleus timeline.'
+                  : 'Sporadic activities stay in the system but don\'t auto-populate the nucleus timeline.'}
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
+              {[
+                { value: 'structured_recurring' as const, label: 'Structured recurring' },
+                { value: 'sporadic_ongoing' as const, label: 'Sporadic / ongoing' },
+                { value: 'short_duration' as const, label: 'Short duration' },
+              ].map(opt => {
+                const selected = schedulingMode === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    disabled={regionalOnly}
+                    onClick={() => setSchedulingMode(opt.value)}
+                    className={`px-3 py-2 rounded-xl text-sm font-semibold border text-left transition-colors ${
+                      selected
+                        ? 'bg-blue-50 border-blue-300 text-blue-800'
+                        : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                    } ${regionalOnly ? 'cursor-default' : ''}`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            {schedulingMode === 'structured_recurring' && (
+              <div className="space-y-3 rounded-xl bg-gray-50/60 border border-gray-200 p-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Day(s) of the week
+                  </label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {DAY_LABELS.map((d, i) => {
+                      const selected = daysOfWeek.includes(i);
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          disabled={regionalOnly}
+                          onClick={() => toggleDay(i)}
+                          className={`px-2.5 py-1 rounded-md text-xs font-bold border transition-colors ${
+                            selected
+                              ? 'bg-blue-600 text-white border-blue-700'
+                              : 'bg-white text-gray-600 border-gray-200 hover:border-blue-200'
+                          }`}
+                        >
+                          {d}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Time <span className="text-gray-400 font-normal">(optional)</span>
+                    </label>
+                    <input
+                      type="time"
+                      value={time}
+                      onChange={e => setTime(e.target.value)}
+                      readOnly={regionalOnly}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                      Recurrence
+                    </label>
+                    <select
+                      value={intervalWeeks}
+                      onChange={e => setIntervalWeeks(parseInt(e.target.value, 10))}
+                      disabled={regionalOnly}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm bg-white"
+                    >
+                      <option value={1}>Weekly</option>
+                      <option value={2}>Biweekly</option>
+                      <option value={4}>Monthly (~4 weeks)</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Activity start date <span className="text-gray-400 font-normal">(optional)</span>
+                  </label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={e => setStartDate(e.target.value)}
+                    readOnly={regionalOnly}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+            )}
+
+            {schedulingMode === 'sporadic_ongoing' && (
+              <div className="rounded-xl bg-gray-50/60 border border-gray-200 p-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Schedule description
+                </label>
+                <input
+                  type="text"
+                  value={schedule}
+                  onChange={e => setSchedule(e.target.value)}
+                  placeholder="e.g. occasional Saturday gatherings, accompaniment visits"
+                  readOnly={regionalOnly}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                />
+              </div>
+            )}
+
+            {schedulingMode === 'short_duration' && (
+              <div className="grid grid-cols-2 gap-3 rounded-xl bg-gray-50/60 border border-gray-200 p-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    Start date
+                  </label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={e => setStartDate(e.target.value)}
+                    readOnly={regionalOnly}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    End date
+                  </label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={e => setEndDate(e.target.value)}
+                    min={startDate || undefined}
+                    readOnly={regionalOnly}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  />
+                </div>
+              </div>
+            )}
+
+            {scheduleError && (
+              <div className="mt-3 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
+                {scheduleError}
+              </div>
+            )}
           </div>
 
           <div>
