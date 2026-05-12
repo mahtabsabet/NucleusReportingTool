@@ -145,7 +145,10 @@ export async function fetchActivitiesForScope(nucleusId: string): Promise<ScopeO
 export interface CreateUserParams {
   name: string;
   email: string;
-  password: string;
+  // Omit password to send an invite email. Provide a password to skip the
+  // invite and bootstrap the user with a temporary password they must
+  // change on first login.
+  password?: string;
   role: CreatableRole;
   clusterId?: string;
   nucleusId?: string;
@@ -217,6 +220,97 @@ export async function changeUserRole(params: ChangeRoleParams): Promise<void> {
 
 // Convenience re-export for UIs.
 export { highestRole };
+
+export interface ChangeOwnPasswordParams {
+  currentPassword: string;
+  newPassword: string;
+}
+
+// Self-service password change. Re-authenticates with the current password
+// first so a hijacked session can't silently rotate the password — Supabase's
+// updateUser() does not require the previous credential on its own.
+export async function changeOwnPassword(
+  params: ChangeOwnPasswordParams,
+): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.email) throw new Error('Not signed in');
+
+  const { error: reauthError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: params.currentPassword,
+  });
+  if (reauthError) throw new Error('Current password is incorrect');
+
+  const { error: updateError } = await supabase.auth.updateUser({
+    password: params.newPassword,
+  });
+  if (updateError) throw new Error(updateError.message);
+
+  // Clear the "must change password" flag for users who landed here via the
+  // forced-change gate. RLS lets a user update their own profile row.
+  await supabase
+    .from('profiles')
+    .update({ must_change_password: false })
+    .eq('id', user.id);
+}
+
+// Reads the current user's must_change_password flag. Used to gate the app
+// after sign-in: when true, route to the change-password modal first.
+export async function fetchMustChangePassword(userId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('profiles')
+    .select('must_change_password')
+    .eq('id', userId)
+    .single();
+  return (data as any)?.must_change_password === true;
+}
+
+// Sends a recovery email to the given address. Used by both the "forgot
+// password" flow on the login page and the admin "send reset email" action.
+// Supabase rate-limits this endpoint and silently no-ops for unknown emails,
+// which is what we want (prevents account enumeration).
+export async function sendPasswordResetEmail(email: string): Promise<void> {
+  const redirectTo = `${window.location.origin}/reset-password`;
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+  if (error) throw new Error(error.message);
+}
+
+// Completes a recovery: must be called while the user is in a recovery
+// session (Supabase places them in one automatically when they click the
+// email link).
+export async function completePasswordReset(newPassword: string): Promise<void> {
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw new Error(error.message);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    await supabase
+      .from('profiles')
+      .update({ must_change_password: false })
+      .eq('id', user.id);
+  }
+}
+
+export interface AdminResetPasswordParams {
+  targetUserId: string;
+  confirmedEmail: string;
+  // 'email' sends a recovery link, 'temporary' sets a one-time password.
+  mode: 'email' | 'temporary';
+  temporaryPassword?: string;
+}
+
+export async function adminResetUserPassword(params: AdminResetPasswordParams): Promise<void> {
+  const { data, error } = await supabase.functions.invoke('manage-user', {
+    body: {
+      action: 'reset-password',
+      targetUserId: params.targetUserId,
+      confirmedEmail: params.confirmedEmail,
+      mode: params.mode,
+      temporaryPassword: params.temporaryPassword,
+    },
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+}
 
 // Returns the signed-in user's profile_image_url, or null if not set.
 export async function fetchOwnProfileImageUrl(userId: string): Promise<string | null> {

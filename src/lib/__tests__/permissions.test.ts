@@ -11,6 +11,7 @@ import {
   canManageClusterTimelineEvents,
   canRequestChangeUserRole,
   canRequestDeleteUser,
+  canResetUserPasswordDirectly,
   creatableRoles,
   isRegionalOnly,
   primaryRole,
@@ -279,6 +280,40 @@ describe('user-management safeguards', () => {
     expect(canRequestDeleteUser(CC, adminTarget)).toBe(false);
     expect(canRequestDeleteUser(CC, superTarget)).toBe(false);
     expect(canRequestChangeUserRole(NC, adminTarget)).toBe(false);
+  });
+
+  // Reset-password safeguards mirror delete-user; covered alongside so a
+  // change to one rule is loud about the other.
+  describe('canResetUserPasswordDirectly', () => {
+    it('cannot reset your own password through this path', () => {
+      const me = summary({ id: 'self', isAdmin: true });
+      expect(canResetUserPasswordDirectly(ADMIN, me)).toBe(false);
+    });
+
+    it('no one can reset a Super Admin via the admin UI', () => {
+      const target = summary({ id: 'other', isSuperAdmin: true, isAdmin: true });
+      expect(canResetUserPasswordDirectly(SUPER, target)).toBe(false);
+      expect(canResetUserPasswordDirectly(ADMIN, target)).toBe(false);
+    });
+
+    it('Admin can reset a non-admin user', () => {
+      const target = summary({ id: 'other' });
+      expect(canResetUserPasswordDirectly(ADMIN, target)).toBe(true);
+    });
+
+    it('Admin cannot reset another Admin; Super Admin can', () => {
+      const otherAdmin = summary({ id: 'other', isAdmin: true });
+      expect(canResetUserPasswordDirectly(ADMIN, otherAdmin)).toBe(false);
+      expect(canResetUserPasswordDirectly(SUPER, otherAdmin)).toBe(true);
+    });
+
+    it('CC/NC/AL/Regional cannot reset anyone through this path', () => {
+      const target = summary({ id: 'other' });
+      expect(canResetUserPasswordDirectly(CC, target)).toBe(false);
+      expect(canResetUserPasswordDirectly(NC, target)).toBe(false);
+      expect(canResetUserPasswordDirectly(AL, target)).toBe(false);
+      expect(canResetUserPasswordDirectly(REGIONAL, target)).toBe(false);
+    });
   });
 });
 

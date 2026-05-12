@@ -509,6 +509,24 @@ export function canChangeUserRoleDirectly(
   return false; // CC/NC must use request flow
 }
 
+// "Reset password" rules mirror canDeleteUserDirectly:
+//   - Caller cannot reset their own password through this path (the
+//     self-service Change Password flow handles that).
+//   - Super Admin passwords cannot be reset through this interface
+//     (recovery email remains available).
+//   - Admin can reset any non-admin; only a Super Admin may reset
+//     another Admin's password.
+export function canResetUserPasswordDirectly(
+  ctx: CallerContext,
+  target: ManagedUserSummary,
+): boolean {
+  if (target.id === ctx.userId) return false;
+  if (target.isSuperAdmin) return false;
+  if (ctx.isSuperAdmin) return true;
+  if (ctx.isAdmin) return !target.isAdmin;
+  return false;
+}
+
 export function canRequestChangeUserRole(ctx: CallerContext, target: ManagedUserSummary): boolean {
   if (target.id === ctx.userId) return false;
   if (target.isSuperAdmin || target.isAdmin) return false; // out of CC/NC's reach even via request
