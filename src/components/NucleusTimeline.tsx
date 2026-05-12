@@ -9,18 +9,28 @@ import { Timeline } from './Timeline';
 import { TimelineItemDetailDrawer } from './TimelineItemDetailDrawer';
 import { GlobalSearch } from './GlobalSearch';
 import { AccountMenu } from './AccountMenu';
-import { fetchNucleus } from '../lib/db/nucleus';
+import { fetchNucleus, fetchActivitiesForNucleus } from '../lib/db/nucleus';
 import {
   deleteTimelineEvent,
   fetchTimelineEvents,
 } from '../lib/db/timeline';
-import type { TimelineEvent } from '../types';
+import type { Activity, TimelineEvent } from '../types';
 import { getCallerContext } from '../lib/db/users';
 import {
   type CallerContext,
   canManageNucleusTimelineEvents,
 } from '../lib/permissions';
 import { useIsMobile } from '../lib/useIsMobile';
+import { computeRecurringOccurrences } from '../lib/timeline/recurringOccurrences';
+
+// Horizon over which to synthesize recurring occurrences. Matches
+// the cluster timeline's calendar range (2026..2030); the Timeline
+// component filters by its own visible window so the cost of
+// generating outside the current view is bounded.
+const OCCURRENCE_HORIZON = {
+  start: new Date(2026, 0, 1),
+  end: new Date(2030, 11, 31),
+};
 
 // Nucleus-scoped timeline page. Modelled on TimelineWorkspace but
 // scoped to a single nucleus — the strip shows everything the
@@ -49,6 +59,7 @@ export function NucleusTimeline() {
   const [selectedItemId, setSelectedItemId] = useState<string | null>(initialSelected);
   const [selectedItem, setSelectedItem] = useState<TimelineEvent | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [activities, setActivities] = useState<Activity[]>([]);
 
   useEffect(() => {
     if (!nucleusId) return;
@@ -59,11 +70,47 @@ export function NucleusTimeline() {
         setNucleus({ id: n.id, name: n.name, clusterId: n.clusterId });
       })
       .catch(() => {});
+    // Activities feed the synthesized recurring occurrences. Pull
+    // both active and completed activities so historical recurring
+    // entries still appear on the timeline as the spec requires.
+    fetchActivitiesForNucleus(nucleusId)
+      .then(rows => {
+        if (cancelled) return;
+        setActivities(rows);
+      })
+      .catch(() => setActivities([]));
     getCallerContext().then(setCallerCtx).catch(() => setCallerCtx(null));
     return () => {
       cancelled = true;
     };
-  }, [nucleusId]);
+    // Re-fetch when the user comes back to this page after editing
+    // an activity. reloadToken bumps on a known mutation; nucleusId
+    // change covers navigations between nuclei.
+  }, [nucleusId, reloadToken]);
+
+  // Synthesized one-per-occurrence markers for structured-recurring
+  // activities. Re-derived only when the activity set changes —
+  // panning/zooming the strip doesn't recompute these.
+  const extraItems = useMemo<TimelineEvent[]>(
+    () => activities.flatMap(a => computeRecurringOccurrences(a, OCCURRENCE_HORIZON)),
+    [activities],
+  );
+
+  // Some existing nucleus deployments still hold a stale single-row
+  // timeline entry for each recurring activity from before the sync
+  // rules changed (an earlier draft of this feature persisted one
+  // marker on the activity's start date). Tell the Timeline to
+  // suppress fetched rows tied to a structured-recurring activity
+  // so the strip shows only the synthesized fan-out — no DB cleanup
+  // pass required.
+  const hiddenActivityIds = useMemo<Set<string>>(
+    () => new Set(
+      activities
+        .filter(a => a.schedulingMode === 'structured_recurring')
+        .map(a => a.id),
+    ),
+    [activities],
+  );
 
   // Resolve a deep-linked item id once the nucleus is known.
   useEffect(() => {
@@ -205,6 +252,8 @@ export function NucleusTimeline() {
             onItemClick={handleItemClick}
             selectedItemId={selectedItemId}
             openEditForItemId={editItemSignal}
+            extraItems={extraItems}
+            hiddenActivityIds={hiddenActivityIds}
           />
         </div>
         {selectedItem && (
