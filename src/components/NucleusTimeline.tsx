@@ -32,6 +32,24 @@ const OCCURRENCE_HORIZON = {
   end: new Date(2030, 11, 31),
 };
 
+// Predicate for "this activity should currently appear on the
+// nucleus timeline." Used to drive both the synthesized occurrence
+// set (recurring activities) and the hidden-row filter (so stale
+// rows for activities that no longer qualify don't leak through).
+//
+// Active and planned activities are eligible; completed and
+// cancelled activities are preserved in the system but disappear
+// from the calendar. Sporadic_ongoing never qualifies — it has no
+// structured schedule. Short_duration and structured_recurring
+// both qualify (their on-timeline representation differs but the
+// eligibility rule is the same).
+function isActivityCurrentlyOnTimeline(a: Activity): boolean {
+  const isActiveOrPlanned = a.lifecycle === 'active' || a.lifecycle === 'planned';
+  if (!isActiveOrPlanned) return false;
+  return a.schedulingMode === 'short_duration'
+    || a.schedulingMode === 'structured_recurring';
+}
+
 // Nucleus-scoped timeline page. Modelled on TimelineWorkspace but
 // scoped to a single nucleus — the strip shows everything the
 // nucleus has on its calendar (auto-generated activity entries +
@@ -96,22 +114,18 @@ export function NucleusTimeline() {
     [activities],
   );
 
-  // Suppress any fetched timeline row whose source activity isn't a
-  // short-duration activity in its current mode. Two cases this
-  // covers:
-  //   • A structured-recurring activity that still has a stale
-  //     single-row entry from an older buggy sync — the synthesized
-  //     fan-out is what we want shown, not the leftover dot.
-  //   • A sporadic_ongoing activity that previously was recurring or
-  //     short-duration and got a row written by an older version —
-  //     sporadic shouldn't surface on the timeline at all.
-  // Only short_duration activities are allowed to keep their fetched
-  // row visible, because that's the one mode that legitimately
-  // persists a derived row in the current implementation.
+  // The set of activities whose stale fetched rows should be hidden.
+  // Mirrors `syncActivityTimelineEntry`'s "shouldExist" predicate
+  // inverted — anything that wouldn't be written today (different
+  // mode, completed, cancelled) is also hidden if a leftover row
+  // still happens to live in the database from an earlier sync.
+  // Only short_duration + active/planned activities are allowed to
+  // surface their persisted row, since that's the one combination
+  // that legitimately keeps a derived row.
   const hiddenActivityIds = useMemo<Set<string>>(
     () => new Set(
       activities
-        .filter(a => a.schedulingMode !== 'short_duration')
+        .filter(a => !isActivityCurrentlyOnTimeline(a))
         .map(a => a.id),
     ),
     [activities],

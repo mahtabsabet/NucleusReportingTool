@@ -10,23 +10,26 @@ import type { Activity, ActivitySchedulingMode } from '../../../types';
 // spec — the production helper (syncActivityTimelineEntry in
 // src/lib/db/nucleus.ts) is then a trivial mirror of these cases.
 //
-// Spec (current as of the "synthesize recurring occurrences" change):
-//   • short_duration AND start_date set    → one persisted row
+// Spec (current as of the "lock scheduling on completed/cancelled" change):
+//   • short_duration AND start_date AND lifecycle ∈ {active, planned}
+//                                          → one persisted row
 //   • structured_recurring                  → NO persisted row
 //                                              (occurrences are synthesized
 //                                              at render time from
 //                                              daysOfWeek + intervalWeeks)
 //   • sporadic_ongoing                      → NO persisted row
-//   • lifecycle = 'cancelled'               → NO persisted row
+//   • lifecycle ∈ {completed, cancelled}    → NO persisted row, regardless of mode
 //
-// short_duration is the only mode that legitimately keeps a derived
-// row in the database. Everything else is either synthesized on the
-// nucleus timeline page or intentionally absent from the calendar.
+// short_duration + active/planned is the only combination that
+// legitimately keeps a derived row. Everything else is either
+// synthesized on the nucleus timeline page or intentionally absent
+// from the calendar — completed and cancelled activities are
+// preserved as records but disappear from the forward-looking view.
 
 function shouldHaveTimelineEntry(activity: Pick<Activity,
   'lifecycle' | 'schedulingMode' | 'startDate'
 >): boolean {
-  if (activity.lifecycle === 'cancelled') return false;
+  if (activity.lifecycle !== 'active' && activity.lifecycle !== 'planned') return false;
   if (activity.schedulingMode === 'short_duration' && activity.startDate) return true;
   return false;
 }
@@ -104,41 +107,66 @@ describe('activity → timeline entry sync rules', () => {
     })).toBe(false);
   });
 
-  it('completed short_duration activities keep their persisted row (historical record)', () => {
-    // The end_date sticks at the original or the completion date,
-    // so the bar continues to render on the strip as a finished
-    // event — the spec calls out preserving completed activities
-    // visually rather than hiding them.
+  it('completed activities never keep a persisted row, regardless of mode', () => {
+    // Completed and cancelled activities are preserved in the
+    // system but disappear from the timeline — the calendar is
+    // forward-looking; history lives in the activity record.
     expect(shouldHaveTimelineEntry({
       lifecycle: 'completed',
+      schedulingMode: 'short_duration',
+      startDate: new Date(2026, 5, 1),
+    })).toBe(false);
+    expect(shouldHaveTimelineEntry({
+      lifecycle: 'completed',
+      schedulingMode: 'sporadic_ongoing',
+      startDate: new Date(2026, 0, 1),
+    })).toBe(false);
+  });
+
+  it('planned short_duration activities also get a persisted row (calendar planning)', () => {
+    // Planned activities haven't started running yet but should
+    // appear on the calendar so users can see what's coming.
+    expect(shouldHaveTimelineEntry({
+      lifecycle: 'planned',
       schedulingMode: 'short_duration',
       startDate: new Date(2026, 5, 1),
     })).toBe(true);
   });
 });
 
-// Companion rule on the NucleusTimeline render side: any fetched
-// timeline row whose source activity is currently NOT in
-// short_duration mode should be hidden, so a stale row left behind
-// by an earlier sync version doesn't appear next to the new
-// synthesized fan-out (or alongside a sporadic activity that no
-// longer belongs on the calendar at all). Encoded here so the rule
-// can't drift away from the sync-side predicate without a failing
-// test flagging the inconsistency.
-function shouldHideFetchedRowFor(mode: ActivitySchedulingMode): boolean {
-  return mode !== 'short_duration';
+// Companion rule on the NucleusTimeline render side: a fetched
+// timeline row should be hidden unless its source activity is in
+// the exact (mode, lifecycle) pair that legitimately persists a
+// row today — short_duration AND active/planned. Anything else
+// (different mode, completed, cancelled) should have its stale
+// row masked so it doesn't reappear on the strip. Encoded here so
+// the render-side rule and the sync-side `shouldHaveTimelineEntry`
+// predicate can't drift apart silently.
+function shouldHideFetchedRowFor(
+  mode: ActivitySchedulingMode,
+  lifecycle: Activity['lifecycle'],
+): boolean {
+  const isActiveOrPlanned = lifecycle === 'active' || lifecycle === 'planned';
+  return !(mode === 'short_duration' && isActiveOrPlanned);
 }
 
 describe('nucleus timeline rendering rules', () => {
   it('hides fetched rows for structured_recurring activities (occurrences synthesized instead)', () => {
-    expect(shouldHideFetchedRowFor('structured_recurring')).toBe(true);
+    expect(shouldHideFetchedRowFor('structured_recurring', 'active')).toBe(true);
   });
 
   it('hides fetched rows for sporadic_ongoing activities (no calendar presence)', () => {
-    expect(shouldHideFetchedRowFor('sporadic_ongoing')).toBe(true);
+    expect(shouldHideFetchedRowFor('sporadic_ongoing', 'active')).toBe(true);
   });
 
-  it('exposes fetched rows for short_duration activities (the only persisted mode)', () => {
-    expect(shouldHideFetchedRowFor('short_duration')).toBe(false);
+  it('hides fetched rows for completed or cancelled activities, regardless of mode', () => {
+    expect(shouldHideFetchedRowFor('short_duration', 'completed')).toBe(true);
+    expect(shouldHideFetchedRowFor('short_duration', 'cancelled')).toBe(true);
+    expect(shouldHideFetchedRowFor('structured_recurring', 'completed')).toBe(true);
+  });
+
+  it('exposes fetched rows for active short_duration activities (the persisted combination)', () => {
+    expect(shouldHideFetchedRowFor('short_duration', 'active')).toBe(false);
+    expect(shouldHideFetchedRowFor('short_duration', 'planned')).toBe(false);
   });
 });

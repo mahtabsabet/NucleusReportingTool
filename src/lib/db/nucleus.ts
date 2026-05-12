@@ -643,11 +643,16 @@ export async function updateActivityDetails(
   );
 }
 
-// Transition the activity's lifecycle. Completed and cancelled
-// activities are PRESERVED in place (not soft-deleted) so the
-// dashboard, reports, and growth charts can still surface them
-// historically — the user simply sees them in a "Completed" /
-// "Cancelled" group rather than the active list.
+// Transition the activity's lifecycle. The activity row is
+// PRESERVED in place (not soft-deleted) regardless of which state
+// it moves to — completed and cancelled activities continue to
+// surface in the dashboard's activity list and in reports as
+// historical records. Their timeline presence is what changes:
+// syncActivityTimelineEntry below removes any persisted row, and
+// the synthesis pass on the nucleus timeline skips them too. The
+// schedule fields (daysOfWeek, intervalWeeks, startDate, endDate)
+// stay intact so that a deliberate reactivation can restore the
+// activity to the calendar exactly as it was.
 export async function setActivityLifecycle(
   activityId: string,
   lifecycle: ActivityLifecycle,
@@ -655,25 +660,11 @@ export async function setActivityLifecycle(
   const update: Record<string, any> = {
     lifecycle_state: lifecycle,
     is_active: lifecycle === 'active' || lifecycle === 'planned',
+    completed_at:
+      lifecycle === 'completed' || lifecycle === 'cancelled'
+        ? new Date().toISOString()
+        : null,
   };
-  if (lifecycle === 'completed' || lifecycle === 'cancelled') {
-    update.completed_at = new Date().toISOString();
-    // For short-duration activities being marked completed early or
-    // late, snap end_date to today so the historical bar on the
-    // timeline reflects when the activity actually ended.
-    const { data: existing } = await supabase
-      .from('activities')
-      .select('scheduling_mode, end_date')
-      .eq('id', activityId)
-      .single();
-    const mode = (existing as any)?.scheduling_mode;
-    const existingEnd = (existing as any)?.end_date;
-    if (mode !== 'sporadic_ongoing' && !existingEnd) {
-      update.end_date = formatLocalDate(new Date());
-    }
-  } else {
-    update.completed_at = null;
-  }
 
   const { data, error } = await supabase
     .from('activities')
@@ -692,15 +683,15 @@ export async function setActivityLifecycle(
 // Mirror short-duration activities into a single timeline_events row
 // tagged with this activity_id. Structured-recurring activities are
 // NOT persisted as timeline rows — the nucleus timeline view
-// synthesizes one marker per occurrence at render time from the
-// activity's daysOfWeek + intervalWeeks, so a weekly study circle
-// shows every Tuesday rather than a lone marker on its start date.
+// synthesizes one marker per occurrence at render time. Completed
+// and cancelled activities have no timeline presence at all (their
+// row is removed) — the timeline is a forward-looking calendar,
+// not a historical log.
 //
 // Rules:
-//   • short_duration AND start_date set                         → one row (event bar)
-//   • structured_recurring                                       → no row (occurrences are derived at render)
-//   • sporadic_ongoing                                           → no row
-//   • lifecycle = 'cancelled'                                    → no row
+//   • short_duration AND start_date set AND lifecycle ∈ {active, planned}
+//                                                              → one row (event bar)
+//   • everything else                                            → no row
 //
 // Implementation is delete-then-conditionally-insert. That handles
 // the previously-recurring-now-something-else case correctly even
@@ -731,19 +722,19 @@ export async function syncActivityTimelineEntry(
     );
   }
 
+  const isActiveOrPlanned =
+    activity.lifecycle === 'active' || activity.lifecycle === 'planned';
   const shouldExist =
-    activity.lifecycle !== 'cancelled'
+    isActiveOrPlanned
     && activity.schedulingMode === 'short_duration'
     && !!activity.startDate;
   if (!shouldExist) return;
 
   // 2. Insert the fresh row. For an activity that's just been edited
-  //    but kept as short-duration, this is functionally an update.
+  //    but kept as short-duration + active, this is functionally an
+  //    update via the delete-then-insert.
   const startDate = activity.startDate!;
-  let endDate: Date | null = activity.endDate ?? null;
-  if (activity.lifecycle === 'completed' && !endDate) {
-    endDate = activity.completedAt ?? new Date();
-  }
+  const endDate = activity.endDate ?? null;
 
   await supabase.from('timeline_events').insert({
     name: activity.name,

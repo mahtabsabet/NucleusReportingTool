@@ -46,11 +46,24 @@ describe('computeRecurringOccurrences', () => {
     )).toEqual([]);
   });
 
+  it('returns empty for completed activities (no historical fan-out)', () => {
+    // Completed activities are preserved in the system but disappear
+    // from the timeline. Users who want to see history should look
+    // at the activity record itself, not the calendar.
+    expect(computeRecurringOccurrences(
+      activity({
+        lifecycle: 'completed',
+        completedAt: new Date(2026, 0, 14),
+      }),
+      FAR_WINDOW,
+    )).toEqual([]);
+  });
+
   it('still synthesizes occurrences for "planned" activities — calendar planning relies on it', () => {
     // Planned recurring activities haven't started running yet but
     // SHOULD appear on the timeline so the user can see what's
-    // coming and adjust scheduling. Only cancelled activities are
-    // suppressed entirely.
+    // coming and adjust scheduling. Only completed and cancelled
+    // are suppressed entirely.
     const out = computeRecurringOccurrences(
       activity({ lifecycle: 'planned' }),
       { start: new Date(2026, 0, 1), end: new Date(2026, 0, 31) },
@@ -101,16 +114,10 @@ describe('computeRecurringOccurrences', () => {
     expect(out.map(o => o.startDate.getDate())).toEqual([6, 13]);
   });
 
-  it('stops at completedAt when the activity is completed without an explicit end', () => {
-    const out = computeRecurringOccurrences(activity({
-      lifecycle: 'completed',
-      completedAt: new Date(2026, 0, 14),
-    }), {
-      start: new Date(2026, 0, 1),
-      end: new Date(2026, 0, 31),
-    });
-    expect(out.map(o => o.startDate.getDate())).toEqual([6, 13]);
-  });
+  // Note: completed activities used to fan out historical occurrences
+  // up to completedAt. That was reverted — completed/cancelled
+  // disappear from the timeline entirely. The "returns empty for
+  // completed activities" test above covers the new behavior.
 
   it('clamps to the requested window', () => {
     const out = computeRecurringOccurrences(activity({}), {

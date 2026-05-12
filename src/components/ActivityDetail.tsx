@@ -285,7 +285,13 @@ export function ActivityDetail() {
 
   const handleSave = async () => {
     setScheduleError(null);
-    if (schedulingMode === 'short_duration') {
+    // We only need to validate schedule fields when they're actually
+    // editable — for a locked (completed/cancelled) activity the
+    // schedule isn't being touched, so its existing values can stay
+    // as-is even if they wouldn't pass new-input validation.
+    const localScheduleLocked =
+      activity && (activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled');
+    if (!localScheduleLocked && schedulingMode === 'short_duration') {
       if (!startDate || !endDate) {
         setScheduleError('Short-duration activities need both a start and end date.');
         return;
@@ -296,24 +302,25 @@ export function ActivityDetail() {
       }
     }
     try {
-      // Persist mode-relevant fields and clear the others so we
-      // don't leave stale leftovers (e.g. a stale end_date hanging
-      // off an activity that's now ongoing).
-      await updateActivityDetails(activityId!, {
-        notes,
-        schedulingMode,
-        scheduleNotes: schedulingMode === 'sporadic_ongoing' ? schedule : '',
-        daysOfWeek: schedulingMode === 'structured_recurring' ? daysOfWeek : [],
-        time: schedulingMode === 'structured_recurring' ? (time || null) : null,
-        intervalWeeks: schedulingMode === 'structured_recurring' ? intervalWeeks : null,
-        startDate:
+      // When the schedule is locked, persist only notes — the user
+      // is editing the running record of a finished activity, not
+      // its calendar. updateActivityDetails skips undefined keys.
+      const params: Parameters<typeof updateActivityDetails>[1] = { notes };
+      if (!localScheduleLocked) {
+        params.schedulingMode = schedulingMode;
+        params.scheduleNotes = schedulingMode === 'sporadic_ongoing' ? schedule : '';
+        params.daysOfWeek = schedulingMode === 'structured_recurring' ? daysOfWeek : [];
+        params.time = schedulingMode === 'structured_recurring' ? (time || null) : null;
+        params.intervalWeeks = schedulingMode === 'structured_recurring' ? intervalWeeks : null;
+        params.startDate =
           (schedulingMode === 'short_duration' || schedulingMode === 'structured_recurring')
             ? (startDate ? parseDateFromInput(startDate) : null)
-            : null,
-        endDate: schedulingMode === 'short_duration'
+            : null;
+        params.endDate = schedulingMode === 'short_duration'
           ? (endDate ? parseDateFromInput(endDate) : null)
-          : null,
-      });
+          : null;
+      }
+      await updateActivityDetails(activityId!, params);
       // Refresh the local view so the lifecycle pill / sync chip
       // reflects what's now in the DB (the sync helper may have
       // generated/refreshed a timeline_events row).
@@ -330,6 +337,33 @@ export function ActivityDetail() {
   const handleLifecycleChange = async (next: ActivityLifecycle) => {
     if (!activity) return;
     if (next === activity.lifecycle) return;
+
+    // Reactivation nudge. Moving an activity from a terminal state
+    // (completed / cancelled) back to active or planned is a real
+    // workflow — for example, finishing one cohort and starting
+    // another — but the more common case is a fresh effort that
+    // happens to look similar. We prompt rather than block so the
+    // user can confirm intent, and the message explicitly suggests
+    // creating a new activity to preserve the historical record of
+    // the one being reactivated.
+    const isReactivation =
+      (activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled')
+      && (next === 'active' || next === 'planned');
+    if (isReactivation) {
+      const ok = window.confirm(
+        `Reactivate "${activity.name}"?\n\n` +
+        `This activity is currently ${activity.lifecycle}. Reactivating it ` +
+        `reopens it for scheduling and puts its meetings back on the nucleus ` +
+        `timeline.\n\n` +
+        `If you're starting a fresh effort, the better path is usually to ` +
+        `create a NEW activity — that way the record of this one stays ` +
+        `intact as history. Reactivate is the right choice when you're ` +
+        `genuinely continuing the same activity (e.g. it was paused, ` +
+        `not really finished).`,
+      );
+      if (!ok) return;
+    }
+
     setLifecycleSaving(true);
     try {
       await setActivityLifecycle(activityId!, next);
@@ -351,6 +385,15 @@ export function ActivityDetail() {
   const expectedRoles = ROLES_FOR_TYPE[activity.type] ?? [];
   const extraRoles = Object.keys(participants).filter(r => !expectedRoles.includes(r));
   const roles = [...expectedRoles.filter(r => r in participants), ...extraRoles];
+
+  // Schedule editing is locked while the activity is in a terminal
+  // state — the user has to flip it back to active/planned (via the
+  // reactivation confirm) before mode chips, day pickers, or date
+  // fields can be changed. regionalOnly retains its existing
+  // read-only force.
+  const scheduleLocked =
+    activity.lifecycle === 'completed' || activity.lifecycle === 'cancelled';
+  const scheduleReadOnly = regionalOnly || scheduleLocked;
 
   return (
     <div className="min-h-screen bg-gray-50/50 font-sans">
@@ -682,121 +725,133 @@ export function ActivityDetail() {
               )}
             </div>
 
-            {/* Schedule */}
+            {/* Schedule — locked when the activity is in a terminal
+                state. The fields stay visible (so the user can read
+                what the schedule was) but become non-interactive
+                and visually dimmed. */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-4">
               <div className="text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-2">
                 Schedule
               </div>
-              <div className="flex flex-wrap gap-1 mb-3">
-                {[
-                  { value: 'structured_recurring' as const, label: 'Recurring' },
-                  { value: 'sporadic_ongoing' as const, label: 'Sporadic' },
-                  { value: 'short_duration' as const, label: 'Short' },
-                ].map(opt => {
-                  const selected = schedulingMode === opt.value;
-                  return (
-                    <button
-                      key={opt.value}
-                      type="button"
-                      disabled={regionalOnly}
-                      onClick={() => setSchedulingMode(opt.value)}
-                      className={`px-2 py-1 rounded-md text-xs font-semibold border transition-colors ${
-                        selected
-                          ? 'bg-blue-50 border-blue-300 text-blue-800'
-                          : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
-                      } ${regionalOnly ? 'cursor-default' : ''}`}
-                    >
-                      {opt.label}
-                    </button>
-                  );
-                })}
-              </div>
+              {scheduleLocked && (
+                <div className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-md px-2 py-1.5 mb-3 leading-snug">
+                  Locked while {activity.lifecycle}. Set status back to
+                  active or planned to edit — or, ideally, create a new
+                  activity so this one's record stays intact.
+                </div>
+              )}
+              <div className={scheduleLocked ? 'opacity-60' : ''}>
+                <div className="flex flex-wrap gap-1 mb-3">
+                  {[
+                    { value: 'structured_recurring' as const, label: 'Recurring' },
+                    { value: 'sporadic_ongoing' as const, label: 'Sporadic' },
+                    { value: 'short_duration' as const, label: 'Short' },
+                  ].map(opt => {
+                    const selected = schedulingMode === opt.value;
+                    return (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        disabled={scheduleReadOnly}
+                        onClick={() => setSchedulingMode(opt.value)}
+                        className={`px-2 py-1 rounded-md text-xs font-semibold border transition-colors ${
+                          selected
+                            ? 'bg-blue-50 border-blue-300 text-blue-800'
+                            : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+                        } ${scheduleReadOnly ? 'cursor-not-allowed' : ''}`}
+                      >
+                        {opt.label}
+                      </button>
+                    );
+                  })}
+                </div>
 
-              {schedulingMode === 'structured_recurring' && (
-                <div className="space-y-2.5">
-                  <div className="flex flex-wrap gap-1">
-                    {DAY_LABELS.map((d, i) => {
-                      const selected = daysOfWeek.includes(i);
-                      return (
-                        <button
-                          key={d}
-                          type="button"
-                          disabled={regionalOnly}
-                          onClick={() => toggleDay(i)}
-                          className={`w-7 h-7 rounded text-[11px] font-bold border transition-colors ${
-                            selected
-                              ? 'bg-blue-600 text-white border-blue-700'
-                              : 'bg-white text-gray-500 border-gray-200 hover:border-blue-200'
-                          }`}
-                        >
-                          {d[0]}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
+                {schedulingMode === 'structured_recurring' && (
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap gap-1">
+                      {DAY_LABELS.map((d, i) => {
+                        const selected = daysOfWeek.includes(i);
+                        return (
+                          <button
+                            key={d}
+                            type="button"
+                            disabled={scheduleReadOnly}
+                            onClick={() => toggleDay(i)}
+                            className={`w-7 h-7 rounded text-[11px] font-bold border transition-colors ${
+                              selected
+                                ? 'bg-blue-600 text-white border-blue-700'
+                                : 'bg-white text-gray-500 border-gray-200 hover:border-blue-200'
+                            } ${scheduleReadOnly ? 'cursor-not-allowed' : ''}`}
+                          >
+                            {d[0]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="time"
+                        value={time}
+                        onChange={e => setTime(e.target.value)}
+                        readOnly={scheduleReadOnly}
+                        placeholder="Time"
+                        className="px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                      />
+                      <select
+                        value={intervalWeeks}
+                        onChange={e => setIntervalWeeks(parseInt(e.target.value, 10))}
+                        disabled={scheduleReadOnly}
+                        className="px-2 py-1.5 border border-gray-200 rounded-md text-xs bg-white"
+                      >
+                        <option value={1}>Weekly</option>
+                        <option value={2}>Biweekly</option>
+                        <option value={4}>Monthly</option>
+                      </select>
+                    </div>
                     <input
-                      type="time"
-                      value={time}
-                      onChange={e => setTime(e.target.value)}
-                      readOnly={regionalOnly}
-                      placeholder="Time"
-                      className="px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                      type="date"
+                      value={startDate}
+                      onChange={e => setStartDate(e.target.value)}
+                      readOnly={scheduleReadOnly}
+                      title="Activity start date"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
                     />
-                    <select
-                      value={intervalWeeks}
-                      onChange={e => setIntervalWeeks(parseInt(e.target.value, 10))}
-                      disabled={regionalOnly}
-                      className="px-2 py-1.5 border border-gray-200 rounded-md text-xs bg-white"
-                    >
-                      <option value={1}>Weekly</option>
-                      <option value={2}>Biweekly</option>
-                      <option value={4}>Monthly</option>
-                    </select>
                   </div>
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={e => setStartDate(e.target.value)}
-                    readOnly={regionalOnly}
-                    title="Activity start date"
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
-                  />
-                </div>
-              )}
+                )}
 
-              {schedulingMode === 'sporadic_ongoing' && (
-                <input
-                  type="text"
-                  value={schedule}
-                  onChange={e => setSchedule(e.target.value)}
-                  placeholder="When does this happen?"
-                  readOnly={regionalOnly}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
-                />
-              )}
+                {schedulingMode === 'sporadic_ongoing' && (
+                  <input
+                    type="text"
+                    value={schedule}
+                    onChange={e => setSchedule(e.target.value)}
+                    placeholder="When does this happen?"
+                    readOnly={scheduleReadOnly}
+                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                  />
+                )}
 
-              {schedulingMode === 'short_duration' && (
-                <div className="space-y-2">
-                  <input
-                    type="date"
-                    value={startDate}
-                    onChange={e => setStartDate(e.target.value)}
-                    readOnly={regionalOnly}
-                    title="Start date"
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
-                  />
-                  <input
-                    type="date"
-                    value={endDate}
-                    onChange={e => setEndDate(e.target.value)}
-                    min={startDate || undefined}
-                    readOnly={regionalOnly}
-                    title="End date"
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
-                  />
-                </div>
-              )}
+                {schedulingMode === 'short_duration' && (
+                  <div className="space-y-2">
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={e => setStartDate(e.target.value)}
+                      readOnly={scheduleReadOnly}
+                      title="Start date"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                    />
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={e => setEndDate(e.target.value)}
+                      min={startDate || undefined}
+                      readOnly={scheduleReadOnly}
+                      title="End date"
+                      className="w-full px-2 py-1.5 border border-gray-200 rounded-md text-xs"
+                    />
+                  </div>
+                )}
+              </div>
             </div>
           </aside>
         </div>
