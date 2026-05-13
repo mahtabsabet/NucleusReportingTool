@@ -15,14 +15,17 @@ export function ForgotPasswordPage() {
     setLoading(true);
     try {
       await sendPasswordResetEmail(email);
+      setSubmitted(true);
     } catch (err: any) {
-      // Surface only generic problems (e.g. network) to the user — do NOT
-      // distinguish "email exists" vs. "doesn't exist". The success screen
-      // shows the same message in either case to prevent account enumeration.
+      // Surface the actual error so the user knows what happened. Supabase
+      // already returns 200 for unknown emails (anti-enumeration), so any
+      // error we get here is a real problem (rate limit, redirect-URL not
+      // allowlisted, SMTP failure, network) — hiding it just leaves the
+      // user staring at a "check your inbox" screen for an email that
+      // never arrives.
       setError(err.message ?? 'Something went wrong, please try again.');
     } finally {
       setLoading(false);
-      setSubmitted(true);
     }
   }
 
