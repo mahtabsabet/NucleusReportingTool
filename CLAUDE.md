@@ -2,4 +2,4 @@
 
 ## Git
 
-Develop on a feature branch and open a PR targeting `main`. Vercel posts a preview URL on the PR; verify there before merging.
+Branch from `main`, push the feature branch, and open a PR targeting `main`. Once Vercel posts the preview URL on the PR, report it back so it can be verified before merging.
