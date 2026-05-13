@@ -3,29 +3,16 @@ import { CalendarIcon } from 'lucide-react';
 import { fetchTimelineEvents } from '../lib/db/timeline';
 import { fetchActivitiesForNucleus } from '../lib/db/nucleus';
 import { computeRecurringOccurrences } from '../lib/timeline/recurringOccurrences';
+import {
+  buildStripWindow,
+  colorForItem,
+  isItemInWindow,
+  MS_PER_DAY,
+  opacityFor,
+  toFraction,
+  VISIBLE_DAYS_EACH_SIDE,
+} from '../lib/timeline/compressedStrip';
 import type { Activity, TimelineEvent } from '../types';
-
-// The strip is an ambient temporal context: a glanceable ±10-day
-// window centered on today. Everything inside ±7 days renders fully
-// opaque; the outer three days on each side fade toward transparent
-// to communicate that the full timeline continues beyond what's
-// shown. The strip itself is the entry point into the full timeline
-// workspace at /nucleus/:id/timeline.
-const VISIBLE_DAYS_EACH_SIDE = 10;
-const OPAQUE_DAYS_EACH_SIDE = 7;
-const MS_PER_DAY = 86_400_000;
-
-function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function colorForItem(item: TimelineEvent): string {
-  if (item.activityId) return 'bg-blue-500';
-  if (item.itemType === 'meeting') return 'bg-amber-500';
-  return 'bg-emerald-500';
-}
 
 interface Props {
   nucleusId: string;
@@ -37,15 +24,7 @@ export function CompressedTimelineStrip({ nucleusId, onOpen }: Props) {
   const [activities, setActivities] = useState<Activity[]>([]);
 
   // Anchor today once so a render mid-day doesn't shift positions.
-  const today = useMemo(() => startOfDay(new Date()), []);
-  const windowStart = useMemo(
-    () => new Date(today.getTime() - VISIBLE_DAYS_EACH_SIDE * MS_PER_DAY),
-    [today],
-  );
-  const windowEnd = useMemo(
-    () => new Date(today.getTime() + VISIBLE_DAYS_EACH_SIDE * MS_PER_DAY),
-    [today],
-  );
+  const win = useMemo(() => buildStripWindow(), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,53 +53,27 @@ export function CompressedTimelineStrip({ nucleusId, onOpen }: Props) {
   const synthesized = useMemo(
     () =>
       activities.flatMap(a =>
-        computeRecurringOccurrences(a, { start: windowStart, end: windowEnd }),
+        computeRecurringOccurrences(a, { start: win.start, end: win.end }),
       ),
-    [activities, windowStart, windowEnd],
+    [activities, win],
   );
 
-  const totalSpanMs = windowEnd.getTime() - windowStart.getTime();
-  const toFraction = (d: Date) =>
-    Math.max(
-      0,
-      Math.min(1, (d.getTime() - windowStart.getTime()) / totalSpanMs),
-    );
-
-  // Linear fade from opaque inside ±7 days to transparent at ±10.
-  // Anything outside the visible window is dropped before this is
-  // called; clamping defends against edge-case rounding.
-  const opacityFor = (d: Date): number => {
-    const distDays = Math.abs(d.getTime() - today.getTime()) / MS_PER_DAY;
-    if (distDays <= OPAQUE_DAYS_EACH_SIDE) return 1;
-    if (distDays >= VISIBLE_DAYS_EACH_SIDE) return 0;
-    return (
-      1 -
-      (distDays - OPAQUE_DAYS_EACH_SIDE) /
-        (VISIBLE_DAYS_EACH_SIDE - OPAQUE_DAYS_EACH_SIDE)
-    );
-  };
-
-  const visibleItems = useMemo(() => {
-    const startMs = windowStart.getTime();
-    const endMs = windowEnd.getTime();
-    return [...events, ...synthesized].filter(item => {
-      const s = item.startDate.getTime();
-      const e = item.endDate ? item.endDate.getTime() : s;
-      return e >= startMs && s <= endMs;
-    });
-  }, [events, synthesized, windowStart, windowEnd]);
+  const visibleItems = useMemo(
+    () => [...events, ...synthesized].filter(item => isItemInWindow(item, win)),
+    [events, synthesized, win],
+  );
 
   // Day ticks across the window, used both for the faint vertical
   // grid and for the small day-of-week labels under the line.
   const dayTicks = useMemo(() => {
     const ticks: Date[] = [];
     for (let i = 0; i <= VISIBLE_DAYS_EACH_SIDE * 2; i++) {
-      ticks.push(new Date(windowStart.getTime() + i * MS_PER_DAY));
+      ticks.push(new Date(win.start.getTime() + i * MS_PER_DAY));
     }
     return ticks;
-  }, [windowStart]);
+  }, [win]);
 
-  const todayFraction = toFraction(today);
+  const todayFraction = toFraction(win.today, win);
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -167,9 +120,9 @@ export function CompressedTimelineStrip({ nucleusId, onOpen }: Props) {
 
         {/* Day ticks (faint) + labels */}
         {dayTicks.map((d, i) => {
-          const f = toFraction(d);
-          const op = opacityFor(d);
-          const isToday = d.getTime() === today.getTime();
+          const f = toFraction(d, win);
+          const op = opacityFor(d, win);
+          const isToday = d.getTime() === win.today.getTime();
           if (isToday) return null;
           return (
             <React.Fragment key={i}>
@@ -203,10 +156,10 @@ export function CompressedTimelineStrip({ nucleusId, onOpen }: Props) {
             items render as a small dot. Both sit on the baseline so
             the strip never grows vertically. */}
         {visibleItems.map(item => {
-          const startF = toFraction(item.startDate);
-          const endF = item.endDate ? toFraction(item.endDate) : startF;
+          const startF = toFraction(item.startDate, win);
+          const endF = item.endDate ? toFraction(item.endDate, win) : startF;
           const widthPct = Math.max(0, (endF - startF) * 100);
-          const op = opacityFor(item.startDate);
+          const op = opacityFor(item.startDate, win);
           if (op <= 0) return null;
           const color = colorForItem(item);
           const isRange = item.endDate && endF > startF + 0.005;
