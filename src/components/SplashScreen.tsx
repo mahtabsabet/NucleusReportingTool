@@ -76,7 +76,7 @@ export function SplashScreen({ onDone }: Props) {
             lineHeight: 1.2,
           }}
         >
-          Nucleus Reporting Tool
+          hello
         </h1>
       </div>
     </div>
