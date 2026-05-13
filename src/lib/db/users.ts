@@ -155,6 +155,37 @@ export interface CreateUserParams {
   activityId?: string;
 }
 
+// Convert a supabase.functions.invoke() failure into a useful Error.
+// Supabase's FunctionsHttpError.message is just "Edge Function returned a
+// non-2xx status code" — the actual reason is in the response body. This
+// helper reads that body (preferring our edge functions' `{ error: "..." }`
+// JSON shape) and falls back to the raw text or HTTP status.
+async function readInvokeError(error: any, fallback: string): Promise<string> {
+  const response: Response | undefined = error?.context;
+  if (response && typeof response.text === 'function') {
+    try {
+      const text = await response.text();
+      if (text) {
+        try {
+          const json = JSON.parse(text);
+          if (json && typeof json.error === 'string') return json.error;
+          if (json && typeof json.message === 'string') return json.message;
+        } catch { /* not JSON — fall through */ }
+        return text.length > 500 ? text.slice(0, 500) + '…' : text;
+      }
+      if (response.status) return `HTTP ${response.status}`;
+    } catch { /* response body already consumed, fall through */ }
+  }
+  return error?.message ?? fallback;
+}
+
+async function invokeEdge<T = any>(fn: string, body: unknown): Promise<T> {
+  const { data, error } = await supabase.functions.invoke(fn, { body });
+  if (error) throw new Error(await readInvokeError(error, error.message ?? 'Edge function failed'));
+  if (data?.error) throw new Error(data.error);
+  return data as T;
+}
+
 export async function createUser(params: CreateUserParams): Promise<void> {
   // Client-side guard mirrors the table — the edge function performs
   // the authoritative check, but failing here gives a faster + clearer
@@ -164,37 +195,26 @@ export async function createUser(params: CreateUserParams): Promise<void> {
   if (need === 'nucleus' && !params.nucleusId) throw new Error('A nucleus must be selected.');
   if (need === 'activity' && !params.activityId) throw new Error('An activity must be selected.');
 
-  const { data, error } = await supabase.functions.invoke('create-user', {
-    body: {
-      name: params.name,
-      email: params.email,
-      password: params.password,
-      role: params.role,
-      clusterId: params.clusterId,
-      nucleusId: params.nucleusId,
-      activityId: params.activityId,
-    },
+  await invokeEdge('create-user', {
+    name: params.name,
+    email: params.email,
+    password: params.password,
+    role: params.role,
+    clusterId: params.clusterId,
+    nucleusId: params.nucleusId,
+    activityId: params.activityId,
   });
-
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
 }
 
 export async function fetchUserEmails(): Promise<Record<string, string>> {
-  const { data, error } = await supabase.functions.invoke('manage-user', {
-    body: { action: 'list-emails' },
+  const data = await invokeEdge<{ emails?: Record<string, string> }>('manage-user', {
+    action: 'list-emails',
   });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
-  return (data?.emails ?? {}) as Record<string, string>;
+  return data?.emails ?? {};
 }
 
 export async function deleteUser(targetUserId: string, confirmedEmail: string): Promise<void> {
-  const { data, error } = await supabase.functions.invoke('manage-user', {
-    body: { action: 'delete', targetUserId, confirmedEmail },
-  });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
+  await invokeEdge('manage-user', { action: 'delete', targetUserId, confirmedEmail });
 }
 
 export interface ChangeRoleParams {
@@ -205,17 +225,13 @@ export interface ChangeRoleParams {
 }
 
 export async function changeUserRole(params: ChangeRoleParams): Promise<void> {
-  const { data, error } = await supabase.functions.invoke('manage-user', {
-    body: {
-      action: 'change-role',
-      targetUserId: params.targetUserId,
-      newRole: params.newRole,
-      confirmedEmail: params.confirmedEmail,
-      permissionId: params.permissionId,
-    },
+  await invokeEdge('manage-user', {
+    action: 'change-role',
+    targetUserId: params.targetUserId,
+    newRole: params.newRole,
+    confirmedEmail: params.confirmedEmail,
+    permissionId: params.permissionId,
   });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
 }
 
 // Convenience re-export for UIs.
@@ -299,17 +315,13 @@ export interface AdminResetPasswordParams {
 }
 
 export async function adminResetUserPassword(params: AdminResetPasswordParams): Promise<void> {
-  const { data, error } = await supabase.functions.invoke('manage-user', {
-    body: {
-      action: 'reset-password',
-      targetUserId: params.targetUserId,
-      confirmedEmail: params.confirmedEmail,
-      mode: params.mode,
-      temporaryPassword: params.temporaryPassword,
-    },
+  await invokeEdge('manage-user', {
+    action: 'reset-password',
+    targetUserId: params.targetUserId,
+    confirmedEmail: params.confirmedEmail,
+    mode: params.mode,
+    temporaryPassword: params.temporaryPassword,
   });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
 }
 
 // Returns the signed-in user's profile_image_url, or null if not set.
