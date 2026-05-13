@@ -23,6 +23,16 @@ export const TEST_IDS = {
 // spec can search for it without duplicating the literal.
 export const TEST_TIMELINE_EVENT_NAME = 'E2E Test Phase';
 
+// Canonical password for the main E2E test user. Re-asserted on every
+// seed run so the test DB password and the value used by auth.setup.ts
+// can never drift (an earlier convention put this in a GitHub secret,
+// which proved brittle — manual exercises of admin-reset / change-
+// password against the same dev project silently rotated the password
+// and broke CI for every subsequent PR). This is a dev/test project,
+// so a hardcoded literal is appropriate; the same pattern is used for
+// the perm test users below.
+export const E2E_MAIN_USER_PASSWORD = 'E2EMain123!';
+
 // Permanent test users created (and kept) in dev for permission integration tests.
 // Credentials are fixed so permissions.setup.ts can log in without reading the DB.
 export const TEST_USERS = {
@@ -67,7 +77,10 @@ export async function seed() {
   const supabaseUrl = process.env.VITE_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const testEmail = process.env.E2E_TEST_EMAIL;
-  const testPassword = process.env.E2E_TEST_PASSWORD;
+  // Password is now hardcoded above (see comment on E2E_MAIN_USER_PASSWORD)
+  // so the GitHub secret only needs to provide the email; the password
+  // is re-asserted from this file on every seed run.
+  const testPassword = E2E_MAIN_USER_PASSWORD;
 
   if (!supabaseUrl || !serviceRoleKey) {
     throw new Error(
@@ -77,9 +90,6 @@ export async function seed() {
   }
   if (!testEmail) {
     throw new Error('Missing E2E_TEST_EMAIL in .env.local');
-  }
-  if (!testPassword) {
-    throw new Error('Missing E2E_TEST_PASSWORD in .env.local');
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {

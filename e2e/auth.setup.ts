@@ -1,15 +1,19 @@
 import { test as setup, expect } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
+import { E2E_MAIN_USER_PASSWORD } from '../scripts/seed';
 
 const authFile = 'e2e/.auth/user.json';
 
 setup('authenticate', async ({ page }) => {
   const email = process.env.E2E_TEST_EMAIL;
-  const password = process.env.E2E_TEST_PASSWORD;
-  if (!email || !password) {
-    throw new Error('Missing E2E_TEST_EMAIL or E2E_TEST_PASSWORD in .env.local');
+  if (!email) {
+    throw new Error('Missing E2E_TEST_EMAIL in .env.local');
   }
+  // Password lives in scripts/seed.ts so the seeded DB state and this
+  // login attempt cannot drift apart. See the comment on
+  // E2E_MAIN_USER_PASSWORD for the rationale.
+  const password = E2E_MAIN_USER_PASSWORD;
 
   await page.goto('/');
   await page.locator('#email').fill(email);
