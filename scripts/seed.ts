@@ -92,7 +92,10 @@ export async function seed() {
 
   // Resolve the main E2E test user. Auto-create it if missing — CI starts
   // from a fresh database and shouldn't fail before the seed has had a
-  // chance to run. (The perm test users below already use this pattern.)
+  // chance to run. The user persists across CI runs, but the password is
+  // re-set every run so a manual reset / change-password exercise against
+  // the same Supabase project can't leave CI permanently broken. Same
+  // logic applies to the perm test users below.
   let testUser = allUsers.find(u => u.email === testEmail);
   if (!testUser) {
     const { data, error } = await supabase.auth.admin.createUser({
@@ -107,14 +110,34 @@ export async function seed() {
     await supabase.from('profiles').update({ name: 'E2E Test User' }).eq('id', data.user.id);
     testUser = data.user;
     allUsers.push(data.user);
+  } else {
+    const { error: pwErr } = await supabase.auth.admin.updateUserById(testUser.id, {
+      password: testPassword,
+    });
+    if (pwErr) throw new Error(`Reset main E2E test user password: ${pwErr.message}`);
+    // Also clear must_change_password in case a prior test toggled it on
+    // through the admin reset → temporary path.
+    await supabase
+      .from('profiles')
+      .update({ must_change_password: false })
+      .eq('id', testUser.id);
   }
 
-  // Find or create each permanent permission test user
+  // Find or create each permanent permission test user. Like the main
+  // test user above, passwords are re-set every run for idempotency.
   async function ensurePermUser(
     email: string, password: string, name: string,
   ): Promise<string> {
     const existing = allUsers.find(u => u.email === email);
-    if (existing) return existing.id;
+    if (existing) {
+      const { error: pwErr } = await supabase.auth.admin.updateUserById(existing.id, { password });
+      if (pwErr) throw new Error(`Reset perm test user ${email} password: ${pwErr.message}`);
+      await supabase
+        .from('profiles')
+        .update({ must_change_password: false })
+        .eq('id', existing.id);
+      return existing.id;
+    }
     const { data, error } = await supabase.auth.admin.createUser({
       email, password,
       user_metadata: { name },
