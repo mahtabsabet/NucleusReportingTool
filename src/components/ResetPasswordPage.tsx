@@ -4,14 +4,26 @@ import { supabase } from '../lib/supabase';
 import { completePasswordReset } from '../lib/db/users';
 import { PASSWORD_MIN_LENGTH, passwordStrengthLabel } from './ChangePasswordModal';
 
-// Landed-from-email page. Supabase converts the `?code=…` / hash params from
-// the recovery email into a session of type `recovery` via the auth client;
-// the user is then allowed to call updateUser({ password }) without
-// re-authenticating with an old password.
+// Landing page for the recovery email link. Supabase's verify endpoint
+// redirects here with one of two payload shapes:
+//
+//   • implicit flow:  /reset-password#access_token=…&type=recovery
+//   • PKCE flow:      /reset-password?code=…
+//
+// The Supabase JS client auto-detects the implicit hash on load, but PKCE
+// requires an explicit exchange. We also can't rely on getSession() at
+// mount time — the URL processing is async, so we listen for the
+// PASSWORD_RECOVERY / SIGNED_IN events via onAuthStateChange instead of
+// declaring the link "invalid" prematurely.
+//
+// The page is mounted on /reset-password and is reachable both signed-in
+// and signed-out (App.tsx). Errors in the recovery payload (e.g. expired
+// token) arrive as `?error=` / `&error_description=` query params from
+// Supabase.
 export function ResetPasswordPage() {
   const navigate = useNavigate();
-  const [ready, setReady] = useState(false);
-  const [tokenValid, setTokenValid] = useState(false);
+  const [status, setStatus] = useState<'pending' | 'ready' | 'invalid'>('pending');
+  const [linkError, setLinkError] = useState<string | null>(null);
   const [next, setNext] = useState('');
   const [confirm, setConfirm] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -19,15 +31,73 @@ export function ResetPasswordPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    // After Supabase processes the recovery link, there is a session with
-    // user. If there's no session at all, the link is invalid/expired.
     let cancelled = false;
+    let invalidTimer: ReturnType<typeof setTimeout> | null = null;
+
+    // Supabase echoes failures back as query params on the redirect URL.
+    // Surface those directly so the user sees a useful message instead of
+    // a generic "invalid link".
+    const params = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const errorDesc = params.get('error_description') ?? hashParams.get('error_description');
+    if (errorDesc) {
+      setLinkError(errorDesc.replace(/\+/g, ' '));
+      setStatus('invalid');
+      return;
+    }
+
+    function markReady() {
+      if (cancelled) return;
+      if (invalidTimer) { clearTimeout(invalidTimer); invalidTimer = null; }
+      setStatus('ready');
+    }
+
+    // 1) PKCE: if the URL carries a `?code=…`, exchange it for a session
+    //    explicitly. (Auto-exchange only happens when the client was created
+    //    with flowType: 'pkce'; this branch covers both cases safely.)
+    const code = params.get('code');
+    if (code) {
+      supabase.auth.exchangeCodeForSession(code).then(({ data, error: exErr }) => {
+        if (cancelled) return;
+        if (exErr || !data.session) {
+          setLinkError(exErr?.message ?? 'This reset link is invalid or has expired.');
+          setStatus('invalid');
+        } else {
+          markReady();
+        }
+      });
+    }
+
+    // 2) Implicit flow: the SDK processes the hash automatically on init
+    //    and fires PASSWORD_RECOVERY (or SIGNED_IN with type=recovery).
+    //    Listen for that instead of polling getSession().
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled) return;
+      if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && session)) {
+        markReady();
+      }
+    });
+
+    // 3) Fallback: if a session already exists when we land here (e.g.
+    //    the SDK finished processing before this effect ran), accept it.
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (cancelled) return;
-      setTokenValid(!!session?.user);
-      setReady(true);
+      if (session?.user) markReady();
     });
-    return () => { cancelled = true; };
+
+    // 4) Final safety net: if after ~3 seconds nothing has produced a
+    //    session, the link really is broken (or the Supabase project's
+    //    redirect-URL allowlist doesn't include this page).
+    invalidTimer = setTimeout(() => {
+      if (cancelled) return;
+      setStatus(prev => (prev === 'pending' ? 'invalid' : prev));
+    }, 3000);
+
+    return () => {
+      cancelled = true;
+      if (invalidTimer) clearTimeout(invalidTimer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const strength = passwordStrengthLabel(next);
@@ -53,7 +123,7 @@ export function ResetPasswordPage() {
     }
   }
 
-  if (!ready) {
+  if (status === 'pending') {
     return (
       <div className="min-h-screen bg-stone-50 flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-stone-300 border-t-stone-700 rounded-full animate-spin" />
@@ -68,10 +138,10 @@ export function ResetPasswordPage() {
           <h1 className="text-2xl font-semibold text-stone-800 tracking-tight">Set a new password</h1>
         </div>
 
-        {!tokenValid ? (
+        {status === 'invalid' ? (
           <div className="bg-white rounded-2xl shadow-sm border border-stone-200 p-6 text-center">
             <p className="text-sm text-stone-700">
-              This reset link is invalid or has expired.
+              {linkError ?? 'This reset link is invalid or has expired.'}
             </p>
             <Link
               to="/forgot-password"

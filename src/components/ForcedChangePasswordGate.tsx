@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { fetchMustChangePassword } from '../lib/db/users';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -7,8 +8,13 @@ import { ChangePasswordModal } from './ChangePasswordModal';
 // profile has must_change_password = true. Triggered after an admin sets a
 // temporary password (either at user creation or via the "Reset password"
 // action). Cleared when the user successfully changes their password.
+//
+// Suppressed on /reset-password because that page is the canonical surface
+// for choosing a new password (recovery flow); showing the gate on top of
+// it would ask for a "current password" the user came to the page without.
 export function ForcedChangePasswordGate() {
   const { user } = useAuth();
+  const location = useLocation();
   const [mustChange, setMustChange] = useState(false);
   const [checked, setChecked] = useState(false);
 
@@ -26,6 +32,7 @@ export function ForcedChangePasswordGate() {
   }, [user]);
 
   if (!user || !checked || !mustChange) return null;
+  if (location.pathname === '/reset-password') return null;
 
   return (
     <ChangePasswordModal
@@ -34,3 +41,4 @@ export function ForcedChangePasswordGate() {
     />
   );
 }
+
