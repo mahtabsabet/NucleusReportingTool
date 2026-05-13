@@ -22,10 +22,10 @@ import {
   ListIcon,
   BarChart3Icon,
   FileTextIcon,
-  CalendarIcon,
   InfoIcon,
 } from 'lucide-react';
 import { ConcentricCircles } from './ConcentricCircles';
+import { CompressedTimelineStrip } from './CompressedTimelineStrip';
 import { InNucleusNetworkView } from './InNucleusNetworkView';
 import { GlobalSearch } from './GlobalSearch';
 import { AccountMenu } from './AccountMenu';
@@ -864,7 +864,15 @@ export function NucleusDashboard() {
 
         {/* ── DASHBOARD STATE: grid of compact cards ───────────────────────── */}
         {focusedModule === null && (
-          <div className="module-fade-in space-y-8">
+          <div className="module-fade-in space-y-6">
+            {/* Compressed timeline strip — ambient temporal context
+                that lives outside the card grid so it doesn't compete
+                with the modules for visual weight. */}
+            <CompressedTimelineStrip
+              nucleusId={id!}
+              onOpen={() => navigate(`/nucleus/${id}/timeline`)}
+            />
+
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 
               {/* Activities card */}
@@ -988,21 +996,6 @@ export function NucleusDashboard() {
                   <p className="text-sm font-medium text-emerald-700">View growth trends</p>
                   <p className="text-xs text-gray-500 text-center px-4">
                     Charts and metrics tracking the nucleus over time.
-                  </p>
-                </div>
-              </div>
-
-              {/* Nucleus Timeline card — mirrors the cluster timeline at the
-                  nucleus level. Auto-populated by recurring + short-duration
-                  activities so users don't maintain a parallel calendar. */}
-              <div className={cardBase} onClick={() => navigate(`/nucleus/${id}/timeline`)}>
-                {cardHeader('Nucleus Timeline', 'Activities and events on the nucleus calendar.')}
-                <div className="flex flex-col items-center justify-center flex-1 py-4 gap-2 rounded-xl bg-indigo-50/60">
-                  <CalendarIcon className="w-8 h-8 text-indigo-400" />
-                  <p className="text-sm font-medium text-indigo-700">Open nucleus timeline</p>
-                  <p className="text-xs text-gray-500 text-center px-4">
-                    Same zoom and navigation as the cluster timeline. Recurring and
-                    short-duration activities appear automatically.
                   </p>
                 </div>
               </div>
