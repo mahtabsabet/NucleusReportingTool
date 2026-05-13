@@ -227,6 +227,87 @@ Deno.serve(async (req) => {
       return json({ success: true });
     }
 
+    // ── reset-password ───────────────────────────────────────────
+    // Admin / Super Admin sets a new password for another user, or
+    // triggers a recovery email so the user sets their own.
+    //
+    //   mode: 'email'      → admin sends reset email (preferred default)
+    //   mode: 'temporary'  → admin sets a temp password; we flip the
+    //                        target's must_change_password flag so the
+    //                        app forces them to choose a new one on
+    //                        their next login.
+    if (action === 'reset-password') {
+      const { targetUserId, confirmedEmail, mode, temporaryPassword } = body;
+      if (!targetUserId) return json({ error: 'targetUserId required' }, 400);
+      if (targetUserId === caller.id) {
+        return json({ error: 'Use the Change Password flow for your own account' }, 400);
+      }
+      if (mode !== 'email' && mode !== 'temporary') {
+        return json({ error: "mode must be 'email' or 'temporary'" }, 400);
+      }
+
+      const { data: { user: targetUser }, error: userErr } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
+      if (userErr || !targetUser) return json({ error: 'User not found' }, 404);
+
+      const { data: targetProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('is_admin, is_super_admin')
+        .eq('id', targetUserId)
+        .single();
+      const targetIsSuper = (targetProfile as any)?.is_super_admin === true;
+      const targetIsAdmin = (targetProfile as any)?.is_admin === true || targetIsSuper;
+
+      // Mirror the safeguards from delete/change-role: only a Super Admin
+      // may reset another Admin's password; nobody may reset a Super
+      // Admin's via this path (they go through the normal recovery email).
+      if (targetIsSuper) {
+        return json({ error: "A Super Admin's password cannot be reset through this interface." }, 403);
+      }
+      if (targetIsAdmin && !callerIsSuperAdmin) {
+        return json({ error: "Only a Super Admin may reset an Administrator's password." }, 403);
+      }
+
+      if (!confirmedEmail || confirmedEmail.trim().toLowerCase() !== (targetUser.email ?? '').toLowerCase()) {
+        return json({ error: 'Email confirmation does not match' }, 400);
+      }
+
+      if (mode === 'email') {
+        // Triggers Supabase's recovery email (same email the user would get
+        // from the "Forgot password" link on the login page). Lands them on
+        // the configured recovery redirect; defaults to SITE_URL.
+        const siteUrl = Deno.env.get('SITE_URL') ?? '';
+        const redirectTo = siteUrl ? `${siteUrl}/reset-password` : undefined;
+        const { error: linkErr } = await supabaseAdmin.auth.resetPasswordForEmail(
+          targetUser.email!,
+          redirectTo ? { redirectTo } : undefined,
+        );
+        if (linkErr) return json({ error: linkErr.message }, 400);
+      } else {
+        // Temporary password: must meet minimum length.
+        if (!temporaryPassword || typeof temporaryPassword !== 'string' || temporaryPassword.length < 8) {
+          return json({ error: 'Temporary password must be at least 8 characters' }, 400);
+        }
+        const { error: pwErr } = await supabaseAdmin.auth.admin.updateUserById(targetUserId, {
+          password: temporaryPassword,
+        });
+        if (pwErr) return json({ error: pwErr.message }, 400);
+        await supabaseAdmin.from('profiles')
+          .update({ must_change_password: true })
+          .eq('id', targetUserId);
+      }
+
+      try {
+        await supabaseAdmin.from('event_log').insert({
+          type: 'user_password_reset',
+          user_id: caller.id,
+          description: `Reset password for ${targetUser.email ?? targetUserId} (${mode})`,
+          details: { targetUserId, mode },
+        });
+      } catch { /* event_log enum may not include this yet; safe to ignore */ }
+
+      return json({ success: true });
+    }
+
     return json({ error: 'Unknown action' }, 400);
   } catch (err) {
     return json({ error: String(err) }, 500);

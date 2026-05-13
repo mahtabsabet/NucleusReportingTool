@@ -263,10 +263,10 @@ export function NucleusTimeline() {
       <main className="flex-1 min-h-0 flex flex-col">
         <div className="flex-1 min-h-0 relative">
           <Timeline
-            key={`tl-${nucleusId}-${reloadToken}`}
+            key={`tl-${nucleusId}-${isMobile ? 'v' : 'h'}-${reloadToken}`}
             clusterId={nucleus.clusterId}
             nucleusId={nucleusId}
-            orientation="horizontal"
+            orientation={isMobile ? 'vertical' : 'horizontal'}
             mode="fill"
             onItemClick={handleItemClick}
             selectedItemId={selectedItemId}

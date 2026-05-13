@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth';
 import { LoginPage } from './components/LoginPage';
+import { ForgotPasswordPage } from './components/ForgotPasswordPage';
+import { ResetPasswordPage } from './components/ResetPasswordPage';
+import { ForcedChangePasswordGate } from './components/ForcedChangePasswordGate';
 import { ClusterMapView } from './components/ClusterMapView';
 import { SplashScreen } from './components/SplashScreen';
 import { NucleusDashboard } from './components/NucleusDashboard';
@@ -38,7 +41,16 @@ function AppRoutes() {
     );
   }
 
-  if (!user) return <LoginPage />;
+  if (!user) {
+    return (
+      <Routes>
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="*" element={<LoginPage />} />
+      </Routes>
+    );
+  }
 
   // On mobile, the avatar lives in the mobile-landing header. The floating
   // chip is hidden on every mobile screen so it cannot overlap action
@@ -46,7 +58,11 @@ function AppRoutes() {
   return (
     <>
       {!isMobile && !nucleusDetailRoute && <AccountMenu />}
+      <ForcedChangePasswordGate />
       <Routes>
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/login" element={<Navigate to="/" replace />} />
+      <Route path="/forgot-password" element={<Navigate to="/" replace />} />
       <Route path="/" element={isMobile ? <MobileLanding /> : <ClusterMapView />} />
       <Route path="/map" element={<ClusterMapView />} />
       <Route path="/m/reports" element={<MobileReports />} />

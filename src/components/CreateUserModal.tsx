@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { XIcon, UserPlusIcon, EyeIcon, EyeOffIcon, LoaderIcon } from 'lucide-react';
+import { XIcon, UserPlusIcon, EyeIcon, EyeOffIcon, LoaderIcon, MailIcon, KeyRoundIcon } from 'lucide-react';
+import { PASSWORD_MIN_LENGTH } from './ChangePasswordModal';
 import {
   createUser,
   fetchActivitiesForScope,
@@ -24,6 +25,7 @@ interface Props {
 export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [accessMode, setAccessMode] = useState<'invite' | 'temporary'>('invite');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [role, setRole] = useState<CreatableRole | ''>('');
@@ -167,7 +169,8 @@ export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
   }
 
   function isFormValid(): boolean {
-    if (!name.trim() || !email.trim() || !password.trim() || !role) return false;
+    if (!name.trim() || !email.trim() || !role) return false;
+    if (accessMode === 'temporary' && password.trim().length < PASSWORD_MIN_LENGTH) return false;
     if (roleNeedsCluster && !skipClusterPicker && !selectedClusterId) return false;
     if (needsNucleus && !selectedNucleusId) return false;
     if (needsActivity && !selectedActivityId) return false;
@@ -183,7 +186,9 @@ export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
       await createUser({
         name: name.trim(),
         email: email.trim(),
-        password,
+        // Omit password when sending an invite; the new user sets their
+        // own via the email link. Pass it only for the temporary mode.
+        password: accessMode === 'temporary' ? password : undefined,
         role,
         clusterId: selectedClusterId || undefined,
         nucleusId: selectedNucleusId || undefined,
@@ -345,36 +350,80 @@ export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
               />
             </div>
 
-            {/* Password */}
+            {/* Access mode */}
             <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-1.5" htmlFor="new-user-password">
-                Temporary Password
-              </label>
-              <div className="relative">
-                <input
-                  id="new-user-password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  placeholder="Min. 6 characters"
-                  autoComplete="new-password"
-                  className="w-full rounded-xl border border-gray-200 px-3 py-2.5 pr-10 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  tabIndex={-1}
-                >
-                  {showPassword
-                    ? <EyeOffIcon className="w-4 h-4" />
-                    : <EyeIcon className="w-4 h-4" />}
-                </button>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">How will they sign in?</label>
+              <div className="space-y-2">
+                <label className="flex items-start gap-3 p-3 border border-gray-200 rounded-xl hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="access-mode"
+                    checked={accessMode === 'invite'}
+                    onChange={() => setAccessMode('invite')}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                      <MailIcon className="w-4 h-4 text-gray-500" />
+                      Send invitation email
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      They'll get a welcome email with a link to set their own password.
+                    </p>
+                  </div>
+                </label>
+                <label className="flex items-start gap-3 p-3 border border-gray-200 rounded-xl hover:bg-gray-50 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="access-mode"
+                    checked={accessMode === 'temporary'}
+                    onChange={() => setAccessMode('temporary')}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                      <KeyRoundIcon className="w-4 h-4 text-gray-500" />
+                      Set a temporary password
+                    </div>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Share it out-of-band; they'll be forced to change it on first login.
+                    </p>
+                  </div>
+                </label>
               </div>
-              <p className="mt-1 text-xs text-gray-400">The user can change this after signing in.</p>
             </div>
+
+            {accessMode === 'temporary' && (
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1.5" htmlFor="new-user-password">
+                  Temporary Password
+                </label>
+                <div className="relative">
+                  <input
+                    id="new-user-password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                    minLength={PASSWORD_MIN_LENGTH}
+                    placeholder={`Min. ${PASSWORD_MIN_LENGTH} characters`}
+                    autoComplete="new-password"
+                    className="w-full rounded-xl border border-gray-200 px-3 py-2.5 pr-10 text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(v => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    tabIndex={-1}
+                  >
+                    {showPassword
+                      ? <EyeOffIcon className="w-4 h-4" />
+                      : <EyeIcon className="w-4 h-4" />}
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-gray-400">They'll be forced to change this on first sign-in.</p>
+              </div>
+            )}
           </div>
 
           {error && (
@@ -401,12 +450,12 @@ export function CreateUserModal({ callerCtx, onClose, onCreated }: Props) {
               {submitting ? (
                 <>
                   <LoaderIcon className="w-4 h-4 animate-spin" />
-                  Creating…
+                  {accessMode === 'invite' ? 'Sending invite…' : 'Creating…'}
                 </>
               ) : (
                 <>
                   <UserPlusIcon className="w-4 h-4" />
-                  Create User
+                  {accessMode === 'invite' ? 'Send Invitation' : 'Create User'}
                 </>
               )}
             </button>

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 
 export function LoginPage() {
@@ -43,9 +44,17 @@ export function LoginPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-stone-700 mb-1" htmlFor="password">
-              Password
-            </label>
+            <div className="flex items-baseline justify-between mb-1">
+              <label className="block text-sm font-medium text-stone-700" htmlFor="password">
+                Password
+              </label>
+              <Link
+                to="/forgot-password"
+                className="text-xs text-stone-500 hover:text-stone-700 underline"
+              >
+                Forgot password?
+              </Link>
+            </div>
             <input
               id="password"
               type="password"

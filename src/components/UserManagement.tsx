@@ -12,17 +12,23 @@ import {
   ClockIcon,
   CheckIcon,
   XIcon,
+  KeyRoundIcon,
+  MailIcon,
+  EyeIcon,
+  EyeOffIcon,
 } from 'lucide-react';
 import {
   fetchManagedUsers,
   fetchUserEmails,
   deleteUser,
   changeUserRole,
+  adminResetUserPassword,
   getCallerContext,
   toUserSummary,
   type ManagedUser,
   type UserPermissionRow,
 } from '../lib/db/users';
+import { PASSWORD_MIN_LENGTH } from './ChangePasswordModal';
 import {
   type CallerContext,
   type CreatableRole,
@@ -31,6 +37,7 @@ import {
   canDeleteUserDirectly,
   canRequestDeleteUser,
   canChangeUserRoleDirectly,
+  canResetUserPasswordDirectly,
   canRequestChangeUserRole,
   creatableRoles,
   highestRole,
@@ -91,12 +98,13 @@ interface UserCardProps {
   callerCtx: CallerContext;
   onDelete: (user: ManagedUser) => void;
   onChangeRole: (user: ManagedUser) => void;
+  onResetPassword: (user: ManagedUser) => void;
   onRequestDelete: (user: ManagedUser) => void;
   onRequestChangeRole: (user: ManagedUser) => void;
 }
 
 function UserCard({
-  user, callerCtx, onDelete, onChangeRole, onRequestDelete, onRequestChangeRole,
+  user, callerCtx, onDelete, onChangeRole, onResetPassword, onRequestDelete, onRequestChangeRole,
 }: UserCardProps) {
   const summary = toUserSummary(user);
   const directDelete = canDeleteUserDirectly(callerCtx, summary);
@@ -108,6 +116,7 @@ function UserCard({
        && callerCtx.userId !== user.id
        && (!summary.isAdmin || callerCtx.isSuperAdmin);
   const requestChange = !directChange && canRequestChangeUserRole(callerCtx, summary);
+  const directReset = canResetUserPasswordDirectly(callerCtx, summary);
 
   return (
     <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
@@ -152,6 +161,15 @@ function UserCard({
                 title={directChange ? 'Change role' : 'Request role change'}
               >
                 <PencilIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {directReset && (
+              <button
+                onClick={() => onResetPassword(user)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-amber-600 hover:bg-amber-50 transition-colors"
+                title="Reset password"
+              >
+                <KeyRoundIcon className="w-3.5 h-3.5" />
               </button>
             )}
             {(directDelete || requestDelete) && (
@@ -378,6 +396,159 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
   );
 }
 
+interface ResetPasswordModalProps {
+  user: ManagedUser;
+  onClose: () => void;
+  onReset: () => void;
+}
+
+function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModalProps) {
+  const [mode, setMode] = useState<'email' | 'temporary'>('email');
+  const [tempPassword, setTempPassword] = useState('');
+  const [showTemp, setShowTemp] = useState(false);
+  const [emailInput, setEmailInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const emailMatches = emailInput.trim().toLowerCase() === user.email.toLowerCase();
+  const tempValid = mode === 'email' || tempPassword.length >= PASSWORD_MIN_LENGTH;
+  const canSubmit = emailMatches && tempValid && !loading;
+
+  async function handleConfirm() {
+    setError(null);
+    setLoading(true);
+    try {
+      await adminResetUserPassword({
+        targetUserId: user.id,
+        confirmedEmail: emailInput.trim(),
+        mode,
+        temporaryPassword: mode === 'temporary' ? tempPassword : undefined,
+      });
+      onReset();
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to reset password');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <KeyRoundIcon className="w-5 h-5 text-amber-700" />
+          </div>
+          <h2 className="text-xl font-bold text-gray-900">Reset Password</h2>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          Reset the password for <strong>{user.name}</strong>.
+        </p>
+
+        <div className="space-y-2 mb-4">
+          <label className="flex items-start gap-3 p-3 border border-gray-200 rounded-xl hover:bg-gray-50 cursor-pointer">
+            <input
+              type="radio"
+              name="reset-mode"
+              checked={mode === 'email'}
+              onChange={() => setMode('email')}
+              className="mt-0.5"
+            />
+            <div className="flex-1">
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                <MailIcon className="w-4 h-4 text-gray-500" />
+                Send reset email
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                The user gets a one-time link to set their own password. Recommended.
+              </p>
+            </div>
+          </label>
+          <label className="flex items-start gap-3 p-3 border border-gray-200 rounded-xl hover:bg-gray-50 cursor-pointer">
+            <input
+              type="radio"
+              name="reset-mode"
+              checked={mode === 'temporary'}
+              onChange={() => setMode('temporary')}
+              className="mt-0.5"
+            />
+            <div className="flex-1">
+              <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+                <KeyRoundIcon className="w-4 h-4 text-gray-500" />
+                Set a temporary password
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Share the temp password out-of-band; the user is forced to change it on next login.
+              </p>
+            </div>
+          </label>
+        </div>
+
+        {mode === 'temporary' && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Temporary password</label>
+            <div className="relative">
+              <input
+                type={showTemp ? 'text' : 'password'}
+                value={tempPassword}
+                onChange={e => setTempPassword(e.target.value)}
+                minLength={PASSWORD_MIN_LENGTH}
+                placeholder={`Min. ${PASSWORD_MIN_LENGTH} characters`}
+                autoComplete="new-password"
+                className="w-full rounded-xl border border-gray-200 px-3 py-2.5 pr-10 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              <button
+                type="button"
+                onClick={() => setShowTemp(v => !v)}
+                tabIndex={-1}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showTemp ? <EyeOffIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 mb-1">
+          <p className="text-sm font-mono font-semibold text-gray-900 break-all">{user.email}</p>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">Type this email to confirm</p>
+        <input
+          type="text"
+          value={emailInput}
+          onChange={e => setEmailInput(e.target.value)}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm mb-4"
+          placeholder={user.email}
+          autoComplete="off"
+        />
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
+        <div className="flex gap-3 pt-2 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!canSubmit}
+            className="flex-1 px-4 py-2.5 bg-amber-600 text-white font-medium rounded-xl hover:bg-amber-700 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Working…' : mode === 'email' ? 'Send Reset Email' : 'Set Temporary Password'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Lightweight "submit a request" modal used by Cluster/Nucleus Coordinators.
 // The reviewer's resolution UI is deliberately minimal here — the planned
 // Data Review / Hygiene interface is the eventual home for this flow.
@@ -585,6 +756,8 @@ export function UserManagement() {
   const [showCreate, setShowCreate] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<ManagedUser | null>(null);
   const [pendingChangeRole, setPendingChangeRole] = useState<ManagedUser | null>(null);
+  const [pendingReset, setPendingReset] = useState<ManagedUser | null>(null);
+  const [resetSuccessName, setResetSuccessName] = useState<string | null>(null);
   const [pendingRequest, setPendingRequest] = useState<{ user: ManagedUser; action: 'delete' | 'change_role' } | null>(null);
   const [requestsRefreshKey, setRequestsRefreshKey] = useState(0);
 
@@ -721,6 +894,7 @@ export function UserManagement() {
                     callerCtx={callerCtx}
                     onDelete={u => setPendingDelete(u)}
                     onChangeRole={u => setPendingChangeRole(u)}
+                    onResetPassword={u => setPendingReset(u)}
                     onRequestDelete={u => setPendingRequest({ user: u, action: 'delete' })}
                     onRequestChangeRole={u => setPendingRequest({ user: u, action: 'change_role' })}
                   />
@@ -754,6 +928,24 @@ export function UserManagement() {
           onClose={() => setPendingChangeRole(null)}
           onChanged={() => { setPendingChangeRole(null); load(); }}
         />
+      )}
+
+      {pendingReset && (
+        <ResetPasswordModal
+          user={pendingReset}
+          onClose={() => setPendingReset(null)}
+          onReset={() => {
+            setResetSuccessName(pendingReset.name);
+            setPendingReset(null);
+            setTimeout(() => setResetSuccessName(null), 5000);
+          }}
+        />
+      )}
+
+      {resetSuccessName && (
+        <div className="fixed bottom-6 right-6 z-[2500] bg-emerald-600 text-white text-sm font-medium rounded-xl shadow-lg px-4 py-3">
+          Password reset triggered for {resetSuccessName}
+        </div>
       )}
 
       {pendingRequest && callerCtx && (

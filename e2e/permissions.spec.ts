@@ -570,7 +570,10 @@ test.describe('regional (view-only)', () => {
     await expect(page.getByRole('button', { name: /^cancel$/i })).not.toBeVisible();
     await expect(page.getByRole('button', { name: /save changes/i })).not.toBeVisible();
     // Schedule + Notes fields must be present (so values are visible) but read-only.
-    const scheduleInput = page.getByPlaceholder(/saturdays at 10:00/i);
+    // The seeded test activity has no schedulingMode set, so ActivityDetail
+    // defaults to 'sporadic_ongoing' which renders a single freeform text
+    // input with placeholder "When does this happen?".
+    const scheduleInput = page.getByPlaceholder(/when does this happen/i);
     await expect(scheduleInput).toHaveAttribute('readonly', '');
     const notesTextarea = page.locator('textarea').first();
     await expect(notesTextarea).toHaveAttribute('readonly', '');

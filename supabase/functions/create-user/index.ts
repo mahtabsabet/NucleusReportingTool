@@ -76,8 +76,22 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { name, email, password, role, clusterId, nucleusId, activityId } = body;
 
-    if (!name?.trim() || !email?.trim() || !password?.trim() || !role) {
-      return json({ error: 'Missing required fields: name, email, password, role' }, 400);
+    // Two creation modes:
+    //  • invite  (preferred) — Supabase sends a welcome email with a one-time
+    //    link; the new user sets their own password on first login.
+    //  • temporary — admin supplies a password they share out-of-band; the
+    //    user is forced to change it on next login (must_change_password=true).
+    //
+    // The mode is implicit: if a password is provided, we treat it as a
+    // temporary-password create. Otherwise we send the invite. This lets
+    // older callers that still pass a password keep working unchanged.
+    const useInvite = !password || !String(password).trim();
+
+    if (!name?.trim() || !email?.trim() || !role) {
+      return json({ error: 'Missing required fields: name, email, role' }, 400);
+    }
+    if (!useInvite && String(password).trim().length < 8) {
+      return json({ error: 'Temporary password must be at least 8 characters' }, 400);
     }
 
     // Super Admin can never be created via API.
@@ -127,24 +141,47 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Create the auth user.
-    const { data: newUserData, error: createError } = await supabaseAdmin.auth.admin.createUser({
-      email: email.trim(),
-      password: password.trim(),
-      user_metadata: { name: name.trim() },
-      email_confirm: true,
-    });
-
-    if (createError || !newUserData.user) {
-      return json({ error: createError?.message ?? 'Failed to create user' }, 400);
+    // Create the auth user — invite or password mode.
+    let newUserId: string;
+    if (useInvite) {
+      // inviteUserByEmail sends a welcome email via Supabase's "Invite user"
+      // template; the recipient clicks the link to set their password and
+      // sign in for the first time. redirectTo lands them on the accept-
+      // invite page (the same reset page works — they have a session and
+      // call updateUser({ password })).
+      const siteUrl = Deno.env.get('SITE_URL') ?? '';
+      const redirectTo = siteUrl ? `${siteUrl}/reset-password` : undefined;
+      const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
+        email.trim(),
+        {
+          data: { name: name.trim() },
+          redirectTo,
+        },
+      );
+      if (inviteError || !inviteData.user) {
+        return json({ error: inviteError?.message ?? 'Failed to invite user' }, 400);
+      }
+      newUserId = inviteData.user.id;
+    } else {
+      const { data: newUserData, error: createError } = await supabaseAdmin.auth.admin.createUser({
+        email: email.trim(),
+        password: String(password).trim(),
+        user_metadata: { name: name.trim() },
+        email_confirm: true,
+      });
+      if (createError || !newUserData.user) {
+        return json({ error: createError?.message ?? 'Failed to create user' }, 400);
+      }
+      newUserId = newUserData.user.id;
     }
 
-    const newUserId = newUserData.user.id;
-
-    // Set profile name + global flags.
+    // Set profile name + global flags. For temp-password creates, also flip
+    // the must_change_password gate so the user is forced to choose their
+    // own on first login.
     const profileUpdate: Record<string, unknown> = { name: name.trim() };
     if (role === 'admin') profileUpdate.is_admin = true;
     if (role === 'regional_viewer') profileUpdate.is_regional_viewer = true;
+    if (!useInvite) profileUpdate.must_change_password = true;
     await supabaseAdmin.from('profiles').update(profileUpdate).eq('id', newUserId);
 
     if (ROLES_NEEDING_SCOPE.has(role)) {

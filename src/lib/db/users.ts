@@ -145,11 +145,45 @@ export async function fetchActivitiesForScope(nucleusId: string): Promise<ScopeO
 export interface CreateUserParams {
   name: string;
   email: string;
-  password: string;
+  // Omit password to send an invite email. Provide a password to skip the
+  // invite and bootstrap the user with a temporary password they must
+  // change on first login.
+  password?: string;
   role: CreatableRole;
   clusterId?: string;
   nucleusId?: string;
   activityId?: string;
+}
+
+// Convert a supabase.functions.invoke() failure into a useful Error.
+// Supabase's FunctionsHttpError.message is just "Edge Function returned a
+// non-2xx status code" — the actual reason is in the response body. This
+// helper reads that body (preferring our edge functions' `{ error: "..." }`
+// JSON shape) and falls back to the raw text or HTTP status.
+async function readInvokeError(error: any, fallback: string): Promise<string> {
+  const response: Response | undefined = error?.context;
+  if (response && typeof response.text === 'function') {
+    try {
+      const text = await response.text();
+      if (text) {
+        try {
+          const json = JSON.parse(text);
+          if (json && typeof json.error === 'string') return json.error;
+          if (json && typeof json.message === 'string') return json.message;
+        } catch { /* not JSON — fall through */ }
+        return text.length > 500 ? text.slice(0, 500) + '…' : text;
+      }
+      if (response.status) return `HTTP ${response.status}`;
+    } catch { /* response body already consumed, fall through */ }
+  }
+  return error?.message ?? fallback;
+}
+
+async function invokeEdge<T = any>(fn: string, body: unknown): Promise<T> {
+  const { data, error } = await supabase.functions.invoke(fn, { body });
+  if (error) throw new Error(await readInvokeError(error, error.message ?? 'Edge function failed'));
+  if (data?.error) throw new Error(data.error);
+  return data as T;
 }
 
 export async function createUser(params: CreateUserParams): Promise<void> {
@@ -161,37 +195,26 @@ export async function createUser(params: CreateUserParams): Promise<void> {
   if (need === 'nucleus' && !params.nucleusId) throw new Error('A nucleus must be selected.');
   if (need === 'activity' && !params.activityId) throw new Error('An activity must be selected.');
 
-  const { data, error } = await supabase.functions.invoke('create-user', {
-    body: {
-      name: params.name,
-      email: params.email,
-      password: params.password,
-      role: params.role,
-      clusterId: params.clusterId,
-      nucleusId: params.nucleusId,
-      activityId: params.activityId,
-    },
+  await invokeEdge('create-user', {
+    name: params.name,
+    email: params.email,
+    password: params.password,
+    role: params.role,
+    clusterId: params.clusterId,
+    nucleusId: params.nucleusId,
+    activityId: params.activityId,
   });
-
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
 }
 
 export async function fetchUserEmails(): Promise<Record<string, string>> {
-  const { data, error } = await supabase.functions.invoke('manage-user', {
-    body: { action: 'list-emails' },
+  const data = await invokeEdge<{ emails?: Record<string, string> }>('manage-user', {
+    action: 'list-emails',
   });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
-  return (data?.emails ?? {}) as Record<string, string>;
+  return data?.emails ?? {};
 }
 
 export async function deleteUser(targetUserId: string, confirmedEmail: string): Promise<void> {
-  const { data, error } = await supabase.functions.invoke('manage-user', {
-    body: { action: 'delete', targetUserId, confirmedEmail },
-  });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
+  await invokeEdge('manage-user', { action: 'delete', targetUserId, confirmedEmail });
 }
 
 export interface ChangeRoleParams {
@@ -202,21 +225,104 @@ export interface ChangeRoleParams {
 }
 
 export async function changeUserRole(params: ChangeRoleParams): Promise<void> {
-  const { data, error } = await supabase.functions.invoke('manage-user', {
-    body: {
-      action: 'change-role',
-      targetUserId: params.targetUserId,
-      newRole: params.newRole,
-      confirmedEmail: params.confirmedEmail,
-      permissionId: params.permissionId,
-    },
+  await invokeEdge('manage-user', {
+    action: 'change-role',
+    targetUserId: params.targetUserId,
+    newRole: params.newRole,
+    confirmedEmail: params.confirmedEmail,
+    permissionId: params.permissionId,
   });
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
 }
 
 // Convenience re-export for UIs.
 export { highestRole };
+
+export interface ChangeOwnPasswordParams {
+  currentPassword: string;
+  newPassword: string;
+}
+
+// Self-service password change. Re-authenticates with the current password
+// first so a hijacked session can't silently rotate the password — Supabase's
+// updateUser() does not require the previous credential on its own.
+export async function changeOwnPassword(
+  params: ChangeOwnPasswordParams,
+): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user?.email) throw new Error('Not signed in');
+
+  const { error: reauthError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: params.currentPassword,
+  });
+  if (reauthError) throw new Error('Current password is incorrect');
+
+  const { error: updateError } = await supabase.auth.updateUser({
+    password: params.newPassword,
+  });
+  if (updateError) throw new Error(updateError.message);
+
+  // Clear the "must change password" flag for users who landed here via the
+  // forced-change gate. RLS lets a user update their own profile row.
+  await supabase
+    .from('profiles')
+    .update({ must_change_password: false })
+    .eq('id', user.id);
+}
+
+// Reads the current user's must_change_password flag. Used to gate the app
+// after sign-in: when true, route to the change-password modal first.
+export async function fetchMustChangePassword(userId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('profiles')
+    .select('must_change_password')
+    .eq('id', userId)
+    .single();
+  return (data as any)?.must_change_password === true;
+}
+
+// Sends a recovery email to the given address. Used by both the "forgot
+// password" flow on the login page and the admin "send reset email" action.
+// Supabase rate-limits this endpoint and silently no-ops for unknown emails,
+// which is what we want (prevents account enumeration).
+export async function sendPasswordResetEmail(email: string): Promise<void> {
+  const redirectTo = `${window.location.origin}/reset-password`;
+  const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+  if (error) throw new Error(error.message);
+}
+
+// Completes a recovery: must be called while the user is in a recovery
+// session (Supabase places them in one automatically when they click the
+// email link).
+export async function completePasswordReset(newPassword: string): Promise<void> {
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) throw new Error(error.message);
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user) {
+    await supabase
+      .from('profiles')
+      .update({ must_change_password: false })
+      .eq('id', user.id);
+  }
+}
+
+export interface AdminResetPasswordParams {
+  targetUserId: string;
+  confirmedEmail: string;
+  // 'email' sends a recovery link, 'temporary' sets a one-time password.
+  mode: 'email' | 'temporary';
+  temporaryPassword?: string;
+}
+
+export async function adminResetUserPassword(params: AdminResetPasswordParams): Promise<void> {
+  await invokeEdge('manage-user', {
+    action: 'reset-password',
+    targetUserId: params.targetUserId,
+    confirmedEmail: params.confirmedEmail,
+    mode: params.mode,
+    temporaryPassword: params.temporaryPassword,
+  });
+}
 
 // Returns the signed-in user's profile_image_url, or null if not set.
 export async function fetchOwnProfileImageUrl(userId: string): Promise<string | null> {

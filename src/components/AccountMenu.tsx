@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOutIcon, UserIcon, CameraIcon } from 'lucide-react';
+import { LogOutIcon, UserIcon, CameraIcon, KeyRoundIcon } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import {
   getCallerContext,
@@ -8,6 +8,7 @@ import {
   type CallerContext,
 } from '../lib/db/users';
 import { primaryRole, roleLabel, ROLE_BADGE_CLASSES } from '../lib/permissions';
+import { ChangePasswordModal } from './ChangePasswordModal';
 
 // Floating account chip available on every authenticated page.
 // Shows the signed-in user's name, email, role, and a logout button.
@@ -34,6 +35,8 @@ export function AccountMenu({ inline = false, buttonClassName }: AccountMenuProp
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [passwordChangedAt, setPasswordChangedAt] = useState<number | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -174,6 +177,21 @@ export function AccountMenu({ inline = false, buttonClassName }: AccountMenuProp
           )}
 
           <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setShowChangePassword(true);
+            }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 mb-2 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 font-medium rounded-xl text-sm transition-colors"
+          >
+            <KeyRoundIcon className="w-4 h-4" />
+            Change Password
+          </button>
+          {passwordChangedAt && Date.now() - passwordChangedAt < 5000 && (
+            <p className="text-xs text-emerald-600 mb-2 text-center">Password updated</p>
+          )}
+
+          <button
             onClick={async () => {
               setOpen(false);
               await signOut();
@@ -184,6 +202,16 @@ export function AccountMenu({ inline = false, buttonClassName }: AccountMenuProp
             Log Out
           </button>
         </div>
+      )}
+
+      {showChangePassword && (
+        <ChangePasswordModal
+          onClose={() => setShowChangePassword(false)}
+          onChanged={() => {
+            setShowChangePassword(false);
+            setPasswordChangedAt(Date.now());
+          }}
+        />
       )}
     </div>
   );
