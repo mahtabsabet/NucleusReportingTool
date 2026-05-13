@@ -53,8 +53,16 @@ export function PrivacyAcknowledgementGate({ children }: { children: React.React
         setNeedsAck(!status.acknowledged);
         setChecked(true);
       })
-      .catch(() => {
-        if (!cancelled) setChecked(true);
+      .catch(err => {
+        // Fail-open: a DB hiccup shouldn't block users mid-session.
+        // Surface the error in devtools so silent migration drift
+        // (the original "I logged in and was never asked" case)
+        // doesn't look like working acknowledgement state.
+        if (!cancelled) {
+          // eslint-disable-next-line no-console
+          console.error('[privacy-ack] failed to fetch acknowledgement status', err);
+          setChecked(true);
+        }
       });
     return () => { cancelled = true; };
   }, [user]);

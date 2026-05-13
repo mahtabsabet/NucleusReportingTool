@@ -91,6 +91,18 @@ describe('fetchPrivacyAckStatus', () => {
     expect(status.version).toBeNull();
     expect(status.acknowledgedAt).toBeNull();
   });
+
+  it('throws when the underlying query errors so the gate can log + fail-open', async () => {
+    // This is the migration-not-applied case (column doesn't exist).
+    // The gate's `.catch` is what surfaces the problem to devtools;
+    // if this helper ever started swallowing errors instead of throwing,
+    // a missing migration would silently look like a working ack state.
+    mockMaybeSingle.mockResolvedValue({
+      data: null,
+      error: { message: 'column profiles.privacy_acknowledged_at does not exist' },
+    });
+    await expect(fetchPrivacyAckStatus('user-1')).rejects.toBeTruthy();
+  });
 });
 
 describe('recordPrivacyAcknowledgement', () => {
