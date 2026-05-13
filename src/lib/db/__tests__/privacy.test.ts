@@ -109,6 +109,19 @@ describe('recordPrivacyAcknowledgement', () => {
     expect(typeof patch.privacy_acknowledged_at).toBe('string');
   });
 
+  it('writes the same version and timestamp to both the audit log and the profile', async () => {
+    await recordPrivacyAcknowledgement('user-1');
+
+    const inserted = mockInsert.mock.calls[0][0];
+    const patch = mockUpdate.mock.calls[0][0];
+
+    // If these ever drift, an admin reading the audit log would see a
+    // different "what they agreed to" than what the gate considers
+    // current — which would silently re-prompt or fail to re-prompt.
+    expect(inserted.policy_version).toBe(patch.privacy_policy_version_acknowledged);
+    expect(inserted.acknowledged_at).toBe(patch.privacy_acknowledged_at);
+  });
+
   it('aborts before updating the profile if the audit log write fails', async () => {
     mockInsert.mockResolvedValue({ error: new Error('rls denied') });
     await expect(recordPrivacyAcknowledgement('user-1')).rejects.toBeTruthy();
