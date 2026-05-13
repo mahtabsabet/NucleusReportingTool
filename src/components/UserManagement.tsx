@@ -16,6 +16,7 @@ import {
   MailIcon,
   EyeIcon,
   EyeOffIcon,
+  ShieldCheckIcon,
 } from 'lucide-react';
 import {
   fetchManagedUsers,
@@ -50,6 +51,7 @@ import {
   submitPermissionRequest,
   type PermissionRequestRow,
 } from '../lib/db/requests';
+import { adminResetPrivacyAcknowledgement } from '../lib/db/privacy';
 import { CreateUserModal } from './CreateUserModal';
 import { GlobalSearch } from './GlobalSearch';
 
@@ -99,12 +101,13 @@ interface UserCardProps {
   onDelete: (user: ManagedUser) => void;
   onChangeRole: (user: ManagedUser) => void;
   onResetPassword: (user: ManagedUser) => void;
+  onResetPrivacyAck: (user: ManagedUser) => void;
   onRequestDelete: (user: ManagedUser) => void;
   onRequestChangeRole: (user: ManagedUser) => void;
 }
 
 function UserCard({
-  user, callerCtx, onDelete, onChangeRole, onResetPassword, onRequestDelete, onRequestChangeRole,
+  user, callerCtx, onDelete, onChangeRole, onResetPassword, onResetPrivacyAck, onRequestDelete, onRequestChangeRole,
 }: UserCardProps) {
   const summary = toUserSummary(user);
   const directDelete = canDeleteUserDirectly(callerCtx, summary);
@@ -117,6 +120,11 @@ function UserCard({
        && (!summary.isAdmin || callerCtx.isSuperAdmin);
   const requestChange = !directChange && canRequestChangeUserRole(callerCtx, summary);
   const directReset = canResetUserPasswordDirectly(callerCtx, summary);
+  // Admins / Super Admins can force a user to re-acknowledge the policy.
+  // Useful after handoff of a test account, or when an admin wants a
+  // specific user to re-confirm without bumping the global version.
+  const canResetPrivacyAck = (callerCtx.isAdmin || callerCtx.isSuperAdmin)
+    && callerCtx.userId !== user.id;
 
   return (
     <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm hover:shadow-md transition-shadow">
@@ -170,6 +178,15 @@ function UserCard({
                 title="Reset password"
               >
                 <KeyRoundIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {canResetPrivacyAck && (
+              <button
+                onClick={() => onResetPrivacyAck(user)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-emerald-700 hover:bg-emerald-50 transition-colors"
+                title="Require re-acknowledgement of the privacy & stewardship commitments"
+              >
+                <ShieldCheckIcon className="w-3.5 h-3.5" />
               </button>
             )}
             {(directDelete || requestDelete) && (
@@ -549,6 +566,74 @@ function ResetPasswordModal({ user, onClose, onReset }: ResetPasswordModalProps)
   );
 }
 
+interface ResetPrivacyAckModalProps {
+  user: ManagedUser;
+  onClose: () => void;
+  onReset: () => void;
+}
+
+function ResetPrivacyAckModal({ user, onClose, onReset }: ResetPrivacyAckModalProps) {
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function handleConfirm() {
+    setError(null);
+    setLoading(true);
+    try {
+      await adminResetPrivacyAcknowledgement(user.id);
+      onReset();
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to reset acknowledgement');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <ShieldCheckIcon className="w-5 h-5 text-emerald-700" />
+          </div>
+          <h2 className="text-xl font-bold text-gray-900">Require re-acknowledgement</h2>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          Next time <strong>{user.name}</strong> opens the app, they will be
+          asked again to confirm the privacy and information stewardship
+          commitments. Their previous acknowledgements are kept in the audit
+          history.
+        </p>
+        <p className="text-xs text-gray-500 mb-4">
+          Use this after handing off a test account, after a policy clarification,
+          or any time you want a specific user to re-confirm.
+        </p>
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+        <div className="flex gap-3 pt-2 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Working…' : 'Reset acknowledgement'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Lightweight "submit a request" modal used by Cluster/Nucleus Coordinators.
 // The reviewer's resolution UI is deliberately minimal here — the planned
 // Data Review / Hygiene interface is the eventual home for this flow.
@@ -757,7 +842,9 @@ export function UserManagement() {
   const [pendingDelete, setPendingDelete] = useState<ManagedUser | null>(null);
   const [pendingChangeRole, setPendingChangeRole] = useState<ManagedUser | null>(null);
   const [pendingReset, setPendingReset] = useState<ManagedUser | null>(null);
+  const [pendingPrivacyReset, setPendingPrivacyReset] = useState<ManagedUser | null>(null);
   const [resetSuccessName, setResetSuccessName] = useState<string | null>(null);
+  const [privacyResetSuccessName, setPrivacyResetSuccessName] = useState<string | null>(null);
   const [pendingRequest, setPendingRequest] = useState<{ user: ManagedUser; action: 'delete' | 'change_role' } | null>(null);
   const [requestsRefreshKey, setRequestsRefreshKey] = useState(0);
 
@@ -895,6 +982,7 @@ export function UserManagement() {
                     onDelete={u => setPendingDelete(u)}
                     onChangeRole={u => setPendingChangeRole(u)}
                     onResetPassword={u => setPendingReset(u)}
+                    onResetPrivacyAck={u => setPendingPrivacyReset(u)}
                     onRequestDelete={u => setPendingRequest({ user: u, action: 'delete' })}
                     onRequestChangeRole={u => setPendingRequest({ user: u, action: 'change_role' })}
                   />
@@ -945,6 +1033,24 @@ export function UserManagement() {
       {resetSuccessName && (
         <div className="fixed bottom-6 right-6 z-[2500] bg-emerald-600 text-white text-sm font-medium rounded-xl shadow-lg px-4 py-3">
           Password reset triggered for {resetSuccessName}
+        </div>
+      )}
+
+      {pendingPrivacyReset && (
+        <ResetPrivacyAckModal
+          user={pendingPrivacyReset}
+          onClose={() => setPendingPrivacyReset(null)}
+          onReset={() => {
+            setPrivacyResetSuccessName(pendingPrivacyReset.name);
+            setPendingPrivacyReset(null);
+            setTimeout(() => setPrivacyResetSuccessName(null), 5000);
+          }}
+        />
+      )}
+
+      {privacyResetSuccessName && (
+        <div className="fixed bottom-6 right-6 z-[2500] bg-emerald-600 text-white text-sm font-medium rounded-xl shadow-lg px-4 py-3">
+          {privacyResetSuccessName} will be asked to re-acknowledge on next load
         </div>
       )}
 

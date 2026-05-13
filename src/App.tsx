@@ -5,6 +5,7 @@ import { LoginPage } from './components/LoginPage';
 import { ForgotPasswordPage } from './components/ForgotPasswordPage';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { ForcedChangePasswordGate } from './components/ForcedChangePasswordGate';
+import { PrivacyAcknowledgementGate } from './components/PrivacyAcknowledgementGate';
 import { ClusterMapView } from './components/ClusterMapView';
 import { SplashScreen } from './components/SplashScreen';
 import { NucleusDashboard } from './components/NucleusDashboard';
@@ -56,7 +57,7 @@ function AppRoutes() {
   // chip is hidden on every mobile screen so it cannot overlap action
   // buttons (e.g. the "+ New Nucleus" button on the mobile map view).
   return (
-    <>
+    <PrivacyAcknowledgementGate>
       {!isMobile && !nucleusDetailRoute && <AccountMenu />}
       <ForcedChangePasswordGate />
       <Routes>
@@ -80,7 +81,7 @@ function AppRoutes() {
       <Route path="/nucleus/:nucleusId/growth-report" element={<GrowthReport />} />
       <Route path="/users" element={<UserManagement />} />
       </Routes>
-    </>
+    </PrivacyAcknowledgementGate>
   );
 }
 

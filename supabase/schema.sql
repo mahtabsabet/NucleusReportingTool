@@ -50,6 +50,8 @@ create table profiles (
   person_id             uuid,  -- FK to persons added after persons table is created
   profile_image_url     text,
   must_change_password  boolean not null default false,
+  privacy_acknowledged_at              timestamptz,
+  privacy_policy_version_acknowledged  text,
   created_at            timestamptz not null default now()
 );
 
