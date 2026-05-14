@@ -4,7 +4,7 @@ import type {
   ActivityLifecycle,
   ActivitySchedulingMode,
 } from '../../types';
-import type { PersonProfile, CourseRow } from './clusterProfile';
+import type { PersonProfile, CourseRow, CompletionStatus } from './clusterProfile';
 import { actionPermission, canDirectly } from '../permissions';
 import { getCallerContext } from './users';
 import { isMinorForAgeGroup } from '../persons/disambiguators';
@@ -84,7 +84,7 @@ function mapActivityRow(a: any, participants: Record<string, string[]>): Activit
   };
 }
 
-export type { PersonProfile, CourseRow };
+export type { PersonProfile, CourseRow, CompletionStatus };
 
 export const DB_TO_APP_TYPE: Record<string, Activity['type']> = {
   children_class: 'children-class',
@@ -903,7 +903,7 @@ export async function fetchPersonsForNucleus(nucleusId: string): Promise<PersonP
     courseEnrollments: (p.course_enrollments ?? []).map((ce: any) => ({
       courseId: ce.courses?.id ?? '',
       courseName: ce.courses?.name ?? '',
-      status: ce.status as 'in_progress' | 'completed',
+      status: ce.status as CompletionStatus,
     })),
   }));
 }

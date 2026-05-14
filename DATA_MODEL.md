@@ -109,7 +109,7 @@ Links a Person to a Nucleus, capturing their engagement level **within that spec
 ---
 
 ### Course
-A catalog of institute courses (Ruhi books, etc.). Only admins can add or retire courses.
+The curriculum catalog. A flexible, relational structure — the system does **not** hard-code "Books 1-7". Only admins can add or retire courses.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -117,21 +117,52 @@ A catalog of institute courses (Ruhi books, etc.). Only admins can add or retire
 | name | text | e.g. "Book 1: Reflections on the Life of the Spirit" |
 | short_name | text | e.g. "Book 1" |
 | description | text | nullable |
-| order | int | for display sorting (Book 1 = 1, Book 2 = 2, etc.) |
+| order | int | display sorting *within its stream / parent* |
+| stream | enum | `ruhi_main` (the 14-book main sequence), `branch` (a branch course), `jysep` (a Junior Youth Spiritual Empowerment Program text) |
+| parent_course_id | uuid → Course | nullable — for branch courses, points at the main-sequence book they hang off (Book 3 / Book 5) |
+| allows_whole_completion | boolean | `false` for books whose unit set is not finalized (Books 12-14 carry a placeholder Unit 3) — those can only ever be marked partially complete |
 | is_active | boolean | admins can retire courses without deleting them |
 
+> **Three curriculum streams.** *Ruhi Main Sequence* — Books 1-14, each with units. *Branch Courses* — nested under Book 3 (Grades 2-4) and Book 5 (Initial Impulse, Widening Circle); they behave as independent courses for completion purposes but display nested beneath their parent. *JYSEP* — the 15 Junior Youth texts, tracked whole/partial with no units.
+
+### CourseUnit
+A unit of a Ruhi book. The unit count is **not** assumed to be 3 — Book 3 has 2, Books 12-14 carry a placeholder. JY texts and branch courses have no units.
+
+| Field | Type | Notes |
+|---|---|---|
+| id | uuid | |
+| course_id | uuid → Course | |
+| name | text | e.g. "Prayer" |
+| order | int | unit order within the book |
+| is_placeholder | boolean | reserves a slot for unreleased content (the future Unit 3 of Books 12-14) — displayable but never markable |
+
 ### CourseEnrollment
-Tracks a Person's progress through a Course.
+Tracks a Person's course-level progress. For a Ruhi book this is the **rollup** of the person's unit enrollments (maintained by the application layer); for JY texts and branch courses it is the whole-course status.
 
 | Field | Type | Notes |
 |---|---|---|
 | id | uuid | |
 | person_id | uuid → Person | |
 | course_id | uuid → Course | |
-| status | enum | `in_progress`, `completed` |
+| status | enum | `in_progress`, `partially_completed`, `completed` |
 | started_at | date | nullable |
 | completed_at | date | nullable |
 | nucleus_id | uuid → Nucleus | nullable — which nucleus context this course was taken in |
+
+### CourseUnitEnrollment
+Tracks a Person's progress through an individual Ruhi book unit. A person can mark a whole book complete, or mark specific units complete / partially complete.
+
+| Field | Type | Notes |
+|---|---|---|
+| id | uuid | |
+| person_id | uuid → Person | |
+| course_unit_id | uuid → CourseUnit | |
+| status | enum | `in_progress`, `partially_completed`, `completed` |
+| started_at | date | nullable |
+| completed_at | date | nullable |
+| nucleus_id | uuid → Nucleus | nullable — which nucleus context this unit was studied in |
+
+> **Future group workflows.** `nucleus_id` on both enrollment tables and `Activity.current_course_id` (which can now point at a JY text or branch course) leave room for future study-circle / JY-group completion workflows — marking a whole group complete while selecting which participants completed, partially completed, or did not complete — without further schema changes.
 
 ---
 
@@ -246,7 +277,9 @@ Cluster ──< Nucleus ──< Activity ──< ActivityParticipant >── Per
                                 └──< Session ──< SessionAttendance >── Person
 
 Person ──< NucleusEnrollment >── Nucleus    (engagement level is per-nucleus)
-Person ──< CourseEnrollment  >── Course     (progress per course)
+Person ──< CourseEnrollment  >── Course     (course-level progress)
+Person ──< CourseUnitEnrollment >── CourseUnit >── Course   (unit-level progress)
+Course ──< Course            (branch courses via parent_course_id)
 
 User (optional) ──── Person                (a user may also be a tracked person)
 User ──< UserPermission >── Cluster | Nucleus | Activity

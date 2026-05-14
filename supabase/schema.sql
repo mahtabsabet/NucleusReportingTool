@@ -27,8 +27,9 @@ create type permission_role_enum as enum (
   'activity_lead', 'viewer'
 );
 
-create type course_status_enum as enum (
-  'in_progress', 'completed'
+-- 3-state completion, shared by course-level and unit-level enrollments.
+create type completion_status_enum as enum (
+  'in_progress', 'partially_completed', 'completed'
 );
 
 create type event_log_type_enum as enum (
@@ -119,24 +120,65 @@ create table nucleus_enrollments (
   unique (person_id, nucleus_id)
 );
 
+-- The curriculum catalog. A course belongs to one of three streams:
+--   ruhi_main : the 14-book main sequence
+--   branch    : a branch course nested under a main-sequence book
+--               (parent_course_id points at Book 3 / Book 5)
+--   jysep     : a Junior Youth Spiritual Empowerment Program text
+--
+-- allows_whole_completion is false for books whose unit set is not
+-- yet finalized (Books 12-14 carry a placeholder Unit 3) — those
+-- can only ever be marked partially complete, never whole.
 create table courses (
-  id          uuid primary key default gen_random_uuid(),
-  name        text not null,
-  short_name  text not null,
-  description text,
-  "order"     int not null default 0,
-  is_active   boolean not null default true
+  id                      uuid primary key default gen_random_uuid(),
+  name                    text not null,
+  short_name              text not null,
+  description             text,
+  "order"                 int not null default 0,
+  stream                  text not null default 'ruhi_main'
+                          check (stream in ('ruhi_main', 'branch', 'jysep')),
+  parent_course_id        uuid references courses(id),
+  allows_whole_completion boolean not null default true,
+  is_active               boolean not null default true
+);
+
+-- Units of a Ruhi book. The count is NOT assumed to be 3 — Book 3
+-- has 2, Books 12-14 carry a placeholder. JY texts and branch
+-- courses have no units (tracked whole/partial at the course level).
+-- A placeholder unit reserves a slot for unreleased content and can
+-- be displayed but never marked complete.
+create table course_units (
+  id             uuid primary key default gen_random_uuid(),
+  course_id      uuid not null references courses(id),
+  name           text not null,
+  "order"        int not null default 0,
+  is_placeholder boolean not null default false,
+  unique (course_id, "order")
 );
 
 create table course_enrollments (
   id           uuid primary key default gen_random_uuid(),
   person_id    uuid not null references persons(id) on delete cascade,
   course_id    uuid not null references courses(id),
-  status       course_status_enum not null default 'in_progress',
+  status       completion_status_enum not null default 'in_progress',
   started_at   date,
   completed_at date,
   nucleus_id   uuid references nuclei(id),
   unique (person_id, course_id)
+);
+
+-- Per-person unit-level completion for Ruhi books. A book's course-
+-- level enrollment is kept as a rollup of its unit enrollments by
+-- the application layer (see syncCurriculumProgress).
+create table course_unit_enrollments (
+  id             uuid primary key default gen_random_uuid(),
+  person_id      uuid not null references persons(id) on delete cascade,
+  course_unit_id uuid not null references course_units(id),
+  status         completion_status_enum not null default 'in_progress',
+  started_at     date,
+  completed_at   date,
+  nucleus_id     uuid references nuclei(id),
+  unique (person_id, course_unit_id)
 );
 
 create table activities (
@@ -247,6 +289,9 @@ create index on sessions (activity_id);
 create index on sessions (date);
 create index on session_attendance (session_id);
 create index on course_enrollments (person_id);
+create index on course_unit_enrollments (person_id);
+create index on course_units (course_id);
+create index on courses (parent_course_id);
 create index on user_permissions (user_id);
 create index on event_log (nucleus_id);
 create index on event_log (person_id);
@@ -287,7 +332,9 @@ alter table nuclei             enable row level security;
 alter table persons            enable row level security;
 alter table nucleus_enrollments enable row level security;
 alter table courses            enable row level security;
+alter table course_units       enable row level security;
 alter table course_enrollments enable row level security;
+alter table course_unit_enrollments enable row level security;
 alter table activities         enable row level security;
 alter table activity_participants enable row level security;
 alter table sessions           enable row level security;
@@ -467,6 +514,13 @@ create policy "Authenticated users read active courses" on courses
 create policy "Admins manage courses" on courses
   for all using (is_admin());
 
+-- course_units
+create policy "Authenticated users read course units" on course_units
+  for select using (auth.uid() is not null);
+
+create policy "Admins manage course units" on course_units
+  for all using (is_admin());
+
 -- course_enrollments
 create policy "Read course enrollments in scope" on course_enrollments
   for select using (
@@ -486,6 +540,33 @@ create policy "Read course enrollments in scope" on course_enrollments
   );
 
 create policy "Activity leads and above manage course enrollments" on course_enrollments
+  for all using (
+    is_admin() or exists (
+      select 1 from user_permissions
+      where user_id = auth.uid()
+        and role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+    )
+  );
+
+-- course_unit_enrollments
+create policy "Read course unit enrollments in scope" on course_unit_enrollments
+  for select using (
+    is_admin()
+    or exists (
+      select 1 from nucleus_enrollments ne
+      where ne.person_id = course_unit_enrollments.person_id
+        and ne.deleted_at is null
+        and user_has_nucleus_access(ne.nucleus_id)
+    )
+    or exists (
+      select 1 from activity_participants ap
+      where ap.person_id = course_unit_enrollments.person_id
+        and ap.deleted_at is null
+        and user_has_activity_access(ap.activity_id)
+    )
+  );
+
+create policy "Activity leads and above manage course unit enrollments" on course_unit_enrollments
   for all using (
     is_admin() or exists (
       select 1 from user_permissions
@@ -708,14 +789,106 @@ create policy "Coordinators see managed user permissions" on user_permissions
 
 
 -- ============================================================
--- Seed: Courses catalog
+-- Seed: Curriculum catalog
+--   Ruhi main sequence (Books 1-14) + their units,
+--   branch courses nested under Book 3 / Book 5,
+--   and the Junior Youth Spiritual Empowerment Program texts.
 -- ============================================================
 
-insert into courses (name, short_name, "order", is_active) values
-  ('Book 1: Reflections on the Life of the Spirit',    'Book 1', 1, true),
-  ('Book 2: Arising to Serve',                          'Book 2', 2, true),
-  ('Book 3: Teaching Children''s Classes Grade 1',     'Book 3', 3, true),
-  ('Book 4: The Twin Manifestations',                   'Book 4', 4, true),
-  ('Book 5: Releasing the Powers of Junior Youth',      'Book 5', 5, true),
-  ('Book 6: Teaching the Cause',                        'Book 6', 6, true),
-  ('Book 7: Walking Together on a Path of Service',     'Book 7', 7, true);
+-- Ruhi main sequence. Books 12-14 cannot be marked whole-complete
+-- (their Unit 3 is a not-yet-released placeholder).
+insert into courses (name, short_name, "order", stream, allows_whole_completion, is_active) values
+  ('Book 1: Reflections on the Life of the Spirit',    'Book 1',  1,  'ruhi_main', true,  true),
+  ('Book 2: Arising to Serve',                         'Book 2',  2,  'ruhi_main', true,  true),
+  ('Book 3: Teaching Children''s Classes, Grade 1',    'Book 3',  3,  'ruhi_main', true,  true),
+  ('Book 4: The Twin Manifestations',                  'Book 4',  4,  'ruhi_main', true,  true),
+  ('Book 5: Releasing the Powers of Junior Youth',     'Book 5',  5,  'ruhi_main', true,  true),
+  ('Book 6: Teaching the Cause',                       'Book 6',  6,  'ruhi_main', true,  true),
+  ('Book 7: Walking Together on a Path of Service',    'Book 7',  7,  'ruhi_main', true,  true),
+  ('Book 8: The Covenant of Baha''u''llah',             'Book 8',  8,  'ruhi_main', true,  true),
+  ('Book 9: Gaining an Historical Perspective',        'Book 9',  9,  'ruhi_main', true,  true),
+  ('Book 10: Building Vibrant Communities',            'Book 10', 10, 'ruhi_main', true,  true),
+  ('Book 11: Material Means',                          'Book 11', 11, 'ruhi_main', true,  true),
+  ('Book 12: Family and the Community',                'Book 12', 12, 'ruhi_main', false, true),
+  ('Book 13: Engaging in Social Action',               'Book 13', 13, 'ruhi_main', false, true),
+  ('Book 14: Participating in Public Discourse',       'Book 14', 14, 'ruhi_main', false, true);
+
+-- Units of the main-sequence books.
+insert into course_units (course_id, "order", name, is_placeholder)
+select c.id, u.ord, u.unit_name, u.is_placeholder
+from (values
+  ('Book 1',  1, 'Understanding the Bahá''í Writings',                       false),
+  ('Book 1',  2, 'Prayer',                                                   false),
+  ('Book 1',  3, 'Life and Death',                                           false),
+  ('Book 2',  1, 'The Joy of Teaching',                                      false),
+  ('Book 2',  2, 'Uplifting Conversations',                                  false),
+  ('Book 2',  3, 'Deepening Themes',                                         false),
+  ('Book 3',  1, 'Some Principles of Bahá''í Education',                     false),
+  ('Book 3',  2, 'Lessons for Children''s Classes, Grade 1',                false),
+  ('Book 4',  1, 'The Greatness of This Day',                                false),
+  ('Book 4',  2, 'The Life of the Báb',                                      false),
+  ('Book 4',  3, 'The Life of Bahá''u''lláh',                                 false),
+  ('Book 5',  1, 'Life''s Springtime',                                       false),
+  ('Book 5',  2, 'An Age of Promise',                                        false),
+  ('Book 5',  3, 'Serving as an Animator',                                   false),
+  ('Book 6',  1, 'The Spiritual Nature of Teaching',                         false),
+  ('Book 6',  2, 'Qualities and Attitudes Essential for Teaching',           false),
+  ('Book 6',  3, 'The Act of Teaching',                                      false),
+  ('Book 7',  1, 'The Spiritual Dynamics of Advancing on a Path of Service', false),
+  ('Book 7',  2, 'Serving as a Tutor of the Institute Courses',              false),
+  ('Book 7',  3, 'Promoting the Arts at the Grassroots',                     false),
+  ('Book 8',  1, 'The Center of the Covenant and His Will and Testament',    false),
+  ('Book 8',  2, 'The Guardian of the Faith',                                false),
+  ('Book 8',  3, 'The Universal House of Justice',                           false),
+  ('Book 9',  1, 'The Eternal Covenant',                                     false),
+  ('Book 9',  2, 'Passage to Maturity',                                      false),
+  ('Book 9',  3, 'A Sacred Enterprise',                                      false),
+  ('Book 10', 1, 'Accompanying One Another on the Path of Service',          false),
+  ('Book 10', 2, 'Consultation',                                             false),
+  ('Book 10', 3, 'Dynamics of Service on an Area Teaching Committee',         false),
+  ('Book 11', 1, 'Giving: The Spiritual Basis of Prosperity',                false),
+  ('Book 11', 2, 'The Institution of the Fund',                              false),
+  ('Book 11', 3, 'The Law of Huqúqu''lláh',                                  false),
+  ('Book 12', 1, 'The Institution of Marriage',                              false),
+  ('Book 12', 2, 'An Expanding Conversation on the Education of Children',    false),
+  ('Book 12', 3, 'Unit 3 (placeholder — not yet released)',                  true),
+  ('Book 13', 1, 'Stirrings at the Grassroots',                              false),
+  ('Book 13', 2, 'Elements of a Conceptual Framework',                       false),
+  ('Book 13', 3, 'Unit 3 (placeholder — not yet released)',                  true),
+  ('Book 14', 1, 'The Nature of Our Contributions',                          false),
+  ('Book 14', 2, 'Dynamics of Our Participation',                            false),
+  ('Book 14', 3, 'Unit 3 (placeholder — not yet released)',                  true)
+) as u(short_name, ord, unit_name, is_placeholder)
+join courses c on c.short_name = u.short_name and c.stream = 'ruhi_main';
+
+-- Branch courses, nested under Book 3 and Book 5. They behave as
+-- independent courses for completion purposes.
+insert into courses (name, short_name, "order", stream, parent_course_id, allows_whole_completion, is_active)
+select b.name, b.short_name, b.ord, 'branch', c.id, true, true
+from (values
+  ('Book 3', 'Teaching Children''s Classes, Grade 2', 'Grade 2',         1),
+  ('Book 3', 'Teaching Children''s Classes, Grade 3', 'Grade 3',         2),
+  ('Book 3', 'Teaching Children''s Classes, Grade 4', 'Grade 4',         3),
+  ('Book 5', 'Initial Impulse',                       'Initial Impulse', 1),
+  ('Book 5', 'Widening Circle',                       'Widening Circle', 2)
+) as b(parent_short_name, name, short_name, ord)
+join courses c on c.short_name = b.parent_short_name and c.stream = 'ruhi_main';
+
+-- Junior Youth Spiritual Empowerment Program texts. Tracked
+-- whole/partial only — no units.
+insert into courses (name, short_name, "order", stream, allows_whole_completion, is_active) values
+  ('Breezes of Confirmation',          'Breezes of Confirmation',          1,  'jysep', true, true),
+  ('Wellspring of Joy',                'Wellspring of Joy',                2,  'jysep', true, true),
+  ('Habits of an Orderly Mind',        'Habits of an Orderly Mind',        3,  'jysep', true, true),
+  ('Glimmerings of Hope',              'Glimmerings of Hope',              4,  'jysep', true, true),
+  ('Walking the Straight Path',        'Walking the Straight Path',        5,  'jysep', true, true),
+  ('On Health and Well-Being',         'On Health and Well-Being',         6,  'jysep', true, true),
+  ('Learning About Excellence',        'Learning About Excellence',        7,  'jysep', true, true),
+  ('Drawing on the Power of the Word', 'Drawing on the Power of the Word', 8,  'jysep', true, true),
+  ('Thinking About Numbers',           'Thinking About Numbers',           9,  'jysep', true, true),
+  ('Observation and Insight',          'Observation and Insight',          10, 'jysep', true, true),
+  ('The Human Temple',                 'The Human Temple',                 11, 'jysep', true, true),
+  ('Making Sense of Data',             'Making Sense of Data',             12, 'jysep', true, true),
+  ('Spirit of Faith',                  'Spirit of Faith',                  13, 'jysep', true, true),
+  ('Power of the Holy Spirit',         'Power of the Holy Spirit',         14, 'jysep', true, true),
+  ('Rays of Light',                    'Rays of Light',                    15, 'jysep', true, true);

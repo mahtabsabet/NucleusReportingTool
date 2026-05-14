@@ -4,7 +4,8 @@ export type EngagementLevel = 'aware' | 'participating' | 'supporting' | 'coordi
 export type ActivityType = 'children_class' | 'junior_youth' | 'study_circle' | 'devotional' | 'fireside' | 'other';
 export type ParticipantRole = 'teacher' | 'animator' | 'tutor' | 'child' | 'junior_youth' | 'parent' | 'host' | 'attendee' | 'participant' | 'other';
 export type PermissionRole = 'cluster_coordinator' | 'nucleus_collaborator' | 'activity_lead' | 'viewer';
-export type CourseStatus = 'in_progress' | 'completed';
+export type CompletionStatus = 'in_progress' | 'partially_completed' | 'completed';
+export type CurriculumStream = 'ruhi_main' | 'branch' | 'jysep';
 export type ActivityLifecycleEnum = 'planned' | 'active' | 'completed' | 'cancelled';
 export type ActivitySchedulingModeEnum = 'structured_recurring' | 'sporadic_ongoing' | 'short_duration';
 export type EventLogType = 'activity_created' | 'participant_added' | 'participant_removed' | 'circle_movement' | 'course_completed' | 'course_started' | 'person_created' | 'person_deleted' | 'nucleus_created' | 'nucleus_deleted' | 'activity_deleted' | 'session_logged' | 'profile_updated' | 'permission_request_submitted' | 'permission_request_resolved' | 'user_role_changed' | 'user_deleted';
@@ -96,23 +97,50 @@ export interface Database {
           short_name: string;
           description: string | null;
           order: number;
+          stream: CurriculumStream;
+          parent_course_id: string | null;
+          allows_whole_completion: boolean;
           is_active: boolean;
         };
         Insert: Omit<Database['public']['Tables']['courses']['Row'], 'id'> & { id?: string };
         Update: Partial<Database['public']['Tables']['courses']['Insert']>;
+      };
+      course_units: {
+        Row: {
+          id: string;
+          course_id: string;
+          name: string;
+          order: number;
+          is_placeholder: boolean;
+        };
+        Insert: Omit<Database['public']['Tables']['course_units']['Row'], 'id'> & { id?: string };
+        Update: Partial<Database['public']['Tables']['course_units']['Insert']>;
       };
       course_enrollments: {
         Row: {
           id: string;
           person_id: string;
           course_id: string;
-          status: CourseStatus;
+          status: CompletionStatus;
           started_at: string | null;
           completed_at: string | null;
           nucleus_id: string | null;
         };
         Insert: Omit<Database['public']['Tables']['course_enrollments']['Row'], 'id'> & { id?: string };
         Update: Partial<Database['public']['Tables']['course_enrollments']['Insert']>;
+      };
+      course_unit_enrollments: {
+        Row: {
+          id: string;
+          person_id: string;
+          course_unit_id: string;
+          status: CompletionStatus;
+          started_at: string | null;
+          completed_at: string | null;
+          nucleus_id: string | null;
+        };
+        Insert: Omit<Database['public']['Tables']['course_unit_enrollments']['Row'], 'id'> & { id?: string };
+        Update: Partial<Database['public']['Tables']['course_unit_enrollments']['Insert']>;
       };
       activities: {
         Row: {

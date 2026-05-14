@@ -29,6 +29,7 @@ import { CompressedTimelineStrip } from './CompressedTimelineStrip';
 import { InNucleusNetworkView } from './InNucleusNetworkView';
 import { GlobalSearch } from './GlobalSearch';
 import { AccountMenu } from './AccountMenu';
+import { CurriculumProgressSummary } from './CurriculumProgressSummary';
 import { Activity, ActivitySchedulingMode } from '../types';
 import {
   fetchNucleus,
@@ -341,6 +342,7 @@ export function NucleusDashboard() {
     .slice(0, 5);
 
   const topRuhiBooks = courses
+    .filter(course => course.stream === 'ruhi_main')
     .map(course => ({
       name: course.shortName || course.name,
       completed: people.filter(p =>
@@ -724,69 +726,18 @@ export function NucleusDashboard() {
                   </div>
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
-                    {/* Ruhi Books */}
+                    {/* Curriculum progress */}
                     <div>
                       <h3 className="text-xs font-bold text-gray-500 mb-5 flex items-center gap-2 uppercase tracking-widest">
                         <BookOpenIcon className="w-4 h-4 text-blue-500" />
-                        Ruhi Institute Progress
+                        Curriculum Progress
                       </h3>
-                      <div className="space-y-4">
-                        {courses.map(course => {
-                          const completed = people.filter(p =>
-                            p.courseEnrollments.some(ce => ce.courseId === course.id && ce.status === 'completed')
-                          );
-                          const inProgress = people.filter(p =>
-                            p.courseEnrollments.some(ce => ce.courseId === course.id && ce.status === 'in_progress')
-                          );
-                          if (completed.length === 0 && inProgress.length === 0) return null;
-                          return (
-                            <div key={course.id} className="bg-white border border-gray-200/80 rounded-xl p-5 shadow-sm hover:border-blue-200 transition-colors duration-200">
-                              <h4 className="font-semibold text-gray-900 text-sm mb-4">{course.name}</h4>
-                              <div className="space-y-3">
-                                {completed.length > 0 && (
-                                  <div className="flex items-start gap-3">
-                                    <div className="mt-0.5 bg-green-100 p-1 rounded-full">
-                                      <CheckCircleIcon className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
-                                    </div>
-                                    <div className="flex flex-wrap gap-2">
-                                      {completed.map(p => (
-                                        <button
-                                          key={p.id}
-                                          onClick={() => navigate(`/individual/${p.id}`)}
-                                          className="px-2.5 py-1 bg-green-50 text-green-700 border border-green-200/60 text-xs font-semibold rounded-md hover:bg-green-100 hover:border-green-300 transition-all duration-200"
-                                        >
-                                          {p.name}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                                {inProgress.length > 0 && (
-                                  <div className="flex items-start gap-3">
-                                    <div className="mt-0.5 bg-blue-100 p-1 rounded-full">
-                                      <CircleIcon className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
-                                    </div>
-                                    <div className="flex flex-wrap gap-2">
-                                      {inProgress.map(p => (
-                                        <button
-                                          key={p.id}
-                                          onClick={() => navigate(`/individual/${p.id}`)}
-                                          className="px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200/60 text-xs font-semibold rounded-md hover:bg-blue-100 hover:border-blue-300 transition-all duration-200"
-                                        >
-                                          {p.name}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                        {people.every(p => p.courseEnrollments.length === 0) && (
-                          <p className="text-sm text-gray-500 italic">No course progress recorded yet.</p>
-                        )}
-                      </div>
+                      <CurriculumProgressSummary
+                        courses={courses}
+                        people={people}
+                        onPersonClick={pid => navigate(`/individual/${pid}`)}
+                        emptyLabel="No course progress recorded yet."
+                      />
                     </div>
 
                     {/* Capacities */}
