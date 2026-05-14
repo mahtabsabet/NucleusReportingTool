@@ -75,11 +75,14 @@ export function pickDistinguishingLabels(
     chosen[m.id] = candidates[m.id].length > 0 ? [candidates[m.id][0]] : [];
   }
 
-  // Step 2: while any group of rows share an identical signature, expand
-  // every member of the group at once with the next unused candidate.
-  // Expanding all members of a clash together (not just one) keeps the
-  // dropdown visually symmetric — a reader shouldn't have to wonder why
-  // one "John — Springbank" row has extra info and another doesn't.
+  // Step 2: while any group of rows shares an identical signature, expand
+  // every member of the group together. Crucially, prefer candidate labels
+  // that *differ* across the tied group — labels common to every member
+  // (e.g. the same nucleus and same activity) can never break the tie, so
+  // they're skipped in favour of whatever does (e.g. age group). This is
+  // why two "Zaphod — Nucleus 1 — Study Circle A" rows don't repeat: the
+  // tie is broken with "Adult" vs "Junior Youth" instead of more shared
+  // context.
   const sig = (id: string) => chosen[id].join(' • ');
   for (let pass = 1; pass < maxLabelsPerRow; pass++) {
     const groups = new Map<string, string[]>();
@@ -92,9 +95,28 @@ export function pickDistinguishingLabels(
     let added = false;
     for (const ids of groups.values()) {
       if (ids.length < 2) continue;
+
+      // Labels every member of this tied group also has — these are
+      // useless for distinguishing the group, even if they sit higher in
+      // the priority order. Build the intersection of their full candidate
+      // lists.
+      const sets = ids.map(id => new Set(candidates[id]));
+      const commonAcrossGroup = new Set<string>();
+      if (sets.length > 0) {
+        for (const label of sets[0]) {
+          if (sets.every(s => s.has(label))) commonAcrossGroup.add(label);
+        }
+      }
+
       for (const id of ids) {
         const used = new Set(chosen[id]);
-        const next = candidates[id].find(l => !used.has(l));
+        // Prefer the first candidate that actually distinguishes this row
+        // from at least one of its tied siblings. Only fall back to a
+        // common label if no distinguishing label is available.
+        const distinguishing = candidates[id].find(
+          l => !used.has(l) && !commonAcrossGroup.has(l)
+        );
+        const next = distinguishing ?? candidates[id].find(l => !used.has(l));
         if (next) {
           chosen[id].push(next);
           added = true;

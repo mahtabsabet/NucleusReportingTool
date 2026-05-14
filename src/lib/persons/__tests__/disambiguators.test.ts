@@ -138,6 +138,32 @@ describe('pickDistinguishingLabels', () => {
     expect(out.b).toContain('Junior Youth');
   });
 
+  it('skips shared candidates and prefers ones that actually differ', () => {
+    // Both Zaphods share the same nucleus AND the same activity, but
+    // differ on age group. With a fixed-priority algorithm the second
+    // label would be the (shared) activity name and the rows would
+    // still look identical. We expect the picker to skip past shared
+    // candidates and surface the differing age group instead.
+    const out = pickDistinguishingLabels([
+      ctx({
+        id: 'a',
+        nucleusNames: ['Nucleus 1'],
+        activityNames: ['Study Circle A'],
+        ageGroup: 'adult',
+      }),
+      ctx({
+        id: 'b',
+        nucleusNames: ['Nucleus 1'],
+        activityNames: ['Study Circle A'],
+        ageGroup: 'junior_youth',
+        isMinor: true,
+      }),
+    ]);
+    expect(out.a).toContain('Adult');
+    expect(out.b).toContain('Junior Youth');
+    expect(out.a.join(' ')).not.toBe(out.b.join(' '));
+  });
+
   it('never assigns more than maxLabelsPerRow labels', () => {
     const out = pickDistinguishingLabels([
       ctx({ id: 'a', nucleusNames: ['N1'], activityNames: ['A1'], ageGroup: 'adult' }),

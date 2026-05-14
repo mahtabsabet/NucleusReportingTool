@@ -210,16 +210,26 @@ export function computeEnrollmentDiff(
 // Returns the matching persons enriched with the structural data the UI
 // needs to render contextual disambiguators (so two "John"s can be told
 // apart without inventing fake distinguishers like "John2").
-export async function searchPersonsByName(query: string): Promise<PersonSearchMatch[]> {
-  if (!query.trim()) return [];
+// Escape PostgREST `ilike` wildcards so a stray % or _ in user input
+// doesn't broaden the match unexpectedly.
+function escapeIlike(input: string): string {
+  return input.replace(/[\\%_]/g, m => `\\${m}`);
+}
+
+export async function searchPersonsByName(
+  query: string,
+  options: { limit?: number } = {},
+): Promise<PersonSearchMatch[]> {
+  const trimmed = query.trim();
+  if (!trimmed) return [];
 
   const { data } = await supabase
     .from('persons')
     .select('id, name, age_group, is_minor, profile_status')
-    .ilike('name', `%${query.trim()}%`)
+    .ilike('name', `%${escapeIlike(trimmed)}%`)
     .is('deleted_at', null)
     .order('name')
-    .limit(10);
+    .limit(options.limit ?? 10);
 
   const rows = (data ?? []) as Array<{
     id: string;
