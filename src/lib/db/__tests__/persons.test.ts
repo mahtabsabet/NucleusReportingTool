@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeEnrollmentDiff } from '../persons';
+import { computeEnrollmentDiff, computeUnitEnrollmentDiff } from '../persons';
 
 describe('computeEnrollmentDiff', () => {
   it('returns empty diff when current and desired are identical', () => {
@@ -83,5 +83,50 @@ describe('computeEnrollmentDiff', () => {
     expect(diff.idsToDelete).toEqual([]);
     expect(diff.toInsert).toEqual([]);
     expect(diff.toUpdate).toEqual([]);
+  });
+
+  it('treats partially_completed as a distinct status', () => {
+    const current = [{ id: '1', course_id: 'course-a', status: 'in_progress' }];
+    const desired = [{ courseId: 'course-a', status: 'partially_completed' as const }];
+
+    const diff = computeEnrollmentDiff(current, desired);
+
+    expect(diff.toUpdate).toEqual([
+      { id: '1', courseId: 'course-a', newStatus: 'partially_completed' },
+    ]);
+    expect(diff.idsToDelete).toEqual([]);
+    expect(diff.toInsert).toEqual([]);
+  });
+});
+
+describe('computeUnitEnrollmentDiff', () => {
+  it('returns empty diff when current and desired match', () => {
+    const current = [{ id: '1', course_unit_id: 'unit-a', status: 'completed' }];
+    const desired = [{ courseUnitId: 'unit-a', status: 'completed' as const }];
+
+    const diff = computeUnitEnrollmentDiff(current, desired);
+
+    expect(diff.idsToDelete).toEqual([]);
+    expect(diff.toInsert).toEqual([]);
+    expect(diff.toUpdate).toEqual([]);
+  });
+
+  it('handles a mix of delete, insert, and update keyed on course_unit_id', () => {
+    const current = [
+      { id: '1', course_unit_id: 'unit-a', status: 'in_progress' },
+      { id: '2', course_unit_id: 'unit-b', status: 'completed' },
+    ];
+    const desired = [
+      { courseUnitId: 'unit-a', status: 'partially_completed' as const },
+      { courseUnitId: 'unit-c', status: 'in_progress' as const },
+    ];
+
+    const diff = computeUnitEnrollmentDiff(current, desired);
+
+    expect(diff.idsToDelete).toEqual(['2']);
+    expect(diff.toInsert).toEqual([{ courseUnitId: 'unit-c', status: 'in_progress' }]);
+    expect(diff.toUpdate).toEqual([
+      { id: '1', courseUnitId: 'unit-a', newStatus: 'partially_completed' },
+    ]);
   });
 });

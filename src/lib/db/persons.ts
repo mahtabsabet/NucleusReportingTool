@@ -1,7 +1,7 @@
 import { supabase } from '../supabase';
 import { actionPermission, activityLeadActivityIds } from '../permissions';
 import { getCallerContext } from './users';
-import type { AgeGroup, ProfileStatus } from '../database.types';
+import type { AgeGroup, ProfileStatus, CompletionStatus } from '../database.types';
 import {
   isMinorForAgeGroup,
   pickDistinguishingLabels,
@@ -20,10 +20,20 @@ export interface PersonDetail {
   notes: string;
   photoUrl: string | null;
   nuclei: Array<{ id: string; name: string }>;
+  // Course-level progress. For a Ruhi book this is the rollup of its
+  // unit enrollments (maintained by syncCurriculumProgress); for JY
+  // texts and branch courses it is the whole-course status.
   courseEnrollments: Array<{
     courseId: string;
     courseName: string;
-    status: 'in_progress' | 'completed';
+    status: CompletionStatus;
+  }>;
+  // Unit-level progress for Ruhi books.
+  unitEnrollments: Array<{
+    courseUnitId: string;
+    courseId: string;
+    unitName: string;
+    status: CompletionStatus;
   }>;
   activities: Array<{
     activityId: string;
@@ -46,7 +56,7 @@ export interface PersonSearchMatch {
 }
 
 export async function fetchPersonDetail(personId: string): Promise<PersonDetail | null> {
-  const [personRes, nucleiRes, coursesRes, activitiesRes] = await Promise.all([
+  const [personRes, nucleiRes, coursesRes, unitsRes, activitiesRes] = await Promise.all([
     supabase
       .from('persons')
       .select('id, name, age_group, is_minor, profile_status, email, phone, capacities, notes, profile_image_url')
@@ -61,6 +71,10 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
     supabase
       .from('course_enrollments')
       .select('course_id, status, courses(id, name)')
+      .eq('person_id', personId),
+    supabase
+      .from('course_unit_enrollments')
+      .select('course_unit_id, status, course_units(id, name, course_id)')
       .eq('person_id', personId),
     supabase
       .from('activity_participants')
@@ -90,7 +104,13 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
     courseEnrollments: ((coursesRes.data ?? []) as any[]).map((ce: any) => ({
       courseId: ce.course_id,
       courseName: ce.courses?.name ?? ce.course_id,
-      status: ce.status as 'in_progress' | 'completed',
+      status: ce.status as CompletionStatus,
+    })),
+    unitEnrollments: ((unitsRes.data ?? []) as any[]).map((ue: any) => ({
+      courseUnitId: ue.course_unit_id,
+      courseId: ue.course_units?.course_id ?? '',
+      unitName: ue.course_units?.name ?? ue.course_unit_id,
+      status: ue.status as CompletionStatus,
     })),
     activities: ((activitiesRes.data ?? []) as any[]).map((ap: any) => ({
       activityId: ap.activity_id,
@@ -175,13 +195,13 @@ export async function uploadProfilePhoto(personId: string, file: File): Promise<
 
 export interface EnrollmentDiff {
   idsToDelete: string[];
-  toInsert: Array<{ courseId: string; status: 'in_progress' | 'completed' }>;
-  toUpdate: Array<{ id: string; courseId: string; newStatus: 'in_progress' | 'completed' }>;
+  toInsert: Array<{ courseId: string; status: CompletionStatus }>;
+  toUpdate: Array<{ id: string; courseId: string; newStatus: CompletionStatus }>;
 }
 
 export function computeEnrollmentDiff(
   current: Array<{ id: string; course_id: string; status: string }>,
-  desired: Array<{ courseId: string; status: 'in_progress' | 'completed' }>
+  desired: Array<{ courseId: string; status: CompletionStatus }>
 ): EnrollmentDiff {
   const currentMap = new Map(current.map(e => [e.course_id, e]));
   const desiredMap = new Map(desired.map(d => [d.courseId, d.status]));
@@ -201,6 +221,42 @@ export function computeEnrollmentDiff(
       }
     } else {
       toInsert.push({ courseId, status });
+    }
+  }
+
+  return { idsToDelete, toInsert, toUpdate };
+}
+
+export interface UnitEnrollmentDiff {
+  idsToDelete: string[];
+  toInsert: Array<{ courseUnitId: string; status: CompletionStatus }>;
+  toUpdate: Array<{ id: string; courseUnitId: string; newStatus: CompletionStatus }>;
+}
+
+// Same shape as computeEnrollmentDiff, keyed on course_unit_id — the
+// unit-level analogue used to reconcile course_unit_enrollments.
+export function computeUnitEnrollmentDiff(
+  current: Array<{ id: string; course_unit_id: string; status: string }>,
+  desired: Array<{ courseUnitId: string; status: CompletionStatus }>
+): UnitEnrollmentDiff {
+  const currentMap = new Map(current.map(e => [e.course_unit_id, e]));
+  const desiredMap = new Map(desired.map(d => [d.courseUnitId, d.status]));
+
+  const idsToDelete = current
+    .filter(e => !desiredMap.has(e.course_unit_id))
+    .map(e => e.id);
+
+  const toInsert: UnitEnrollmentDiff['toInsert'] = [];
+  const toUpdate: UnitEnrollmentDiff['toUpdate'] = [];
+
+  for (const { courseUnitId, status } of desired) {
+    const existing = currentMap.get(courseUnitId);
+    if (existing) {
+      if (existing.status !== status) {
+        toUpdate.push({ id: existing.id, courseUnitId, newStatus: status });
+      }
+    } else {
+      toInsert.push({ courseUnitId, status });
     }
   }
 
@@ -463,10 +519,61 @@ export async function deletePerson(personId: string): Promise<void> {
   }
 }
 
-export async function syncCourseEnrollments(
+export interface CurriculumProgressInput {
+  // Course-level desired state: whole Ruhi books, JY texts, branch
+  // courses. For Ruhi books the caller passes the rollup status
+  // derived from the book's units (see deriveBookStatus).
+  courses: Array<{ courseId: string; status: CompletionStatus }>;
+  // Unit-level desired state for Ruhi book units.
+  units: Array<{ courseUnitId: string; status: CompletionStatus }>;
+}
+
+// Reconciles a person's curriculum progress against the desired state
+// in one pass: unit-level enrollments and course-level enrollments
+// (the latter including the rollup of a Ruhi book's unit progress).
+// Course-level transitions are mirrored into the append-only event
+// log; unit-level changes are not — the log has no unit-grained
+// event type yet.
+export async function syncCurriculumProgress(
   personId: string,
-  desired: Array<{ courseId: string; status: 'in_progress' | 'completed' }>
+  desired: CurriculumProgressInput
 ): Promise<void> {
+  const now = new Date().toISOString();
+
+  // --- Unit-level enrollments ------------------------------------
+  const { data: currentUnits } = await supabase
+    .from('course_unit_enrollments')
+    .select('id, course_unit_id, status')
+    .eq('person_id', personId);
+
+  const unitDiff = computeUnitEnrollmentDiff(
+    (currentUnits ?? []) as Array<{ id: string; course_unit_id: string; status: string }>,
+    desired.units
+  );
+
+  if (unitDiff.idsToDelete.length > 0) {
+    await supabase.from('course_unit_enrollments').delete().in('id', unitDiff.idsToDelete);
+  }
+  for (const { id, newStatus } of unitDiff.toUpdate) {
+    await supabase
+      .from('course_unit_enrollments')
+      .update({
+        status: newStatus,
+        completed_at: newStatus === 'completed' ? now : null,
+      })
+      .eq('id', id);
+  }
+  for (const { courseUnitId, status } of unitDiff.toInsert) {
+    await supabase.from('course_unit_enrollments').insert({
+      person_id: personId,
+      course_unit_id: courseUnitId,
+      status,
+      started_at: now,
+      completed_at: status === 'completed' ? now : null,
+    });
+  }
+
+  // --- Course-level enrollments ----------------------------------
   const { data: current } = await supabase
     .from('course_enrollments')
     .select('id, course_id, status')
@@ -474,7 +581,7 @@ export async function syncCourseEnrollments(
 
   const { idsToDelete, toInsert, toUpdate } = computeEnrollmentDiff(
     (current ?? []) as Array<{ id: string; course_id: string; status: string }>,
-    desired
+    desired.courses
   );
 
   if (idsToDelete.length > 0) {
@@ -489,7 +596,7 @@ export async function syncCourseEnrollments(
       .from('course_enrollments')
       .update({
         status: newStatus,
-        completed_at: newStatus === 'completed' ? new Date().toISOString() : null,
+        completed_at: newStatus === 'completed' ? now : null,
       })
       .eq('id', id);
     if (newStatus === 'completed') newlyCompleted.push(courseId);
@@ -500,8 +607,8 @@ export async function syncCourseEnrollments(
       person_id: personId,
       course_id: courseId,
       status,
-      started_at: new Date().toISOString(),
-      completed_at: status === 'completed' ? new Date().toISOString() : null,
+      started_at: now,
+      completed_at: status === 'completed' ? now : null,
     });
     if (status === 'completed') newlyCompleted.push(courseId);
     else newlyStarted.push(courseId);

@@ -1,11 +1,15 @@
 import { supabase } from '../supabase';
+import type {
+  Course,
+  CourseUnit,
+  CompletionStatus,
+  CurriculumStream,
+} from '../curriculum';
 
-export interface CourseRow {
-  id: string;
-  name: string;
-  shortName: string;
-  order: number;
-}
+export type { Course, CourseUnit, CompletionStatus, CurriculumStream };
+
+// Back-compat alias: dashboards consume the flat course shape.
+export type CourseRow = Course;
 
 export interface PersonProfile {
   id: string;
@@ -14,18 +18,83 @@ export interface PersonProfile {
   courseEnrollments: Array<{
     courseId: string;
     courseName: string;
-    status: 'in_progress' | 'completed';
+    status: CompletionStatus;
   }>;
 }
 
-export async function fetchCourses(): Promise<CourseRow[]> {
-  const { data, error } = await supabase
-    .from('courses')
-    .select('id, name, short_name, order')
-    .eq('is_active', true)
-    .order('order');
-  if (error) throw error;
-  return data.map(c => ({ id: c.id, name: c.name, shortName: c.short_name, order: c.order }));
+// PostgREST reports a missing column as 42703 and a missing table as
+// 42P01 (it also varies the message wording). A database that hasn't
+// run the curriculum migration yet lacks the new course columns and
+// the course_units table — we tolerate that and render a degraded
+// catalog rather than letting the loader reject. Same defensive
+// posture as the activity-column fallback in nucleus.ts.
+function isMissingSchemaError(err: any): boolean {
+  if (!err) return false;
+  if (err.code === '42703' || err.code === '42P01') return true;
+  const msg = String(err.message ?? '');
+  return /does not exist/i.test(msg) || /could not find the table/i.test(msg);
+}
+
+// Fetches the full curriculum catalog as a flat list of courses, each
+// carrying its units. Call buildCurriculum() to nest branch courses
+// and group by stream for display.
+export async function fetchCourses(): Promise<Course[]> {
+  const [coursesRes, unitsRes] = await Promise.all([
+    supabase
+      .from('courses')
+      .select('id, name, short_name, order, stream, parent_course_id, allows_whole_completion')
+      .eq('is_active', true)
+      .order('order'),
+    supabase
+      .from('course_units')
+      .select('id, course_id, name, order, is_placeholder')
+      .order('order'),
+  ]);
+
+  // Pre-migration database: retry courses with just the legacy columns.
+  let courseRows = coursesRes.data;
+  if (coursesRes.error) {
+    if (!isMissingSchemaError(coursesRes.error)) throw coursesRes.error;
+    const legacy = await supabase
+      .from('courses')
+      .select('id, name, short_name, order')
+      .eq('is_active', true)
+      .order('order');
+    if (legacy.error) throw legacy.error;
+    courseRows = legacy.data;
+  }
+
+  // Pre-migration database: no course_units table — render books
+  // without units rather than failing.
+  let unitRows = unitsRes.data ?? [];
+  if (unitsRes.error) {
+    if (!isMissingSchemaError(unitsRes.error)) throw unitsRes.error;
+    unitRows = [];
+  }
+
+  const unitsByCourse = new Map<string, CourseUnit[]>();
+  for (const u of unitRows as any[]) {
+    const arr = unitsByCourse.get(u.course_id) ?? [];
+    arr.push({
+      id: u.id,
+      courseId: u.course_id,
+      name: u.name,
+      order: u.order,
+      isPlaceholder: !!u.is_placeholder,
+    });
+    unitsByCourse.set(u.course_id, arr);
+  }
+
+  return ((courseRows ?? []) as any[]).map(c => ({
+    id: c.id,
+    name: c.name,
+    shortName: c.short_name,
+    order: c.order,
+    stream: (c.stream ?? 'ruhi_main') as CurriculumStream,
+    parentCourseId: c.parent_course_id ?? null,
+    allowsWholeCompletion: c.allows_whole_completion ?? true,
+    units: (unitsByCourse.get(c.id) ?? []).sort((a, b) => a.order - b.order),
+  }));
 }
 
 export async function fetchPersonsForCluster(clusterId: string | null): Promise<PersonProfile[]> {
@@ -60,7 +129,7 @@ export async function fetchPersonsForCluster(clusterId: string | null): Promise<
     courseEnrollments: (p.course_enrollments ?? []).map((ce: any) => ({
       courseId: ce.courses?.id ?? '',
       courseName: ce.courses?.name ?? '',
-      status: ce.status as 'in_progress' | 'completed',
+      status: ce.status as CompletionStatus,
     })),
   }));
 }

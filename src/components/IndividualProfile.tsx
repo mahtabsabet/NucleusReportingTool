@@ -2,8 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeftIcon,
-  CheckCircleIcon,
-  CircleIcon,
   ClockIcon,
   EditIcon,
   PlusIcon,
@@ -17,7 +15,7 @@ import {
   fetchPersonDetail,
   updatePersonBasic,
   updatePersonNotes,
-  syncCourseEnrollments,
+  syncCurriculumProgress,
   personDeletePermission,
   deletePerson,
   uploadProfilePhoto,
@@ -30,10 +28,17 @@ import {
 } from '../lib/persons/disambiguators';
 import type { AgeGroup, ProfileStatus } from '../lib/database.types';
 import { submitPermissionRequest } from '../lib/db/requests';
-import { fetchCourses, type CourseRow } from '../lib/db/clusterProfile';
+import { fetchCourses } from '../lib/db/clusterProfile';
+import {
+  buildCurriculum,
+  deriveBookStatus,
+  type Course,
+  type CompletionStatus,
+} from '../lib/curriculum';
 import { getCallerContext } from '../lib/db/users';
 import { isRegionalOnly } from '../lib/permissions';
 import { GlobalSearch } from './GlobalSearch';
+import { CurriculumProgress } from './CurriculumProgress';
 
 const ROLE_DISPLAY: Record<string, string> = {
   teacher: 'Teacher',
@@ -48,26 +53,22 @@ const ROLE_DISPLAY: Record<string, string> = {
   other: 'Other',
 };
 
-type EditCourseStatus = 'in_progress' | 'completed';
-
-interface EditCourse {
-  courseId: string;
-  courseName: string;
-  status: EditCourseStatus;
-}
-
 export function IndividualProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
   const [person, setPerson] = useState<PersonDetail | null>(null);
-  const [allCourses, setAllCourses] = useState<CourseRow[]>([]);
+  const [allCourses, setAllCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
   const [editCapacities, setEditCapacities] = useState<string[]>([]);
-  const [editCourses, setEditCourses] = useState<EditCourse[]>([]);
+  // Explicit course-level marks (whole Ruhi book / JY text / branch
+  // course) and unit-level marks, keyed by id. The book rollup written
+  // to course_enrollments is derived from these at save time.
+  const [editCourseStatuses, setEditCourseStatuses] = useState<Map<string, CompletionStatus>>(new Map());
+  const [editUnitStatuses, setEditUnitStatuses] = useState<Map<string, CompletionStatus>>(new Map());
   const [editAgeGroup, setEditAgeGroup] = useState<AgeGroup>('unknown');
   const [editMinorOverride, setEditMinorOverride] = useState(false);
   const [editProfileStatus, setEditProfileStatus] = useState<ProfileStatus>('provisional');
@@ -162,11 +163,19 @@ export function IndividualProfile() {
   const startEditing = () => {
     setEditName(person.name);
     setEditCapacities([...person.capacities]);
-    setEditCourses(person.courseEnrollments.map(ce => ({
-      courseId: ce.courseId,
-      courseName: ce.courseName,
-      status: ce.status,
-    })));
+    // Ruhi books are driven by their units; only standalone courses
+    // (JY texts, branch courses) carry an explicit course-level mark.
+    const standaloneCourseIds = new Set(
+      allCourses.filter(c => c.units.length === 0).map(c => c.id),
+    );
+    setEditCourseStatuses(
+      new Map(
+        person.courseEnrollments
+          .filter(ce => standaloneCourseIds.has(ce.courseId))
+          .map(ce => [ce.courseId, ce.status]),
+      ),
+    );
+    setEditUnitStatuses(new Map(person.unitEnrollments.map(ue => [ue.courseUnitId, ue.status])));
     setEditAgeGroup(person.ageGroup);
     setEditMinorOverride(person.isMinor);
     setEditProfileStatus(person.profileStatus);
@@ -190,13 +199,31 @@ export function IndividualProfile() {
         email: willBeMinor ? null : (editEmail.trim() || null),
         phone: willBeMinor ? null : (editPhone.trim() || null),
       });
-      await syncCourseEnrollments(id!, editCourses.map(c => ({ courseId: c.courseId, status: c.status })));
+      // Course-level desired state: for every course, the whole-course
+      // mark combined with its unit progress (deriveBookStatus). JY
+      // texts and branch courses have no units, so this is just their
+      // explicit mark.
+      const desiredUnits = Array.from(editUnitStatuses, ([courseUnitId, status]) => ({
+        courseUnitId,
+        status,
+      }));
+      const desiredCourses: Array<{ courseId: string; status: CompletionStatus }> = [];
+      for (const course of allCourses) {
+        const status = deriveBookStatus(course, editCourseStatuses.get(course.id), editUnitStatuses);
+        if (status) desiredCourses.push({ courseId: course.id, status });
+      }
+      await syncCurriculumProgress(id!, { courses: desiredCourses, units: desiredUnits });
+
       let savedPhotoUrl = photoUrl;
       if (editPhotoFile) {
         savedPhotoUrl = await uploadProfilePhoto(id!, editPhotoFile);
         setPhotoUrl(savedPhotoUrl);
       }
       // Reflect changes locally without a full refetch
+      const courseNameById = new Map(allCourses.map(c => [c.id, c.name]));
+      const unitInfoById = new Map(
+        allCourses.flatMap(c => c.units.map(u => [u.id, { name: u.name, courseId: c.id }] as const)),
+      );
       setPerson(prev => prev ? {
         ...prev,
         name: editName,
@@ -207,10 +234,16 @@ export function IndividualProfile() {
         email: willBeMinor ? null : (editEmail.trim() || null),
         phone: willBeMinor ? null : (editPhone.trim() || null),
         photoUrl: savedPhotoUrl,
-        courseEnrollments: editCourses.map(c => ({
-          courseId: c.courseId,
-          courseName: c.courseName,
-          status: c.status,
+        courseEnrollments: desiredCourses.map(dc => ({
+          courseId: dc.courseId,
+          courseName: courseNameById.get(dc.courseId) ?? dc.courseId,
+          status: dc.status,
+        })),
+        unitEnrollments: desiredUnits.map(du => ({
+          courseUnitId: du.courseUnitId,
+          courseId: unitInfoById.get(du.courseUnitId)?.courseId ?? '',
+          unitName: unitInfoById.get(du.courseUnitId)?.name ?? du.courseUnitId,
+          status: du.status,
         })),
       } : prev);
       setEditPhotoFile(null);
@@ -245,31 +278,35 @@ export function IndividualProfile() {
     setEditCapacities(prev => prev.filter((_, i) => i !== idx));
   };
 
-  // Cycles: none → in_progress → completed → remove
-  const toggleCourse = (courseId: string, courseName: string) => {
-    const existing = editCourses.find(c => c.courseId === courseId);
-    if (!existing) {
-      setEditCourses(prev => [...prev, { courseId, courseName, status: 'in_progress' }]);
-    } else if (existing.status === 'in_progress') {
-      setEditCourses(prev => prev.map(c => c.courseId === courseId ? { ...c, status: 'completed' } : c));
-    } else {
-      setEditCourses(prev => prev.filter(c => c.courseId !== courseId));
-    }
+  const setCourseStatus = (courseId: string, status: CompletionStatus | undefined) => {
+    setEditCourseStatuses(prev => {
+      const next = new Map(prev);
+      if (status) next.set(courseId, status);
+      else next.delete(courseId);
+      return next;
+    });
   };
 
-  const getCourseStatus = (courseId: string): 'completed' | 'in_progress' | 'none' =>
-    editCourses.find(c => c.courseId === courseId)?.status ?? 'none';
+  const setUnitStatus = (courseUnitId: string, status: CompletionStatus | undefined) => {
+    setEditUnitStatuses(prev => {
+      const next = new Map(prev);
+      if (status) next.set(courseUnitId, status);
+      else next.delete(courseUnitId);
+      return next;
+    });
+  };
 
   const displayName = editing ? editName : person.name;
   const initials = displayName.split(' ').map(n => n[0]).join('').toUpperCase();
-
-  const completedCourses = editing
-    ? editCourses.filter(c => c.status === 'completed')
-    : person.courseEnrollments.filter(c => c.status === 'completed');
-  const inProgressCourses = editing
-    ? editCourses.filter(c => c.status === 'in_progress')
-    : person.courseEnrollments.filter(c => c.status === 'in_progress');
   const capacities = editing ? editCapacities : person.capacities;
+
+  const curriculum = buildCurriculum(allCourses);
+  const courseStatuses = editing
+    ? editCourseStatuses
+    : new Map(person.courseEnrollments.map(ce => [ce.courseId, ce.status]));
+  const unitStatuses = editing
+    ? editUnitStatuses
+    : new Map(person.unitEnrollments.map(ue => [ue.courseUnitId, ue.status]));
 
   return (
     <div className="min-h-screen bg-gray-50/50 font-sans">
@@ -716,95 +753,20 @@ export function IndividualProfile() {
               </div>
             </div>
 
-            {/* Right: Courses */}
+            {/* Right: Curriculum progress */}
             <div className="space-y-8">
               <div>
                 <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-4">
-                  Ruhi Institute Courses
+                  Curriculum Progress
                 </h2>
-
-                {editing ? (
-                  <div className="space-y-2.5">
-                    {allCourses.map(course => {
-                      const status = getCourseStatus(course.id);
-                      return (
-                        <button
-                          key={course.id}
-                          onClick={() => toggleCourse(course.id, course.name)}
-                          className={`w-full text-left flex items-center gap-3 px-4 py-3 rounded-xl border transition-all duration-200 ${
-                            status === 'completed'
-                              ? 'bg-green-50 border-green-200 text-green-800 shadow-sm'
-                              : status === 'in_progress'
-                              ? 'bg-blue-50 border-blue-200 text-blue-800 shadow-sm'
-                              : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50'
-                          }`}
-                        >
-                          {status === 'completed' && (
-                            <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0" />
-                          )}
-                          {status === 'in_progress' && (
-                            <CircleIcon className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                          )}
-                          {status === 'none' && (
-                            <CircleIcon className="w-5 h-5 text-gray-300 flex-shrink-0" />
-                          )}
-                          <span className="text-sm font-medium">{course.name}</span>
-                          <span className="ml-auto text-xs font-semibold opacity-60 uppercase tracking-wider">
-                            {status === 'none'
-                              ? 'Click: In Progress'
-                              : status === 'in_progress'
-                              ? 'Click: Complete'
-                              : 'Click: Remove'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="space-y-6">
-                    {completedCourses.length > 0 && (
-                      <div>
-                        <h3 className="text-xs font-bold text-green-700 uppercase tracking-widest mb-3 flex items-center gap-2">
-                          <CheckCircleIcon className="w-4 h-4" /> Completed
-                        </h3>
-                        <ul className="space-y-2.5">
-                          {completedCourses.map(course => (
-                            <li
-                              key={course.courseId}
-                              className="flex items-start gap-3 text-gray-800 bg-green-50/50 border border-green-100 px-4 py-3 rounded-xl font-medium"
-                            >
-                              <CheckCircleIcon className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-                              <span>{course.courseName}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {inProgressCourses.length > 0 && (
-                      <div>
-                        <h3 className="text-xs font-bold text-blue-700 uppercase tracking-widest mb-3 flex items-center gap-2">
-                          <CircleIcon className="w-4 h-4" /> In Progress
-                        </h3>
-                        <ul className="space-y-2.5">
-                          {inProgressCourses.map(course => (
-                            <li
-                              key={course.courseId}
-                              className="flex items-start gap-3 text-gray-800 bg-blue-50/50 border border-blue-100 px-4 py-3 rounded-xl font-medium"
-                            >
-                              <CircleIcon className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                              <span>{course.courseName}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {completedCourses.length === 0 && inProgressCourses.length === 0 && (
-                      <p className="text-sm text-gray-400 italic bg-gray-50 border border-gray-100 px-4 py-3 rounded-xl">
-                        No courses recorded yet
-                      </p>
-                    )}
-                  </div>
-                )}
+                <CurriculumProgress
+                  curriculum={curriculum}
+                  editing={editing}
+                  courseStatuses={courseStatuses}
+                  unitStatuses={unitStatuses}
+                  onCourseStatusChange={setCourseStatus}
+                  onUnitStatusChange={setUnitStatus}
+                />
               </div>
             </div>
           </div>
