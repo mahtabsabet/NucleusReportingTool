@@ -7,15 +7,12 @@ on:
     branches: [main]
 
 # A push to a PR branch fires both the `push` and `pull_request`
-# events, which previously launched two e2e jobs that hammered the
-# same shared Supabase project at once — exhausting its auth/API rate
-# limits and producing flaky, non-deterministic failures. The `push`
-# event has an empty `head_ref` while `pull_request` sets it to the
-# source branch, so keying the group on `head_ref || ref_name`
-# collapses both events for a branch into one group; cancelling the
-# older run then guarantees a single e2e job per branch at a time.
+# events. The event name is part of the concurrency group so those
+# two runs stay independent — the branch-push run (unit only) and the
+# PR run (unit + e2e) no longer cancel each other, while a newer push
+# still supersedes its own older run of the same event type.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -38,6 +35,14 @@ jobs:
   e2e:
     name: Integration tests
     runs-on: ubuntu-latest
+    # Run e2e only on pull requests and on pushes to main — not on
+    # every push to every branch. The suite serializes through one
+    # shared Supabase project (see the job-level concurrency below),
+    # so enqueuing it on all ~60 active branches' pushes built a deep
+    # queue: a ~5-minute job could sit 15+ minutes waiting its turn.
+    # PR branches still get full e2e coverage via the pull_request
+    # event on every push; unit tests still run on every branch push.
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     # The e2e suite seeds and mutates ONE shared Supabase project, so
     # only one e2e job across the whole repo may run at a time —
     # otherwise concurrent runs on different branches stomp each
