@@ -22,6 +22,7 @@ jobs:
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       VITE_SUPABASE_URL: https://placeholder.supabase.co
       VITE_SUPABASE_ANON_KEY: placeholder
@@ -37,6 +38,19 @@ jobs:
   e2e:
     name: Integration tests
     runs-on: ubuntu-latest
+    # The e2e suite seeds and mutates ONE shared Supabase project, so
+    # only one e2e job across the whole repo may run at a time —
+    # otherwise concurrent runs on different branches stomp each
+    # other's seed data and produce flaky mass failures. This group is
+    # a separate, repo-wide scope from the per-branch workflow group
+    # above. cancel-in-progress is false so a queued run waits its turn
+    # rather than killing the run ahead of it.
+    concurrency:
+      group: e2e-shared-supabase
+      cancel-in-progress: false
+    # Caps a hung run (e.g. a wedged dev server or deadlocked test)
+    # instead of letting it sit until GitHub's 6-hour default.
+    timeout-minutes: 20
     env:
       VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
       VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}

@@ -900,6 +900,7 @@ export function NucleusDashboard() {
                             <span className="text-xs font-bold text-blue-600 flex-shrink-0">{b.completed}</span>
                           </div>
                         ))}
+                        <div className="text-sm text-gray-400 leading-none pt-0.5" aria-label="More on the Community Profile page">…</div>
                       </div>
                     ) : (
                       <p className="text-xs text-gray-400 italic">No progress yet</p>
@@ -917,6 +918,7 @@ export function NucleusDashboard() {
                             <span className="text-xs font-bold text-amber-600 flex-shrink-0">{c.count}</span>
                           </div>
                         ))}
+                        <div className="text-sm text-gray-400 leading-none pt-0.5" aria-label="More on the Community Profile page">…</div>
                       </div>
                     ) : (
                       <p className="text-xs text-gray-400 italic">No capacities yet</p>
