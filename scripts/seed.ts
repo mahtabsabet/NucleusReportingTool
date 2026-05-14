@@ -33,6 +33,13 @@ export const TEST_TIMELINE_EVENT_NAME = 'E2E Test Phase';
 // the perm test users below.
 export const E2E_MAIN_USER_PASSWORD = 'E2EMain123!';
 
+// Mirror of CURRENT_PRIVACY_POLICY_VERSION in src/lib/db/privacy.ts and
+// the literal returned by current_privacy_policy_version() in the
+// 20260513_privacy_acknowledgement migration. Bump all three together.
+// Test users are stamped with this value so the privacy gate doesn't
+// block e2e setup — fixtures don't acknowledge through the UI.
+const PRIVACY_POLICY_VERSION_FOR_SEED = '2026-05-13';
+
 // Permanent test users created (and kept) in dev for permission integration tests.
 // Credentials are fixed so permissions.setup.ts can log in without reading the DB.
 export const TEST_USERS = {
@@ -133,12 +140,24 @@ export async function seed() {
       .eq('id', testUser.id);
   }
 
+  // Stamp the privacy acknowledgement on the main test user so the gate
+  // doesn't block auth.setup.ts. Real users have to confirm through the
+  // UI; fixtures get pre-acknowledged. Idempotent — run on every seed.
+  await supabase
+    .from('profiles')
+    .update({
+      privacy_acknowledged_at: new Date().toISOString(),
+      privacy_policy_version_acknowledged: PRIVACY_POLICY_VERSION_FOR_SEED,
+    })
+    .eq('id', testUser.id);
+
   // Find or create each permanent permission test user. Like the main
   // test user above, passwords are re-set every run for idempotency.
   async function ensurePermUser(
     email: string, password: string, name: string,
   ): Promise<string> {
     const existing = allUsers.find(u => u.email === email);
+    let id: string;
     if (existing) {
       const { error: pwErr } = await supabase.auth.admin.updateUserById(existing.id, { password });
       if (pwErr) throw new Error(`Reset perm test user ${email} password: ${pwErr.message}`);
@@ -146,16 +165,27 @@ export async function seed() {
         .from('profiles')
         .update({ must_change_password: false })
         .eq('id', existing.id);
-      return existing.id;
+      id = existing.id;
+    } else {
+      const { data, error } = await supabase.auth.admin.createUser({
+        email, password,
+        user_metadata: { name },
+        email_confirm: true,
+      });
+      if (error) throw new Error(`Create perm test user ${email}: ${error.message}`);
+      await supabase.from('profiles').update({ name }).eq('id', data.user.id);
+      id = data.user.id;
     }
-    const { data, error } = await supabase.auth.admin.createUser({
-      email, password,
-      user_metadata: { name },
-      email_confirm: true,
-    });
-    if (error) throw new Error(`Create perm test user ${email}: ${error.message}`);
-    await supabase.from('profiles').update({ name }).eq('id', data.user.id);
-    return data.user.id;
+    // Pre-acknowledge the privacy policy so permissions.setup.ts isn't
+    // blocked by the gate. Same rationale as the main test user above.
+    await supabase
+      .from('profiles')
+      .update({
+        privacy_acknowledged_at: new Date().toISOString(),
+        privacy_policy_version_acknowledged: PRIVACY_POLICY_VERSION_FOR_SEED,
+      })
+      .eq('id', id);
+    return id;
   }
 
   const permIds = {
