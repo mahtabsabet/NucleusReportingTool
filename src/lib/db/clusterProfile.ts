@@ -22,6 +22,19 @@ export interface PersonProfile {
   }>;
 }
 
+// PostgREST reports a missing column as 42703 and a missing table as
+// 42P01 (it also varies the message wording). A database that hasn't
+// run the curriculum migration yet lacks the new course columns and
+// the course_units table — we tolerate that and render a degraded
+// catalog rather than letting the loader reject. Same defensive
+// posture as the activity-column fallback in nucleus.ts.
+function isMissingSchemaError(err: any): boolean {
+  if (!err) return false;
+  if (err.code === '42703' || err.code === '42P01') return true;
+  const msg = String(err.message ?? '');
+  return /does not exist/i.test(msg) || /could not find the table/i.test(msg);
+}
+
 // Fetches the full curriculum catalog as a flat list of courses, each
 // carrying its units. Call buildCurriculum() to nest branch courses
 // and group by stream for display.
@@ -37,11 +50,30 @@ export async function fetchCourses(): Promise<Course[]> {
       .select('id, course_id, name, order, is_placeholder')
       .order('order'),
   ]);
-  if (coursesRes.error) throw coursesRes.error;
-  if (unitsRes.error) throw unitsRes.error;
+
+  // Pre-migration database: retry courses with just the legacy columns.
+  let courseRows = coursesRes.data;
+  if (coursesRes.error) {
+    if (!isMissingSchemaError(coursesRes.error)) throw coursesRes.error;
+    const legacy = await supabase
+      .from('courses')
+      .select('id, name, short_name, order')
+      .eq('is_active', true)
+      .order('order');
+    if (legacy.error) throw legacy.error;
+    courseRows = legacy.data;
+  }
+
+  // Pre-migration database: no course_units table — render books
+  // without units rather than failing.
+  let unitRows = unitsRes.data ?? [];
+  if (unitsRes.error) {
+    if (!isMissingSchemaError(unitsRes.error)) throw unitsRes.error;
+    unitRows = [];
+  }
 
   const unitsByCourse = new Map<string, CourseUnit[]>();
-  for (const u of (unitsRes.data ?? []) as any[]) {
+  for (const u of unitRows as any[]) {
     const arr = unitsByCourse.get(u.course_id) ?? [];
     arr.push({
       id: u.id,
@@ -53,7 +85,7 @@ export async function fetchCourses(): Promise<Course[]> {
     unitsByCourse.set(u.course_id, arr);
   }
 
-  return ((coursesRes.data ?? []) as any[]).map(c => ({
+  return ((courseRows ?? []) as any[]).map(c => ({
     id: c.id,
     name: c.name,
     shortName: c.short_name,
