@@ -1086,9 +1086,24 @@ test.describe('timeline — notes and documents', () => {
     });
   });
 
-  // Regional viewers are not covered here: timeline_events doesn't yet
-  // have a Regional-read RLS policy (events are scoped via
-  // user_has_cluster_access, which excludes is_regional_viewer). Adding
-  // that read path is a separate enhancement; once it lands the NC test
-  // above can be mirrored for the regional role.
+  // Regional viewers CAN read timeline data as of migration
+  // 20260514_regional_viewer_timeline_read.sql (SELECT-only policies on
+  // timeline_events / timeline_item_notes), but still cannot attach
+  // notes — no write policy references is_regional_viewer().
+  //
+  // test.fixme until that migration is applied to the shared e2e
+  // Supabase project: without it, openTestEventDrawer's deep link times
+  // out because the regional user can't yet read the seeded
+  // timeline_events row. Flip .fixme → normal once the e2e DB is migrated.
+  test.describe('regional viewer can read notes but not attach them', () => {
+    test.use({ storageState: 'e2e/.auth/perm-regional.json' });
+
+    test.fixme('drawer opens for Regional but the add-note buttons are absent', async ({ page }) => {
+      await openTestEventDrawer(page);
+      await page.getByRole('button', { name: /notes & documents/i }).click();
+      await expect(page.getByRole('button', { name: /paste note/i })).not.toBeVisible();
+      await expect(page.getByRole('button', { name: /upload document/i })).not.toBeVisible();
+      await expect(page.getByRole('button', { name: /add link/i })).not.toBeVisible();
+    });
+  });
 });
