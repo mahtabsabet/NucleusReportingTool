@@ -1,8 +1,11 @@
 import { supabase } from '../supabase';
+import { searchPersonsByName } from './persons';
 
 export interface SearchPersonResult {
   id: string;
   name: string;
+  /** Short labels picked to distinguish same-name matches. */
+  disambiguators: string[];
 }
 
 export interface SearchNucleusResult {
@@ -46,14 +49,10 @@ export async function globalSearch(rawQuery: string): Promise<GlobalSearchResult
 
   const pattern = `%${escapeIlike(query)}%`;
 
-  const [peopleRes, nucleiRes, activitiesRes] = await Promise.all([
-    supabase
-      .from('persons')
-      .select('id, name')
-      .ilike('name', pattern)
-      .is('deleted_at', null)
-      .order('name')
-      .limit(PER_GROUP_LIMIT),
+  // Persons use the shared `searchPersonsByName` helper so global search and
+  // the activity-add combobox apply identical disambiguator rules.
+  const [peopleMatches, nucleiRes, activitiesRes] = await Promise.all([
+    searchPersonsByName(query, { limit: PER_GROUP_LIMIT }),
     supabase
       .from('nuclei')
       .select('id, name')
@@ -71,9 +70,10 @@ export async function globalSearch(rawQuery: string): Promise<GlobalSearchResult
       .limit(PER_GROUP_LIMIT),
   ]);
 
-  const people: SearchPersonResult[] = ((peopleRes.data ?? []) as any[]).map(p => ({
+  const people: SearchPersonResult[] = peopleMatches.map(p => ({
     id: p.id,
     name: p.name,
+    disambiguators: p.disambiguators,
   }));
 
   const nuclei: SearchNucleusResult[] = ((nucleiRes.data ?? []) as any[]).map(n => ({

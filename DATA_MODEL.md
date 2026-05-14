@@ -75,17 +75,23 @@ Anyone tracked in the system — a participant, teacher, parent, child, etc. Not
 
 | Field | Type | Notes |
 |---|---|---|
-| id | uuid | |
+| id | uuid | the only identifier — names are NOT unique |
 | name | text | first name only — see privacy note below |
 | email | text | nullable — never collect for minors |
 | phone | text | nullable — never collect for minors |
-| is_minor | boolean | default false — flags children and junior youth |
+| age_group | enum | `child`, `junior_youth`, `youth`, `adult`, `unknown` — program cohort |
+| is_minor | boolean | derived: always true for child/junior_youth, always false for adult; user-settable for youth/unknown. Enforced by a check constraint on `persons`. |
+| profile_status | enum | `provisional` for half-known people; `confirmed` once a nucleus/activity attachment exists. |
 | notes | text | free-form notes |
 | profile_image_url | text | nullable — stored in Supabase Storage (`person-profiles` bucket) |
 | created_at | timestamp | |
 | deleted_at | timestamp | nullable — soft delete |
 
-> **Privacy — Children's Data:** For anyone flagged `is_minor = true`, collect **first name only**. No age, no contact information. The parent/guardian relationship is captured via the `ActivityParticipant` role (role = `parent`), so the child's record itself stays minimal. The app should enforce this in the UI by hiding email/phone fields when `is_minor` is true. This aligns with Alberta's PIPA obligations around collecting only what is necessary. A privacy policy should be in place before real user data is onboarded.
+> **Identity & duplicate names.** `id` is the only identifier; two people may share a name. When a user types a name that matches an existing record, the UI shows each match with contextual disambiguators (associated nucleus, activity, age group, "attends with X", profile status) and requires either an intentional selection or an explicit "this is a different person" action — never a silent auto-select. Disambiguators are drawn only from structural data (nucleus enrollments, activity participations, age group, profile status); appearance-based or subjective descriptions are not collected. See `src/lib/persons/disambiguators.ts`.
+
+> **Age cohorts.** Reflect Bahá'í community structure: **Child** (≈ up to 10), **Junior Youth** (≈ 11–14), **Youth** (≈ 15–30 — wider than the legal definition of minor), **Adult**. Because Youth spans minor and adult ages, the create/edit form pairs a Youth selection with an optional "Under 18 (minor)" checkbox. Child and Junior Youth are always minors; Adult is never a minor; these are enforced both in the UI and by the `persons_age_minor_invariant` check constraint.
+
+> **Privacy — Children's Data:** For anyone flagged `is_minor = true` (child / junior_youth / minor youth), the app collects **first name only**. No age, no contact information — email and phone are forced to `null` at the data-access layer whenever the resulting state is `is_minor = true`, regardless of what the caller submits. The parent/guardian relationship is captured via the `ActivityParticipant` role (role = `parent`), so the child's record itself stays minimal. This aligns with Alberta's PIPA obligations around collecting only what is necessary. A privacy policy should be in place before real user data is onboarded.
 
 ### NucleusEnrollment
 Links a Person to a Nucleus, capturing their engagement level **within that specific nucleus**. A person can be enrolled in multiple nuclei with different engagement levels in each.

@@ -18,10 +18,17 @@ test.describe('Activity flow', () => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
     await expect(page.getByRole('heading', { name: "Test Children's Class" })).toBeVisible({ timeout: 15000 });
 
-    // Add a teacher using the first "Add name..." input (Teachers section)
+    // Add a teacher using the first "Add name..." input (Teachers section).
+    // The combobox no longer silently creates on Enter — it opens the
+    // new-profile form so the user can confirm age group. Pressing Enter
+    // on a name with no matches opens that form, then we submit it.
     const nameInput = page.getByPlaceholder('Add name...').first();
     await nameInput.fill('Charlie Test');
     await nameInput.press('Enter');
+
+    const addButton = page.getByRole('button', { name: 'Add Person' });
+    await expect(addButton).toBeVisible({ timeout: 5000 });
+    await addButton.click();
 
     // Person should appear in the participant list
     await expect(page.getByText('Charlie Test').first()).toBeVisible();

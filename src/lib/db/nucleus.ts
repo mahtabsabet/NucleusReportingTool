@@ -7,6 +7,8 @@ import type {
 import type { PersonProfile, CourseRow } from './clusterProfile';
 import { actionPermission, canDirectly } from '../permissions';
 import { getCallerContext } from './users';
+import { isMinorForAgeGroup } from '../persons/disambiguators';
+import type { AgeGroup } from '../database.types';
 
 // Date columns on `activities` are Postgres `date` (calendar date,
 // no time zone) — same convention as timeline_events. We parse them
@@ -403,6 +405,9 @@ export async function addPersonToActivity(params: {
   activityId: string;
   role: string;
   existingPersonId?: string;
+  ageGroup?: AgeGroup;
+  /** Caller's choice for the under-18 toggle; only consulted for youth/unknown. */
+  minorOverride?: boolean;
 }): Promise<{ personId: string; name: string }> {
   let personId: string;
   let personName: string;
@@ -411,9 +416,19 @@ export async function addPersonToActivity(params: {
     personId = params.existingPersonId;
     personName = params.name;
   } else {
+    const ageGroup: AgeGroup = params.ageGroup ?? 'unknown';
+    const isMinor = isMinorForAgeGroup(ageGroup, params.minorOverride);
+    // A person added directly via an activity is, by definition, no
+    // longer a fully-disconnected provisional profile — they have at
+    // least one nucleus + activity link by the end of this function.
     const { data: person, error } = await supabase
       .from('persons')
-      .insert({ name: params.name, is_minor: false })
+      .insert({
+        name: params.name,
+        age_group: ageGroup,
+        is_minor: isMinor,
+        profile_status: 'confirmed',
+      })
       .select('id, name')
       .single();
     if (error) throw error;

@@ -246,7 +246,7 @@ export function ActivityDetail() {
 
   const addParticipantToRole = async (
     role: string,
-    params: { name: string; existingPersonId?: string }
+    params: { name: string; existingPersonId?: string; ageGroup?: import('../lib/database.types').AgeGroup; minorOverride?: boolean }
   ) => {
     const { personId, name } = await addPersonToActivity({
       name: params.name,
@@ -254,6 +254,8 @@ export function ActivityDetail() {
       activityId: activityId!,
       role,
       existingPersonId: params.existingPersonId,
+      ageGroup: params.ageGroup,
+      minorOverride: params.minorOverride,
     });
     if (!params.existingPersonId) {
       markPersonUnplaced(nucleusId!, personId);

@@ -15,7 +15,7 @@ import type {
 } from '../lib/db/search';
 
 type FlatItem =
-  | { kind: 'person'; id: string; name: string }
+  | { kind: 'person'; id: string; name: string; disambiguators: string[] }
   | { kind: 'nucleus'; id: string; name: string }
   | { kind: 'activity'; id: string; name: string; nucleusId: string; nucleusName: string | null };
 
@@ -23,7 +23,12 @@ const EMPTY: GlobalSearchResults = { people: [], nuclei: [], activities: [] };
 
 function flatten(results: GlobalSearchResults): FlatItem[] {
   return [
-    ...results.people.map(p => ({ kind: 'person' as const, id: p.id, name: p.name })),
+    ...results.people.map(p => ({
+      kind: 'person' as const,
+      id: p.id,
+      name: p.name,
+      disambiguators: p.disambiguators,
+    })),
     ...results.activities.map((a: SearchActivityResult) => ({
       kind: 'activity' as const,
       id: a.id,
@@ -233,7 +238,12 @@ export function GlobalSearch({
                 <SearchGroup label="People">
                   {results.people.map(p => {
                     const idx = nextIndex();
-                    const item: FlatItem = { kind: 'person', id: p.id, name: p.name };
+                    const item: FlatItem = {
+                      kind: 'person',
+                      id: p.id,
+                      name: p.name,
+                      disambiguators: p.disambiguators,
+                    };
                     return (
                       <SearchRow
                         key={`p-${p.id}`}
@@ -242,6 +252,7 @@ export function GlobalSearch({
                         onSelect={() => handleSelect(item)}
                         icon={<UserIcon className="w-3.5 h-3.5 text-gray-400" />}
                         primary={p.name}
+                        secondary={p.disambiguators.join(' • ') || undefined}
                       />
                     );
                   })}
