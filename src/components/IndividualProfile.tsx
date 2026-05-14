@@ -23,6 +23,12 @@ import {
   uploadProfilePhoto,
   type PersonDetail,
 } from '../lib/db/persons';
+import {
+  AGE_GROUP_LABELS,
+  ageGroupAllowsMinorToggle,
+  isMinorForAgeGroup,
+} from '../lib/persons/disambiguators';
+import type { AgeGroup, ProfileStatus } from '../lib/database.types';
 import { submitPermissionRequest } from '../lib/db/requests';
 import { fetchCourses, type CourseRow } from '../lib/db/clusterProfile';
 import { getCallerContext } from '../lib/db/users';
@@ -62,6 +68,11 @@ export function IndividualProfile() {
   const [editName, setEditName] = useState('');
   const [editCapacities, setEditCapacities] = useState<string[]>([]);
   const [editCourses, setEditCourses] = useState<EditCourse[]>([]);
+  const [editAgeGroup, setEditAgeGroup] = useState<AgeGroup>('unknown');
+  const [editMinorOverride, setEditMinorOverride] = useState(false);
+  const [editProfileStatus, setEditProfileStatus] = useState<ProfileStatus>('provisional');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPhone, setEditPhone] = useState('');
   const [newCapacity, setNewCapacity] = useState('');
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -156,6 +167,11 @@ export function IndividualProfile() {
       courseName: ce.courseName,
       status: ce.status,
     })));
+    setEditAgeGroup(person.ageGroup);
+    setEditMinorOverride(person.isMinor);
+    setEditProfileStatus(person.profileStatus);
+    setEditEmail(person.email ?? '');
+    setEditPhone(person.phone ?? '');
     setEditPhotoFile(null);
     setEditPhotoPreview(null);
     setEditing(true);
@@ -164,7 +180,16 @@ export function IndividualProfile() {
   const handleSave = async () => {
     setSaveError(null);
     try {
-      await updatePersonBasic(id!, { name: editName, capacities: editCapacities });
+      const willBeMinor = isMinorForAgeGroup(editAgeGroup, editMinorOverride);
+      await updatePersonBasic(id!, {
+        name: editName,
+        capacities: editCapacities,
+        ageGroup: editAgeGroup,
+        minorOverride: ageGroupAllowsMinorToggle(editAgeGroup) ? editMinorOverride : undefined,
+        profileStatus: editProfileStatus,
+        email: willBeMinor ? null : (editEmail.trim() || null),
+        phone: willBeMinor ? null : (editPhone.trim() || null),
+      });
       await syncCourseEnrollments(id!, editCourses.map(c => ({ courseId: c.courseId, status: c.status })));
       let savedPhotoUrl = photoUrl;
       if (editPhotoFile) {
@@ -176,6 +201,11 @@ export function IndividualProfile() {
         ...prev,
         name: editName,
         capacities: editCapacities,
+        ageGroup: editAgeGroup,
+        isMinor: willBeMinor,
+        profileStatus: editProfileStatus,
+        email: willBeMinor ? null : (editEmail.trim() || null),
+        phone: willBeMinor ? null : (editPhone.trim() || null),
         photoUrl: savedPhotoUrl,
         courseEnrollments: editCourses.map(c => ({
           courseId: c.courseId,
@@ -523,6 +553,118 @@ export function IndividualProfile() {
                     <p className="text-sm text-gray-400 italic">Not enrolled in any nucleus</p>
                   )}
                 </div>
+              </div>
+
+              <div>
+                <h2 className="text-sm font-bold text-gray-500 uppercase tracking-widest mb-4">
+                  Identity
+                </h2>
+                {editing ? (
+                  <div className="space-y-3 bg-gray-50/60 border border-gray-100 rounded-xl p-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                        Age group
+                      </label>
+                      <select
+                        value={editAgeGroup}
+                        onChange={e => {
+                          const v = e.target.value as AgeGroup;
+                          setEditAgeGroup(v);
+                          if (v === 'child' || v === 'junior_youth') setEditMinorOverride(true);
+                          else if (v === 'adult') setEditMinorOverride(false);
+                        }}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="child">Child</option>
+                        <option value="junior_youth">Junior Youth</option>
+                        <option value="youth">Youth</option>
+                        <option value="adult">Adult</option>
+                        <option value="unknown">Unknown</option>
+                      </select>
+                    </div>
+                    {ageGroupAllowsMinorToggle(editAgeGroup) ? (
+                      <label className="flex items-center gap-2 text-sm text-gray-700">
+                        <input
+                          type="checkbox"
+                          checked={editMinorOverride}
+                          onChange={e => setEditMinorOverride(e.target.checked)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        Under 18 (minor)
+                      </label>
+                    ) : (
+                      <p className="text-xs text-gray-500 italic">
+                        {editAgeGroup === 'adult'
+                          ? 'Adults are not minors.'
+                          : 'Children and Junior Youth are always minors.'}
+                      </p>
+                    )}
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                        Profile status
+                      </label>
+                      <select
+                        value={editProfileStatus}
+                        onChange={e => setEditProfileStatus(e.target.value as ProfileStatus)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="provisional">Provisional</option>
+                        <option value="confirmed">Confirmed</option>
+                      </select>
+                    </div>
+                    {!isMinorForAgeGroup(editAgeGroup, editMinorOverride) && (
+                      <>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                            Email
+                          </label>
+                          <input
+                            type="email"
+                            value={editEmail}
+                            onChange={e => setEditEmail(e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                            Phone
+                          </label>
+                          <input
+                            type="tel"
+                            value={editPhone}
+                            onChange={e => setEditPhone(e.target.value)}
+                            className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+                      </>
+                    )}
+                    {isMinorForAgeGroup(editAgeGroup, editMinorOverride) && (
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 leading-snug">
+                        Minors: email and phone are not collected.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-1.5 text-sm text-gray-700">
+                    <div>
+                      <span className="font-semibold text-gray-500">Age group:</span>{' '}
+                      {AGE_GROUP_LABELS[person.ageGroup] || 'Unknown'}
+                      {person.ageGroup === 'youth' && person.isMinor && (
+                        <span className="text-gray-500"> (under 18)</span>
+                      )}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-gray-500">Profile:</span>{' '}
+                      {person.profileStatus === 'confirmed' ? 'Confirmed' : 'Provisional'}
+                    </div>
+                    {!person.isMinor && (person.email || person.phone) && (
+                      <div className="pt-1 space-y-0.5 text-xs text-gray-500">
+                        {person.email && <div>✉ {person.email}</div>}
+                        {person.phone && <div>☎ {person.phone}</div>}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div>
