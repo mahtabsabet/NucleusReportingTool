@@ -1,10 +1,21 @@
 import { supabase } from '../supabase';
 import { actionPermission, activityLeadActivityIds } from '../permissions';
 import { getCallerContext } from './users';
+import type { AgeGroup, ProfileStatus } from '../database.types';
+import {
+  isMinorForAgeGroup,
+  pickDistinguishingLabels,
+  type PersonDisambiguatorContext,
+} from '../persons/disambiguators';
 
 export interface PersonDetail {
   id: string;
   name: string;
+  ageGroup: AgeGroup;
+  isMinor: boolean;
+  profileStatus: ProfileStatus;
+  email: string | null;
+  phone: string | null;
   capacities: string[];
   notes: string;
   photoUrl: string | null;
@@ -22,11 +33,23 @@ export interface PersonDetail {
   }>;
 }
 
+export interface PersonSearchMatch {
+  id: string;
+  name: string;
+  ageGroup: AgeGroup;
+  isMinor: boolean;
+  profileStatus: ProfileStatus;
+  nucleusNames: string[];
+  activityNames: string[];
+  /** Short labels picked to differentiate this match from the others returned in the same call. */
+  disambiguators: string[];
+}
+
 export async function fetchPersonDetail(personId: string): Promise<PersonDetail | null> {
   const [personRes, nucleiRes, coursesRes, activitiesRes] = await Promise.all([
     supabase
       .from('persons')
-      .select('id, name, capacities, notes, profile_image_url')
+      .select('id, name, age_group, is_minor, profile_status, email, phone, capacities, notes, profile_image_url')
       .eq('id', personId)
       .is('deleted_at', null)
       .single(),
@@ -52,6 +75,11 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
   return {
     id: p.id,
     name: p.name,
+    ageGroup: (p.age_group ?? 'unknown') as AgeGroup,
+    isMinor: !!p.is_minor,
+    profileStatus: (p.profile_status ?? 'provisional') as ProfileStatus,
+    email: p.email ?? null,
+    phone: p.phone ?? null,
     capacities: p.capacities ?? [],
     notes: p.notes ?? '',
     photoUrl: p.profile_image_url ?? null,
@@ -75,11 +103,44 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
 
 export async function updatePersonBasic(
   personId: string,
-  params: { name?: string; capacities?: string[] }
+  params: {
+    name?: string;
+    capacities?: string[];
+    ageGroup?: AgeGroup;
+    minorOverride?: boolean;
+    profileStatus?: ProfileStatus;
+    email?: string | null;
+    phone?: string | null;
+  }
 ): Promise<void> {
   const update: Record<string, any> = {};
   if (params.name !== undefined) update.name = params.name;
   if (params.capacities !== undefined) update.capacities = params.capacities;
+  if (params.profileStatus !== undefined) update.profile_status = params.profileStatus;
+
+  if (params.ageGroup !== undefined) {
+    update.age_group = params.ageGroup;
+    update.is_minor = isMinorForAgeGroup(params.ageGroup, params.minorOverride);
+  } else if (params.minorOverride !== undefined) {
+    // Caller is only toggling the minor flag (allowed for youth/unknown);
+    // the DB invariant rejects the write if the existing age_group disallows it.
+    update.is_minor = params.minorOverride;
+  }
+
+  // Privacy: minors never carry contact info. We force the columns null
+  // whenever the resulting state is is_minor=true, regardless of what the
+  // caller sent.
+  const willBeMinor = update.is_minor === true;
+  if (willBeMinor) {
+    update.email = null;
+    update.phone = null;
+  } else {
+    if (params.email !== undefined) update.email = params.email;
+    if (params.phone !== undefined) update.phone = params.phone;
+  }
+
+  if (Object.keys(update).length === 0) return;
+
   const { error } = await supabase.from('persons').update(update).eq('id', personId);
   if (error) throw error;
 }
@@ -146,18 +207,138 @@ export function computeEnrollmentDiff(
   return { idsToDelete, toInsert, toUpdate };
 }
 
-export async function searchPersonsByName(
-  query: string
-): Promise<Array<{ id: string; name: string }>> {
+// Returns the matching persons enriched with the structural data the UI
+// needs to render contextual disambiguators (so two "John"s can be told
+// apart without inventing fake distinguishers like "John2").
+export async function searchPersonsByName(query: string): Promise<PersonSearchMatch[]> {
   if (!query.trim()) return [];
+
   const { data } = await supabase
     .from('persons')
-    .select('id, name')
+    .select('id, name, age_group, is_minor, profile_status')
     .ilike('name', `%${query.trim()}%`)
     .is('deleted_at', null)
     .order('name')
-    .limit(8);
-  return (data ?? []) as Array<{ id: string; name: string }>;
+    .limit(10);
+
+  const rows = (data ?? []) as Array<{
+    id: string;
+    name: string;
+    age_group: AgeGroup;
+    is_minor: boolean;
+    profile_status: ProfileStatus;
+  }>;
+  if (rows.length === 0) return [];
+
+  const ids = rows.map(r => r.id);
+  const [{ data: nucleiData }, { data: partsData }] = await Promise.all([
+    supabase
+      .from('nucleus_enrollments')
+      .select('person_id, nuclei(name)')
+      .in('person_id', ids)
+      .is('deleted_at', null),
+    supabase
+      .from('activity_participants')
+      .select('person_id, activities(name)')
+      .in('person_id', ids)
+      .is('deleted_at', null),
+  ]);
+
+  const nucleiByPerson = new Map<string, string[]>();
+  for (const r of (nucleiData ?? []) as any[]) {
+    const n = r.nuclei?.name;
+    if (!n) continue;
+    const arr = nucleiByPerson.get(r.person_id) ?? [];
+    arr.push(n);
+    nucleiByPerson.set(r.person_id, arr);
+  }
+  const activitiesByPerson = new Map<string, string[]>();
+  for (const r of (partsData ?? []) as any[]) {
+    const n = r.activities?.name;
+    if (!n) continue;
+    const arr = activitiesByPerson.get(r.person_id) ?? [];
+    arr.push(n);
+    activitiesByPerson.set(r.person_id, arr);
+  }
+
+  // Group matches by exact (case-insensitive) name so disambiguators are
+  // chosen *within* each name cluster. We don't try to differentiate
+  // "John" from "Johnny" — they're rendered separately by the UI.
+  const groups = new Map<string, typeof rows>();
+  for (const r of rows) {
+    const key = r.name.toLowerCase();
+    const arr = groups.get(key) ?? [];
+    arr.push(r);
+    groups.set(key, arr);
+  }
+
+  const result: PersonSearchMatch[] = [];
+  for (const sameName of groups.values()) {
+    const ctxs: PersonDisambiguatorContext[] = sameName.map(r => ({
+      id: r.id,
+      name: r.name,
+      ageGroup: r.age_group,
+      isMinor: r.is_minor,
+      profileStatus: r.profile_status,
+      nucleusNames: nucleiByPerson.get(r.id) ?? [],
+      activityNames: activitiesByPerson.get(r.id) ?? [],
+      clusterName: null,
+      attendsWith: [],
+      email: null,
+      phone: null,
+    }));
+    const labels = pickDistinguishingLabels(ctxs, 2);
+    for (const c of ctxs) {
+      result.push({
+        id: c.id,
+        name: c.name,
+        ageGroup: c.ageGroup,
+        isMinor: c.isMinor,
+        profileStatus: c.profileStatus,
+        nucleusNames: c.nucleusNames,
+        activityNames: c.activityNames,
+        disambiguators: labels[c.id] ?? [],
+      });
+    }
+  }
+
+  // Preserve the original alphabetical ordering by name.
+  result.sort((a, b) => a.name.localeCompare(b.name));
+  return result;
+}
+
+// Insert a new person. Identity is the returned id; the name is just a
+// label, so duplicates are allowed at this layer. Callers must obtain
+// the right contextual signals (age_group, profile_status) from the UI.
+export async function createPerson(params: {
+  name: string;
+  ageGroup?: AgeGroup;
+  minorOverride?: boolean;
+  profileStatus?: ProfileStatus;
+  email?: string | null;
+  phone?: string | null;
+}): Promise<{ id: string; name: string }> {
+  const ageGroup: AgeGroup = params.ageGroup ?? 'unknown';
+  const isMinor = isMinorForAgeGroup(ageGroup, params.minorOverride);
+  const row: Record<string, any> = {
+    name: params.name,
+    age_group: ageGroup,
+    is_minor: isMinor,
+    profile_status: params.profileStatus ?? 'provisional',
+  };
+  if (!isMinor) {
+    if (params.email !== undefined) row.email = params.email;
+    if (params.phone !== undefined) row.phone = params.phone;
+  }
+
+  const { data, error } = await supabase
+    .from('persons')
+    .insert(row)
+    .select('id, name')
+    .single();
+  if (error) throw error;
+  const p = data as any;
+  return { id: p.id, name: p.name };
 }
 
 // Direct-delete capability irrespective of person scope. Only Super Admin /

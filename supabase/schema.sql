@@ -75,18 +75,35 @@ create table nuclei (
   deleted_at        timestamptz
 );
 
--- first name only; email/phone must not be set when is_minor = true (enforced in app)
+-- Identity is `id` — names are NOT unique. The UI disambiguates
+-- by context (nucleus / activity / age group / ...).
+--
+-- age_group       : program cohort the person fits into.
+-- profile_status  : 'provisional' for half-known people, 'confirmed' otherwise.
+-- is_minor        : derived from age_group for child / junior_youth (always true)
+--                   and adult (always false); user-settable for youth / unknown.
+--
+-- Privacy: when is_minor = true the app must not collect email/phone.
 create table persons (
   id                  uuid primary key default gen_random_uuid(),
   name                text not null,
   email               text,
   phone               text,
   is_minor            boolean not null default false,
+  age_group           text not null default 'unknown'
+                      check (age_group in ('child', 'junior_youth', 'youth', 'adult', 'unknown')),
+  profile_status      text not null default 'provisional'
+                      check (profile_status in ('provisional', 'confirmed')),
   capacities          text[] not null default '{}',
   notes               text,
   profile_image_url   text,
   created_at          timestamptz not null default now(),
-  deleted_at          timestamptz
+  deleted_at          timestamptz,
+  constraint persons_age_minor_invariant check (
+    (age_group in ('child', 'junior_youth') and is_minor = true)
+    or (age_group = 'adult' and is_minor = false)
+    or age_group in ('youth', 'unknown')
+  )
 );
 
 alter table profiles add constraint profiles_person_id_fkey

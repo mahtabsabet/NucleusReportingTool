@@ -1,3 +1,5 @@
+export type AgeGroup = 'child' | 'junior_youth' | 'youth' | 'adult' | 'unknown';
+export type ProfileStatus = 'provisional' | 'confirmed';
 export type EngagementLevel = 'aware' | 'participating' | 'supporting' | 'coordinating';
 export type ActivityType = 'children_class' | 'junior_youth' | 'study_circle' | 'devotional' | 'fireside' | 'other';
 export type ParticipantRole = 'teacher' | 'animator' | 'tutor' | 'child' | 'junior_youth' | 'parent' | 'host' | 'attendee' | 'participant' | 'other';
@@ -64,6 +66,8 @@ export interface Database {
           email: string | null;
           phone: string | null;
           is_minor: boolean;
+          age_group: AgeGroup;
+          profile_status: ProfileStatus;
           capacities: string[];
           notes: string | null;
           profile_image_url: string | null;
