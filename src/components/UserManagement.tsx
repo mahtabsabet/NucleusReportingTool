@@ -26,9 +26,12 @@ import {
   adminResetUserPassword,
   getCallerContext,
   toUserSummary,
+  fetchActivitiesForScope,
   type ManagedUser,
   type UserPermissionRow,
+  type ScopeOption,
 } from '../lib/db/users';
+import { fetchClusters, fetchNuclei, type ClusterRow, type NucleusRow } from '../lib/db/clusters';
 import { PASSWORD_MIN_LENGTH } from './ChangePasswordModal';
 import {
   type CallerContext,
@@ -44,6 +47,7 @@ import {
   highestRole,
   primaryRole,
   roleLabel,
+  scopeRequirementFor,
 } from '../lib/permissions';
 import {
   fetchVisiblePermissionRequests,
@@ -309,7 +313,14 @@ interface ChangeRoleModalProps {
 
 function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModalProps) {
   const perm = user.permissions[0];
-  const availableRoles = roleOptionsForChange(callerCtx, user);
+  const isGlobalUser = !perm;
+  // A global user (Admin / Regional Viewer) has no scope-compatibility
+  // constraint, so the direct-change modal offers every role the caller
+  // may assign; the scope picker below collects the new scope. Scoped
+  // users keep the scope-compatible list from roleOptionsForChange.
+  const availableRoles = isGlobalUser
+    ? creatableRoles(callerCtx)
+    : roleOptionsForChange(callerCtx, user);
   const initial: CreatableRole = (
     user.isAdmin ? 'admin'
     : user.isRegionalViewer ? 'regional_viewer'
@@ -320,9 +331,70 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // Scope picker — used only when moving a global user (no existing
+  // permission row) to a scoped role. The cluster→nucleus→activity
+  // dropdowns cascade like the Create User modal.
+  const [selectedClusterId, setSelectedClusterId] = useState('');
+  const [selectedNucleusId, setSelectedNucleusId] = useState('');
+  const [selectedActivityId, setSelectedActivityId] = useState('');
+  const [clusters, setClusters] = useState<ClusterRow[]>([]);
+  const [nuclei, setNuclei] = useState<NucleusRow[]>([]);
+  const [activities, setActivities] = useState<ScopeOption[]>([]);
+
+  const scopeNeed = scopeRequirementFor(selectedRole);
+  const needsScopePicker = isGlobalUser && scopeNeed !== 'none';
+  // Cluster, nucleus and activity scopes all start from a cluster.
+  const needsCluster = needsScopePicker;
+  const needsNucleus = needsScopePicker && (scopeNeed === 'nucleus' || scopeNeed === 'activity');
+  const needsActivity = needsScopePicker && scopeNeed === 'activity';
+
   const currentRole = user.isAdmin ? 'admin' : user.isRegionalViewer ? 'regional_viewer' : perm?.role;
   const unchanged = selectedRole === currentRole;
   const emailMatches = emailInput.trim().toLowerCase() === user.email.toLowerCase();
+  const scopeComplete =
+    scopeNeed === 'cluster' ? !!selectedClusterId
+    : scopeNeed === 'nucleus' ? !!selectedNucleusId
+    : scopeNeed === 'activity' ? !!selectedActivityId
+    : true;
+
+  // Reset scope selections whenever the chosen role changes.
+  useEffect(() => {
+    setSelectedClusterId('');
+    setSelectedNucleusId('');
+    setSelectedActivityId('');
+    setNuclei([]);
+    setActivities([]);
+  }, [selectedRole]);
+
+  // Load clusters once a scoped role is selected for a global user.
+  useEffect(() => {
+    if (!needsCluster) return;
+    fetchClusters()
+      .then(setClusters)
+      .catch(() => setError('Failed to load clusters'));
+  }, [needsCluster]);
+
+  // Load nuclei for the chosen cluster.
+  useEffect(() => {
+    if (!needsNucleus || !selectedClusterId) {
+      setNuclei([]);
+      return;
+    }
+    fetchNuclei(selectedClusterId)
+      .then(setNuclei)
+      .catch(() => setError('Failed to load nuclei'));
+  }, [selectedClusterId, needsNucleus]);
+
+  // Load activities for the chosen nucleus.
+  useEffect(() => {
+    if (!needsActivity || !selectedNucleusId) {
+      setActivities([]);
+      return;
+    }
+    fetchActivitiesForScope(selectedNucleusId)
+      .then(setActivities)
+      .catch(() => setError('Failed to load activities'));
+  }, [selectedNucleusId, needsActivity]);
 
   async function handleConfirm() {
     setError(null);
@@ -332,11 +404,15 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
         targetUserId: user.id,
         newRole: selectedRole,
         confirmedEmail: emailInput.trim(),
-        // Only pass permissionId for scoped roles that update an
-        // existing user_permissions row in place.
+        // permissionId updates an existing scoped row in place; it's absent
+        // for a global user, which tells the edge function to create a new
+        // scoped row from the ids below.
         permissionId: (selectedRole === 'admin' || selectedRole === 'regional_viewer')
           ? undefined
           : perm?.id,
+        clusterId: needsScopePicker && scopeNeed === 'cluster' ? selectedClusterId : undefined,
+        nucleusId: needsScopePicker && scopeNeed === 'nucleus' ? selectedNucleusId : undefined,
+        activityId: needsScopePicker && scopeNeed === 'activity' ? selectedActivityId : undefined,
       });
       onChanged();
     } catch (err: any) {
@@ -348,7 +424,7 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
 
   return (
     <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
             <PencilIcon className="w-5 h-5 text-blue-600" />
@@ -374,6 +450,56 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
             ))}
           </select>
         </div>
+
+        {/* Scope picker — shown when moving a global user to a scoped role. */}
+        {needsCluster && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Cluster</label>
+            <select
+              value={selectedClusterId}
+              onChange={e => { setSelectedClusterId(e.target.value); setSelectedNucleusId(''); setSelectedActivityId(''); }}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none"
+            >
+              <option value="">Select a cluster…</option>
+              {clusters.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {needsNucleus && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Nucleus</label>
+            <select
+              value={selectedNucleusId}
+              onChange={e => { setSelectedNucleusId(e.target.value); setSelectedActivityId(''); }}
+              disabled={!selectedClusterId}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">{selectedClusterId ? 'Select a nucleus…' : 'Select a cluster first…'}</option>
+              {nuclei.map(n => (
+                <option key={n.id} value={n.id}>{n.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {needsActivity && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1.5">Activity</label>
+            <select
+              value={selectedActivityId}
+              onChange={e => setSelectedActivityId(e.target.value)}
+              disabled={!selectedNucleusId}
+              className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-blue-400 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">{selectedNucleusId ? 'Select an activity…' : 'Select a nucleus first…'}</option>
+              {activities.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+
         <div className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 mb-1">
           <p className="text-sm font-mono font-semibold text-gray-900 break-all">{user.email}</p>
         </div>
@@ -402,7 +528,7 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
           </button>
           <button
             onClick={handleConfirm}
-            disabled={unchanged || !emailMatches || loading}
+            disabled={unchanged || !emailMatches || loading || (needsScopePicker && !scopeComplete)}
             className="flex-1 px-4 py-2.5 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {loading ? 'Saving…' : 'Change Role'}
