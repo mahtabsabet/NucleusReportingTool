@@ -6,6 +6,18 @@ on:
   pull_request:
     branches: [main]
 
+# A push to a PR branch fires both the `push` and `pull_request`
+# events, which previously launched two e2e jobs that hammered the
+# same shared Supabase project at once — exhausting its auth/API rate
+# limits and producing flaky, non-deterministic failures. The `push`
+# event has an empty `head_ref` while `pull_request` sets it to the
+# source branch, so keying the group on `head_ref || ref_name`
+# collapses both events for a branch into one group; cancelling the
+# older run then guarantees a single e2e job per branch at a time.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   unit:
     name: Unit tests
