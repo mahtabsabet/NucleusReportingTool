@@ -313,14 +313,18 @@ interface ChangeRoleModalProps {
 
 function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModalProps) {
   const perm = user.permissions[0];
-  const isGlobalUser = !perm;
-  // A global user (Admin / Regional Viewer) has no scope-compatibility
-  // constraint, so the direct-change modal offers every role the caller
-  // may assign; the scope picker below collects the new scope. Scoped
-  // users keep the scope-compatible list from roleOptionsForChange.
-  const availableRoles = isGlobalUser
-    ? creatableRoles(callerCtx)
-    : roleOptionsForChange(callerCtx, user);
+  // A user_permissions row pins one scope type, so changing to a scoped
+  // role with a different scope means replacing the row, not editing it —
+  // which the edge function and the scope picker below both handle. The
+  // modal therefore offers every role the caller may assign, regardless
+  // of the target's current role.
+  const availableRoles = creatableRoles(callerCtx);
+  // Scope type of the target's current permission, if any.
+  const currentScopeType: 'cluster' | 'nucleus' | 'activity' | 'none' =
+    perm?.clusterId ? 'cluster'
+    : perm?.nucleusId ? 'nucleus'
+    : perm?.activityId ? 'activity'
+    : 'none';
   const initial: CreatableRole = (
     user.isAdmin ? 'admin'
     : user.isRegionalViewer ? 'regional_viewer'
@@ -331,9 +335,10 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Scope picker — used only when moving a global user (no existing
-  // permission row) to a scoped role. The cluster→nucleus→activity
-  // dropdowns cascade like the Create User modal.
+  // Scope picker — shown when the chosen scoped role needs a different
+  // scope than the target currently has (a global user moving to any
+  // scoped role, or a scoped user moving to a different scope type). The
+  // cluster→nucleus→activity dropdowns cascade like the Create User modal.
   const [selectedClusterId, setSelectedClusterId] = useState('');
   const [selectedNucleusId, setSelectedNucleusId] = useState('');
   const [selectedActivityId, setSelectedActivityId] = useState('');
@@ -342,7 +347,7 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
   const [activities, setActivities] = useState<ScopeOption[]>([]);
 
   const scopeNeed = scopeRequirementFor(selectedRole);
-  const needsScopePicker = isGlobalUser && scopeNeed !== 'none';
+  const needsScopePicker = scopeNeed !== 'none' && scopeNeed !== currentScopeType;
   // Cluster, nucleus and activity scopes all start from a cluster.
   const needsCluster = needsScopePicker;
   const needsNucleus = needsScopePicker && (scopeNeed === 'nucleus' || scopeNeed === 'activity');
