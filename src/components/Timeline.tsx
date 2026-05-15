@@ -1178,7 +1178,7 @@ export function Timeline({
           their boundaries. Surface this so the timeline isn't mistaken for
           any one cluster's actual calendar. */}
       {!clusterId && !isNucleusScope && (
-        <div className="px-4 md:px-6 py-1 border-b border-gray-100 bg-gray-50/30 text-xs italic text-gray-500 flex-shrink-0">
+        <div className="px-4 md:px-6 py-1.5 border-b border-gray-200 bg-gray-50 text-sm italic text-gray-700 flex-shrink-0">
           Default cycle dates shown — actual cycles may vary by cluster
         </div>
       )}
