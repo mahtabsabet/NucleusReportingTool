@@ -76,13 +76,13 @@ Deno.serve(async (req) => {
       return json({ emails });
     }
 
-    // For everything else the caller must be an Admin or Super Admin —
-    // CCs/NCs use the request-submission path (insert into permission_requests),
-    // which is gated by RLS, not this function.
-    if (!callerIsAdmin) return json({ error: 'Admin access required' }, 403);
+    // Past list-emails, each action sets its own gate. Delete and
+    // reset-password stay admin-only. Change-role accepts CC / NC too,
+    // with scope validation performed inside the action block.
 
     // ── delete ───────────────────────────────────────────────────
     if (action === 'delete') {
+      if (!callerIsAdmin) return json({ error: 'Admin access required' }, 403);
       const { targetUserId, confirmedEmail } = body;
       if (!targetUserId) return json({ error: 'targetUserId required' }, 400);
       if (targetUserId === caller.id) return json({ error: 'Cannot delete your own account' }, 403);
@@ -138,9 +138,32 @@ Deno.serve(async (req) => {
       const allowed = ROLE_ASSIGNERS[newRole];
       if (!allowed) return json({ error: `Unknown role: ${newRole}` }, 400);
 
+      // Build the caller's effective-roles list for the ROLE_ASSIGNERS
+      // check. Admins / Super Admins are determined above; for non-admin
+      // callers we also pull their CC / NC grants from user_permissions
+      // so a Cluster Coordinator can assign CC / NC / AL and a Nucleus
+      // Coordinator can assign AL — matching ROLE_ASSIGNERS in
+      // src/lib/permissions.ts.
       const callerRoles: string[] = [];
       if (callerIsSuperAdmin) callerRoles.push('super_admin');
       if (callerIsAdmin) callerRoles.push('admin');
+      let myClusterIds: string[] = [];
+      let myNucleusIds: string[] = [];
+      if (!callerIsAdmin) {
+        const { data: callerPerms } = await supabaseAdmin
+          .from('user_permissions')
+          .select('role, cluster_id, nucleus_id')
+          .eq('user_id', caller.id);
+        const perms = (callerPerms ?? []) as any[];
+        myClusterIds = perms
+          .filter(p => p.role === 'cluster_coordinator' && p.cluster_id)
+          .map(p => p.cluster_id);
+        myNucleusIds = perms
+          .filter(p => p.role === 'nucleus_collaborator' && p.nucleus_id)
+          .map(p => p.nucleus_id);
+        if (myClusterIds.length > 0) callerRoles.push('cluster_coordinator');
+        if (myNucleusIds.length > 0) callerRoles.push('nucleus_collaborator');
+      }
       if (!allowed.some(r => callerRoles.includes(r))) {
         return json({ error: `You are not allowed to assign the '${newRole}' role.` }, 403);
       }
@@ -162,6 +185,72 @@ Deno.serve(async (req) => {
       }
       if (targetIsAdmin && !callerIsSuperAdmin) {
         return json({ error: 'Only a Super Admin may change an Administrator’s role.' }, 403);
+      }
+
+      // For non-admin callers (CC / NC), validate both ends of the move
+      // are in their reach: the target's existing permission row (if any)
+      // and the new scope.
+      if (!callerIsAdmin) {
+        // (a) Existing scope — only checked when permissionId is supplied.
+        if (permissionId) {
+          const { data: existing } = await supabaseAdmin
+            .from('user_permissions')
+            .select('cluster_id, nucleus_id, activity_id')
+            .eq('id', permissionId)
+            .eq('user_id', targetUserId)
+            .single();
+          if (!existing) return json({ error: 'Permission not found' }, 404);
+          const e = existing as any;
+          let inScope = !!(e.cluster_id && myClusterIds.includes(e.cluster_id));
+          if (!inScope && e.nucleus_id && myClusterIds.length > 0) {
+            const { data: n } = await supabaseAdmin
+              .from('nuclei').select('cluster_id').eq('id', e.nucleus_id).single();
+            if (n && myClusterIds.includes((n as any).cluster_id)) inScope = true;
+          }
+          if (!inScope && e.activity_id && myClusterIds.length > 0) {
+            const { data: a } = await supabaseAdmin
+              .from('activities').select('nucleus_id, nuclei(cluster_id)').eq('id', e.activity_id).single();
+            const cid = (a as any)?.nuclei?.cluster_id;
+            if (cid && myClusterIds.includes(cid)) inScope = true;
+          }
+          if (!inScope && e.nucleus_id && myNucleusIds.includes(e.nucleus_id)) inScope = true;
+          if (!inScope && e.activity_id && myNucleusIds.length > 0) {
+            const { data: a } = await supabaseAdmin
+              .from('activities').select('nucleus_id').eq('id', e.activity_id).single();
+            if (a && myNucleusIds.includes((a as any).nucleus_id)) inScope = true;
+          }
+          if (!inScope) {
+            return json({ error: "Target user's existing permission is not in your scope." }, 403);
+          }
+        }
+        // (b) New scope — must be in caller's reach. Mirrors create-user's
+        //     scope checks. (newRole === 'admin' / 'regional_viewer' was
+        //     already blocked by the ROLE_ASSIGNERS check above.)
+        if (newRole === 'cluster_coordinator') {
+          if (!clusterId) return json({ error: 'A cluster must be specified for the cluster_coordinator role.' }, 400);
+          if (!myClusterIds.includes(clusterId)) {
+            return json({ error: 'Cluster is not in your scope.' }, 403);
+          }
+        } else if (newRole === 'nucleus_collaborator') {
+          if (!nucleusId) return json({ error: 'A nucleus must be specified for the nucleus_collaborator role.' }, 400);
+          const { data: n } = await supabaseAdmin
+            .from('nuclei').select('cluster_id').eq('id', nucleusId).single();
+          const ncid = (n as any)?.cluster_id;
+          if (!ncid || !myClusterIds.includes(ncid)) {
+            return json({ error: 'Nucleus is not in your scope.' }, 403);
+          }
+        } else if (newRole === 'activity_lead') {
+          if (!activityId) return json({ error: 'An activity must be specified for the activity_lead role.' }, 400);
+          const { data: a } = await supabaseAdmin
+            .from('activities').select('nucleus_id, nuclei(cluster_id)').eq('id', activityId).single();
+          const an = (a as any)?.nucleus_id;
+          const ac = (a as any)?.nuclei?.cluster_id;
+          const okByCluster = !!(ac && myClusterIds.includes(ac));
+          const okByNucleus = !!(an && myNucleusIds.includes(an));
+          if (!okByCluster && !okByNucleus) {
+            return json({ error: 'Activity is not in your scope.' }, 403);
+          }
+        }
       }
 
       if (!confirmedEmail || confirmedEmail.trim().toLowerCase() !== (targetUser.email ?? '').toLowerCase()) {
@@ -257,6 +346,7 @@ Deno.serve(async (req) => {
     //                        app forces them to choose a new one on
     //                        their next login.
     if (action === 'reset-password') {
+      if (!callerIsAdmin) return json({ error: 'Admin access required' }, 403);
       const { targetUserId, confirmedEmail, mode, temporaryPassword } = body;
       if (!targetUserId) return json({ error: 'targetUserId required' }, 400);
       if (targetUserId === caller.id) {
