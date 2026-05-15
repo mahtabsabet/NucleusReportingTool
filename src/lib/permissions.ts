@@ -401,14 +401,22 @@ export function actionPermission(
       return 'none';
 
     case 'edit_timeline_cycles':
+      // Cycles are cluster-level administrative data — only an admin /
+      // super admin or the cluster's coordinator can shift their dates.
+      // (Mirrors timeline_cycles RLS as of the 20260515 migration.)
+      if (inOwnCluster(ctx, target)) return 'direct';
+      return 'none';
+
     case 'manage_timeline_events':
     case 'manage_timeline_meetings':
     case 'manage_timeline_notes':
-      // Table: Super Admin / Admin / Cluster Coordinator only.
-      // CCs are scoped to their own cluster; the timeline UI must filter
-      // displayed cycles/events to the caller's cluster scope before
-      // offering edits — handled in the Timeline component.
+      // Events / meetings / notes can be scoped to a cluster OR to a
+      // specific nucleus. Cluster Coordinators manage their cluster;
+      // Nucleus Coordinators manage their nucleus. Mirrors timeline_events
+      // and timeline_item_notes RLS (the 20260511 / 20260512 migrations)
+      // and the canManageNucleusTimelineEvents helper above.
       if (inOwnCluster(ctx, target)) return 'direct';
+      if (inOwnNucleus(ctx, target)) return 'direct';
       return 'none';
 
     case 'create_user':
