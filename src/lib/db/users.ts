@@ -222,15 +222,33 @@ export interface ChangeRoleParams {
   newRole: CreatableRole;
   confirmedEmail: string;
   permissionId?: string;
+  // Required only when moving a global user (Admin / Regional Viewer, who
+  // have no existing permission row) to a scoped role — the edge function
+  // creates a fresh user_permissions row from these.
+  clusterId?: string;
+  nucleusId?: string;
+  activityId?: string;
 }
 
 export async function changeUserRole(params: ChangeRoleParams): Promise<void> {
+  // With no existing permission row to update (global → scoped), the new
+  // scope must be supplied. Mirrors the create-user guard; the edge
+  // function performs the authoritative check.
+  if (!params.permissionId) {
+    const need = scopeRequirementFor(params.newRole);
+    if (need === 'cluster' && !params.clusterId) throw new Error('A cluster must be selected.');
+    if (need === 'nucleus' && !params.nucleusId) throw new Error('A nucleus must be selected.');
+    if (need === 'activity' && !params.activityId) throw new Error('An activity must be selected.');
+  }
   await invokeEdge('manage-user', {
     action: 'change-role',
     targetUserId: params.targetUserId,
     newRole: params.newRole,
     confirmedEmail: params.confirmedEmail,
     permissionId: params.permissionId,
+    clusterId: params.clusterId,
+    nucleusId: params.nucleusId,
+    activityId: params.activityId,
   });
 }
 

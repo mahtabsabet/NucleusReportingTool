@@ -126,7 +126,7 @@ Deno.serve(async (req) => {
 
     // ── change-role ──────────────────────────────────────────────
     if (action === 'change-role') {
-      const { targetUserId, permissionId, newRole, confirmedEmail } = body;
+      const { targetUserId, permissionId, newRole, confirmedEmail, clusterId, nucleusId, activityId } = body;
       if (!targetUserId) return json({ error: 'targetUserId required' }, 400);
       if (targetUserId === caller.id) return json({ error: 'Cannot change your own role' }, 403);
       if (!newRole) return json({ error: 'newRole required' }, 400);
@@ -180,39 +180,71 @@ Deno.serve(async (req) => {
           .eq('id', targetUserId);
         await supabaseAdmin.from('user_permissions').delete().eq('user_id', targetUserId);
       } else {
-        // Scoped role.  Requires permissionId because we update the
-        // existing user_permissions row in place (preserving the scope).
-        if (!permissionId) {
-          return json({ error: 'permissionId required for scoped role change' }, 400);
+        // Scoped role (cluster_coordinator / nucleus_collaborator / activity_lead).
+        //   • permissionId given → the target already has a scoped permission
+        //     row; update its role in place, preserving the scope.
+        //   • no permissionId    → the target is a global user (Admin /
+        //     Regional Viewer) with no permission row, being moved to a
+        //     scoped role for the first time; create a fresh row from the
+        //     scope ids in the request body.
+        if (permissionId) {
+          const { data: perm, error: permErr } = await supabaseAdmin
+            .from('user_permissions')
+            .select('id, cluster_id, nucleus_id, activity_id')
+            .eq('id', permissionId)
+            .eq('user_id', targetUserId)
+            .single();
+          if (permErr || !perm) return json({ error: 'Permission not found' }, 404);
+
+          const p = perm as any;
+          const validRoles = p.cluster_id
+            ? ['cluster_coordinator']
+            : p.nucleus_id
+            ? ['nucleus_collaborator']
+            : ['activity_lead'];
+          if (!validRoles.includes(newRole)) {
+            return json({ error: `Role '${newRole}' is incompatible with this permission's scope` }, 400);
+          }
+
+          // Ensure target loses any global flags that contradict the scoped role.
+          await supabaseAdmin.from('profiles')
+            .update({ is_admin: false, is_regional_viewer: false })
+            .eq('id', targetUserId);
+
+          const { error: updateErr } = await supabaseAdmin
+            .from('user_permissions')
+            .update({ role: newRole })
+            .eq('id', permissionId);
+          if (updateErr) return json({ error: updateErr.message }, 400);
+        } else {
+          // Global → scoped: the new scope must be supplied explicitly.
+          const scopeId =
+            newRole === 'cluster_coordinator' ? clusterId
+            : newRole === 'nucleus_collaborator' ? nucleusId
+            : activityId;
+          if (!scopeId) {
+            const need =
+              newRole === 'cluster_coordinator' ? 'cluster'
+              : newRole === 'nucleus_collaborator' ? 'nucleus'
+              : 'activity';
+            return json({ error: `A ${need} must be specified for the '${newRole}' role.` }, 400);
+          }
+
+          // Drop any global flags that contradict the scoped role.
+          await supabaseAdmin.from('profiles')
+            .update({ is_admin: false, is_regional_viewer: false })
+            .eq('id', targetUserId);
+
+          const permRow: Record<string, unknown> = { user_id: targetUserId, role: newRole };
+          if (newRole === 'cluster_coordinator') permRow.cluster_id = scopeId;
+          else if (newRole === 'nucleus_collaborator') permRow.nucleus_id = scopeId;
+          else permRow.activity_id = scopeId;
+
+          const { error: insertErr } = await supabaseAdmin
+            .from('user_permissions')
+            .insert(permRow);
+          if (insertErr) return json({ error: insertErr.message }, 400);
         }
-        const { data: perm, error: permErr } = await supabaseAdmin
-          .from('user_permissions')
-          .select('id, cluster_id, nucleus_id, activity_id')
-          .eq('id', permissionId)
-          .eq('user_id', targetUserId)
-          .single();
-        if (permErr || !perm) return json({ error: 'Permission not found' }, 404);
-
-        const p = perm as any;
-        const validRoles = p.cluster_id
-          ? ['cluster_coordinator']
-          : p.nucleus_id
-          ? ['nucleus_collaborator']
-          : ['activity_lead'];
-        if (!validRoles.includes(newRole)) {
-          return json({ error: `Role '${newRole}' is incompatible with this permission's scope` }, 400);
-        }
-
-        // Ensure target loses any global flags that contradict the scoped role.
-        await supabaseAdmin.from('profiles')
-          .update({ is_admin: false, is_regional_viewer: false })
-          .eq('id', targetUserId);
-
-        const { error: updateErr } = await supabaseAdmin
-          .from('user_permissions')
-          .update({ role: newRole })
-          .eq('id', permissionId);
-        if (updateErr) return json({ error: updateErr.message }, 400);
       }
 
       try {
