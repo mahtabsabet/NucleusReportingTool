@@ -809,16 +809,22 @@ test.describe('manage-user safeguards', () => {
 
 // ── Helpers for map / timeline tests ─────────────────────────────────────────
 
-/** Navigate to the map and select Test Cluster in the sidebar. */
+/** Navigate to the map and ensure Test Cluster is the selected cluster. */
 async function selectTestCluster(page: Page): Promise<void> {
   await page.goto('/');
   await page.waitForLoadState('networkidle');
-  // The cluster list is collapsed into a dropdown by default; expand it first.
-  // The header button shows "All Clusters" before any selection is made.
-  await page.locator('button[aria-expanded]').filter({ hasText: 'All Clusters' }).first().click();
-  // "Test Cluster" and "Test Cluster 2" both appear; negative-lookahead picks the right one.
-  await page.locator('button').filter({ hasText: /Test Cluster(?! 2)/ }).first().click();
-  await page.waitForLoadState('networkidle');
+  // Scoped users with access to a single cluster (perm-coordinator here)
+  // have ClusterMapView auto-select that cluster on mount and render the
+  // selector as a static badge — there's no dropdown to expand. For
+  // admins / multi-cluster users, expand the dropdown and pick Test
+  // Cluster from the list.
+  const dropdown = page.locator('button[aria-expanded]').filter({ hasText: /All Clusters/ });
+  if (await dropdown.count() > 0) {
+    await dropdown.first().click();
+    // "Test Cluster" and "Test Cluster 2" both appear; negative-lookahead picks the right one.
+    await page.locator('button').filter({ hasText: /Test Cluster(?! 2)/ }).first().click();
+    await page.waitForLoadState('networkidle');
+  }
 }
 
 /** Select Test Cluster then open the Timeline panel. */

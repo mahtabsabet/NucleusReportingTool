@@ -34,7 +34,7 @@ import { useIsMobile } from '../lib/useIsMobile';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
-import { canCreateAnyNucleus } from '../lib/permissions';
+import { canCreateAnyNucleus, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
 import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
@@ -99,6 +99,7 @@ export function ClusterMapView() {
   const [canCreate, setCanCreate] = useState(false);
   const [canCreateAnyCluster, setCanCreateAnyCluster] = useState(false);
   const [canManageUsers, setCanManageUsers] = useState(false);
+  const [callerCtx, setCallerCtx] = useState<CallerContext | null>(null);
   const [showSelectClusterMessage, setShowSelectClusterMessage] = useState(false);
   const [clustersListOpen, setClustersListOpen] = useState(false);
   const [nucleiListOpen, setNucleiListOpen] = useState(false);
@@ -110,12 +111,21 @@ export function ClusterMapView() {
       .then(([c, n, ctx]) => {
         setClusters(c);
         setNuclei(n);
+        setCallerCtx(ctx);
         if (ctx) {
           setCanManageUsers(canCreateUsers(ctx));
           setCanCreateAnyCluster(canCreateAnyNucleus(ctx));
         }
-        if (initialClusterId) {
-          const cluster = c.find(cl => cl.id === initialClusterId);
+        // For a scoped user with access to a single cluster (single-cluster
+        // CC, an NC, or an AL — RLS filters fetchClusters to whatever they
+        // can read), default the view to that cluster instead of "All
+        // Clusters." Admins / Super Admins / Regional Viewers keep the
+        // all-region default. An explicit ?cluster= in the URL always wins.
+        const hasGlobalAccess = !!ctx && (ctx.isAdmin || ctx.isSuperAdmin || ctx.isRegionalViewer);
+        const autoCluster = !initialClusterId && !hasGlobalAccess && c.length === 1 ? c[0].id : null;
+        const effectiveInitial = initialClusterId ?? autoCluster;
+        if (effectiveInitial) {
+          const cluster = c.find(cl => cl.id === effectiveInitial);
           if (cluster) {
             setSelectedCluster(cluster.id);
             setMapCenter([cluster.center.lat, cluster.center.lng]);
@@ -220,6 +230,14 @@ export function ClusterMapView() {
   const currentClusterName = selectedCluster
     ? clusters.find(c => c.id === selectedCluster)?.name
     : null;
+
+  // Admin / Super Admin / Regional Viewer see the full region (and get the
+  // "All Clusters" option). Scoped users (CC / NC / AL) only see the
+  // clusters they can read via RLS — if that's exactly one, the selector
+  // becomes a static label rather than offering an illusory choice.
+  const hasGlobalAccess = !!callerCtx
+    && (callerCtx.isAdmin || callerCtx.isSuperAdmin || callerCtx.isRegionalViewer);
+  const canSwitchClusters = hasGlobalAccess || clusters.length > 1;
 
   if (loading) {
     return (
@@ -357,53 +375,75 @@ export function ClusterMapView() {
             <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
               Clusters
             </h2>
-            <button
-              onClick={() => setClustersListOpen((v) => !v)}
-              disabled={isPlacing}
-              aria-expanded={clustersListOpen}
-              className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left border ${selectedCluster === null ? 'bg-gray-900 text-white border-gray-900 shadow-sm' : 'bg-blue-50 text-blue-900 border-blue-100 shadow-sm'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>
+            {canSwitchClusters ? (
+              <button
+                onClick={() => setClustersListOpen((v) => !v)}
+                disabled={isPlacing}
+                aria-expanded={clustersListOpen}
+                className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left border ${selectedCluster === null ? 'bg-gray-900 text-white border-gray-900 shadow-sm' : 'bg-blue-50 text-blue-900 border-blue-100 shadow-sm'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-90'}`}>
 
-              <div className="flex items-center gap-3 min-w-0">
-                {selectedCluster === null ? (
-                  <GlobeIcon className="w-5 h-5 text-gray-300 flex-shrink-0" />
-                ) : (
+                <div className="flex items-center gap-3 min-w-0">
+                  {selectedCluster === null ? (
+                    <GlobeIcon className="w-5 h-5 text-gray-300 flex-shrink-0" />
+                  ) : (
+                    <MapIcon className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                  )}
+                  <span className="font-semibold truncate">
+                    {currentClusterName ?? 'All Clusters'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span
+                    className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === null ? 'bg-gray-800 text-gray-300' : 'bg-blue-100 text-blue-700'}`}>
+                    {selectedCluster === null
+                      ? nuclei.length
+                      : nuclei.filter(n => n.clusterId === selectedCluster).length}
+                  </span>
+                  <ChevronDownIcon
+                    className={`w-4 h-4 transition-transform ${clustersListOpen ? 'rotate-180' : ''} ${selectedCluster === null ? 'text-gray-300' : 'text-blue-700'}`} />
+                </div>
+              </button>
+            ) : (
+              // Single-cluster scoped user: show the cluster name as a
+              // static badge rather than a dropdown they can't actually
+              // switch from.
+              <div
+                aria-label="Cluster"
+                className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl text-left border bg-blue-50 text-blue-900 border-blue-100 shadow-sm"
+              >
+                <div className="flex items-center gap-3 min-w-0">
                   <MapIcon className="w-5 h-5 text-blue-500 flex-shrink-0" />
-                )}
-                <span className="font-semibold truncate">
-                  {currentClusterName ?? 'All Clusters'}
+                  <span className="font-semibold truncate">
+                    {currentClusterName ?? '—'}
+                  </span>
+                </div>
+                <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 flex-shrink-0">
+                  {nuclei.filter(n => n.clusterId === selectedCluster).length}
                 </span>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <span
-                  className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === null ? 'bg-gray-800 text-gray-300' : 'bg-blue-100 text-blue-700'}`}>
-                  {selectedCluster === null
-                    ? nuclei.length
-                    : nuclei.filter(n => n.clusterId === selectedCluster).length}
-                </span>
-                <ChevronDownIcon
-                  className={`w-4 h-4 transition-transform ${clustersListOpen ? 'rotate-180' : ''} ${selectedCluster === null ? 'text-gray-300' : 'text-blue-700'}`} />
-              </div>
-            </button>
+            )}
 
             {clustersListOpen && (
               <div className="space-y-1.5 mt-2 max-h-72 overflow-y-auto pr-1">
-                <button
-                  onClick={() => handleClusterSelect(null)}
-                  disabled={isPlacing}
-                  className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left ${selectedCluster === null ? 'bg-gray-900 text-white shadow-sm' : 'hover:bg-gray-100 text-gray-700'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                {hasGlobalAccess && (
+                  <button
+                    onClick={() => handleClusterSelect(null)}
+                    disabled={isPlacing}
+                    className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left ${selectedCluster === null ? 'bg-gray-900 text-white shadow-sm' : 'hover:bg-gray-100 text-gray-700'} ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
 
-                  <div className="flex items-center gap-3">
-                    <GlobeIcon
-                      className={`w-5 h-5 ${selectedCluster === null ? 'text-gray-300' : 'text-gray-400'}`} />
+                    <div className="flex items-center gap-3">
+                      <GlobeIcon
+                        className={`w-5 h-5 ${selectedCluster === null ? 'text-gray-300' : 'text-gray-400'}`} />
 
-                    <span className="font-semibold">All Clusters</span>
-                  </div>
-                  <span
-                    className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === null ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
+                      <span className="font-semibold">All Clusters</span>
+                    </div>
+                    <span
+                      className={`text-xs font-bold px-2 py-0.5 rounded-md ${selectedCluster === null ? 'bg-gray-800 text-gray-300' : 'bg-gray-200 text-gray-600'}`}>
 
-                    {nuclei.length}
-                  </span>
-                </button>
+                      {nuclei.length}
+                    </span>
+                  </button>
+                )}
 
                 {clusters.map((cluster) => {
                   const count = nuclei.filter(n => n.clusterId === cluster.id).length;

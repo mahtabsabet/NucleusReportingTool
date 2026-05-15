@@ -24,6 +24,7 @@ import {
   updateTimelineEvent,
   deleteTimelineEvent,
 } from '../lib/db/timeline';
+import { fetchClusters, type ClusterRow } from '../lib/db/clusters';
 import { TimelineCycle, TimelineEvent, TimelineItemType } from '../types';
 import { buildCycleSchedule, ComputedCycle } from '../lib/timeline/cycles';
 import {
@@ -150,6 +151,10 @@ export function Timeline({
   const [overrides, setOverrides] = useState<TimelineCycleOverride[]>([]);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [callerCtx, setCallerCtx] = useState<CallerContext | null>(null);
+  // Clusters lookup is only consulted by the hover tooltip on the
+  // "all clusters" overview to label each event with its cluster name.
+  // RLS already filters this to what the caller can read.
+  const [clusters, setClusters] = useState<ClusterRow[]>([]);
   const [panelHeight, setPanelHeight] = useState(256);
 
   // ───── Pending boundary shifts ────────────────────────────────────────
@@ -206,6 +211,7 @@ export function Timeline({
 
   useEffect(() => {
     getCallerContext().then(setCallerCtx).catch(() => setCallerCtx(null));
+    fetchClusters().then(setClusters).catch(() => setClusters([]));
   }, []);
 
   // ───── Cycle schedule derivation ──────────────────────────────────────
@@ -1577,6 +1583,16 @@ export function Timeline({
             <div className="text-gray-300 mt-0.5">
               {formatDateRange(hoveredEvent.event)}
             </div>
+            {/* On the "all clusters" overview, label each event with its
+                cluster so you can tell whose timeline it belongs to.
+                Hidden on cluster- or nucleus-specific views (context is
+                already implicit) and when the event predates being
+                tagged to a cluster. */}
+            {!clusterId && !isNucleusScope && hoveredEvent.event.clusterId && (
+              <div className="text-gray-400 mt-0.5">
+                Cluster: {clusters.find(c => c.id === hoveredEvent.event.clusterId)?.name ?? '—'}
+              </div>
+            )}
             {hoveredEvent.event.location && (
               <div className="text-gray-400 mt-0.5">
                 📍 {hoveredEvent.event.location}
