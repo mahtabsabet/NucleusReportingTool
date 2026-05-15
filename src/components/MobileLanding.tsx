@@ -16,7 +16,6 @@ import { fetchClusters, fetchNuclei } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext } from '../lib/db/users';
 import type { CallerContext } from '../lib/permissions';
-import { coordinatorClusterIds } from '../lib/permissions';
 import { GlobalSearch } from './GlobalSearch';
 import { AccountMenu } from './AccountMenu';
 
@@ -31,19 +30,30 @@ export function MobileLanding() {
   const [loading, setLoading] = useState(true);
   const [selectedCluster, setSelectedCluster] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [callerCtx, setCallerCtx] = useState<CallerContext | null>(null);
 
   useEffect(() => {
     Promise.all([fetchClusters(), fetchNuclei(), getCallerContext()])
       .then(([c, n, ctx]) => {
         setClusters(c);
         setNuclei(n);
+        setCallerCtx(ctx);
         if (ctx) {
-          const initial = pickInitialCluster(ctx);
+          const initial = pickInitialCluster(ctx, c);
           if (initial) setSelectedCluster(initial);
         }
       })
       .finally(() => setLoading(false));
   }, []);
+
+  // Admin / Super Admin / Regional Viewer see the full region with the
+  // "All Region" option. Scoped users (CC / NC / AL) see only the
+  // clusters they can read via RLS — the context picker drops the
+  // "All Region" entry and, when there's a single cluster, the
+  // context strip becomes a static label.
+  const hasGlobalAccess = !!callerCtx
+    && (callerCtx.isAdmin || callerCtx.isSuperAdmin || callerCtx.isRegionalViewer);
+  const canSwitchClusters = hasGlobalAccess || clusters.length > 1;
 
   const filteredNuclei = useMemo(
     () => selectedCluster ? nuclei.filter(n => n.clusterId === selectedCluster) : nuclei,
@@ -103,21 +113,37 @@ export function MobileLanding() {
 
       <section className="px-4 pt-6">
         <SectionHeading>Current Context</SectionHeading>
-        <button
-          type="button"
-          onClick={() => setPickerOpen(true)}
-          disabled={loading}
-          className="mt-3 w-full bg-white border border-gray-200 rounded-2xl px-4 py-3.5 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-60"
-        >
-          <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
-            <GlobeIcon className="w-5 h-5 text-gray-500" />
+        {canSwitchClusters ? (
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            disabled={loading}
+            className="mt-3 w-full bg-white border border-gray-200 rounded-2xl px-4 py-3.5 flex items-center gap-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-60"
+          >
+            <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center flex-shrink-0">
+              <GlobeIcon className="w-5 h-5 text-gray-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-gray-500">{contextKindLabel}</p>
+              <p className="text-sm font-bold text-gray-900 truncate">{contextValueLabel}</p>
+            </div>
+            <ChevronRightIcon className="w-5 h-5 text-gray-400 flex-shrink-0" />
+          </button>
+        ) : (
+          // Single-cluster scoped user: static badge rather than a picker.
+          <div
+            aria-label="Current cluster"
+            className="mt-3 w-full bg-white border border-gray-200 rounded-2xl px-4 py-3.5 flex items-center gap-3"
+          >
+            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
+              <MapIcon className="w-5 h-5 text-blue-600" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-gray-500">Cluster</p>
+              <p className="text-sm font-bold text-gray-900 truncate">{currentClusterName ?? '—'}</p>
+            </div>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium text-gray-500">{contextKindLabel}</p>
-            <p className="text-sm font-bold text-gray-900 truncate">{contextValueLabel}</p>
-          </div>
-          <ChevronRightIcon className="w-5 h-5 text-gray-400 flex-shrink-0" />
-        </button>
+        )}
       </section>
 
       <section className="px-4 pt-6">
@@ -206,6 +232,7 @@ export function MobileLanding() {
           nuclei={nuclei}
           selectedCluster={selectedCluster}
           regionLabel={`All ${REGION_NAME} Clusters`}
+          showAllRegion={hasGlobalAccess}
           onClose={() => setPickerOpen(false)}
           onSelect={id => {
             setSelectedCluster(id);
@@ -254,11 +281,15 @@ interface ContextPickerProps {
   nuclei: NucleusRow[];
   selectedCluster: string | null;
   regionLabel: string;
+  // Only callers with region-wide read access (Admin, Super Admin,
+  // Regional Viewer) see the "All Region" option; scoped users pick
+  // among the clusters they can actually access.
+  showAllRegion: boolean;
   onClose: () => void;
   onSelect: (id: string | null) => void;
 }
 
-function ContextPicker({ clusters, nuclei, selectedCluster, regionLabel, onClose, onSelect }: ContextPickerProps) {
+function ContextPicker({ clusters, nuclei, selectedCluster, regionLabel, showAllRegion, onClose, onSelect }: ContextPickerProps) {
   const counts = useMemo(() => {
     const m = new Map<string, number>();
     nuclei.forEach(n => m.set(n.clusterId, (m.get(n.clusterId) ?? 0) + 1));
@@ -287,13 +318,15 @@ function ContextPicker({ clusters, nuclei, selectedCluster, regionLabel, onClose
           </button>
         </div>
         <div className="overflow-y-auto py-2">
-          <PickerRow
-            label={regionLabel}
-            sublabel={`${nuclei.length} ${nuclei.length === 1 ? 'nucleus' : 'nuclei'}`}
-            icon={<GlobeIcon className="w-5 h-5 text-gray-500" />}
-            selected={selectedCluster === null}
-            onClick={() => onSelect(null)}
-          />
+          {showAllRegion && (
+            <PickerRow
+              label={regionLabel}
+              sublabel={`${nuclei.length} ${nuclei.length === 1 ? 'nucleus' : 'nuclei'}`}
+              icon={<GlobeIcon className="w-5 h-5 text-gray-500" />}
+              selected={selectedCluster === null}
+              onClick={() => onSelect(null)}
+            />
+          )}
           <div className="px-5 pt-3 pb-1 text-[11px] font-bold text-gray-400 uppercase tracking-widest">
             Clusters
           </div>
@@ -348,12 +381,13 @@ function peopleCount(n: NucleusRow): number {
   return c.coordinating + c.supporting + c.participating + c.aware;
 }
 
-// If the caller is a cluster coordinator with exactly one cluster grant
-// (and no global access), preselect that cluster so they don't have to
-// pick it before creating a nucleus on the map. Admins / regional viewers
-// keep the all-region default.
-function pickInitialCluster(ctx: CallerContext): string | null {
+// Any scoped user (CC / NC / AL) with access to exactly one cluster gets
+// that cluster preselected so they don't have to pick it before creating
+// a nucleus or opening a workspace. RLS already filters fetchClusters to
+// only the clusters they can read, so checking the length of that list
+// covers all three roles uniformly. Admins / Super Admins / Regional
+// Viewers keep the all-region default.
+function pickInitialCluster(ctx: CallerContext, clusters: ClusterRow[]): string | null {
   if (ctx.isSuperAdmin || ctx.isAdmin || ctx.isRegionalViewer) return null;
-  const cc = coordinatorClusterIds(ctx);
-  return cc.length === 1 ? cc[0] : null;
+  return clusters.length === 1 ? clusters[0].id : null;
 }
