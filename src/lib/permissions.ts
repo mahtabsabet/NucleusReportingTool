@@ -423,9 +423,19 @@ export function actionPermission(
       return canCreateUsers(ctx) ? 'direct' : 'none';
 
     case 'delete_user':
-    case 'change_user_permissions':
-      // CC and NC may submit a request, but not execute.
+      // Deleting a user account entirely is a stronger action than a role
+      // change — CC and NC submit a request for an Admin to approve.
       if (isClusterCoordinator(ctx) || isNucleusCollaborator(ctx)) return 'request';
+      return 'none';
+
+    case 'change_user_permissions':
+      // Cluster Coordinators and Nucleus Coordinators change roles directly
+      // within their scope (no request flow). ROLE_ASSIGNERS still
+      // constrains which roles each can hand out — a CC may assign
+      // cluster_coordinator / nucleus_collaborator / activity_lead within
+      // their cluster; an NC may assign activity_lead within their nucleus.
+      // The manage-user edge function enforces the scope check on save.
+      if (isClusterCoordinator(ctx) || isNucleusCollaborator(ctx)) return 'direct';
       return 'none';
   }
 }
@@ -486,8 +496,13 @@ export function canRequestDeleteUser(ctx: CallerContext, target: ManagedUserSumm
 
 // "Change permissions" rules:
 //   Super Admin: yes, except cannot demote Super Admins.
-//   Admin: yes, except cannot demote Super Admins/Admins, and cannot promote anyone to Super Admin.
-//   CC/NC: request only.
+//   Admin: yes, except cannot touch Super Admins / Admins, and cannot
+//   promote anyone to Super Admin.
+//   CC / NC: yes within scope. ROLE_ASSIGNERS narrows which roles each
+//   can hand out (CC → CC/NC/AL; NC → AL). RLS already filters
+//   fetchManagedUsers to users they can see, so if the target is
+//   visible the target's existing scope is in theirs; the manage-user
+//   edge function does the authoritative scope check on save.
 export function canChangeUserRoleDirectly(
   ctx: CallerContext,
   target: ManagedUserSummary,
@@ -500,21 +515,15 @@ export function canChangeUserRoleDirectly(
   // Caller must be allowed to assign `newRole` at all.
   if (!canAssignRole(ctx, newRole)) return false;
 
-  if (ctx.isSuperAdmin) {
-    // Super Admin can change anyone except cannot demote a Super Admin
-    // (that would be self-implied; we already block self above and there
-    // is at most one Super Admin in normal operation).
-    if (target.isSuperAdmin) return false;
-    return true;
-  }
+  // Never demote a Super Admin via the app, regardless of caller.
+  if (target.isSuperAdmin) return false;
+  // Only a Super Admin may change an Admin's role.
+  if (target.isAdmin && !ctx.isSuperAdmin) return false;
 
-  if (ctx.isAdmin) {
-    // Admins can't touch Super Admins or other Admins.
-    if (target.isSuperAdmin || target.isAdmin) return false;
-    return true;
-  }
-
-  return false; // CC/NC must use request flow
+  return ctx.isSuperAdmin
+    || ctx.isAdmin
+    || isClusterCoordinator(ctx)
+    || isNucleusCollaborator(ctx);
 }
 
 // "Reset password" rules mirror canDeleteUserDirectly:
@@ -533,12 +542,6 @@ export function canResetUserPasswordDirectly(
   if (ctx.isSuperAdmin) return true;
   if (ctx.isAdmin) return !target.isAdmin;
   return false;
-}
-
-export function canRequestChangeUserRole(ctx: CallerContext, target: ManagedUserSummary): boolean {
-  if (target.id === ctx.userId) return false;
-  if (target.isSuperAdmin || target.isAdmin) return false; // out of CC/NC's reach even via request
-  return isClusterCoordinator(ctx) || isNucleusCollaborator(ctx);
 }
 
 // Re-exported helper for badges/labels at call sites.
