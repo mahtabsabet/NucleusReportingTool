@@ -1227,12 +1227,15 @@ export function Timeline({
                 );
                 const lengthPx = endMain - startMain;
                 const pending = (pendingShifts[cycle.id] ?? 0) !== 0;
-                // Cycle ladder is administrative; only admins can shift its
-                // boundaries, and only on the cluster view. The nucleus
-                // timeline shows the same ladder for context but never
-                // exposes the +/- editor here.
+                // Cycle ladder is administrative; admins and the cluster's
+                // coordinators can shift its boundaries, and only on the
+                // cluster view. The nucleus timeline shows the same ladder
+                // for context but never exposes the +/- editor here.
                 const showEdit =
-                  callerCtx?.isAdmin && lengthPx >= CYCLE_EDIT_MIN_PX && !isNucleusScope;
+                  !!callerCtx
+                  && canManageClusterTimelineEvents(callerCtx, clusterId)
+                  && lengthPx >= CYCLE_EDIT_MIN_PX
+                  && !isNucleusScope;
                 const showLabel = lengthPx >= 50;
                 // Boundary tick: a short stripe across the center axis,
                 // on the start (leading) edge of the cycle.
