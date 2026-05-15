@@ -1173,6 +1173,16 @@ export function Timeline({
         </div>
       </div>
 
+      {/* When no specific cluster is selected, the cycle ladder shown is the
+          standard Bahá'í-year default — individual clusters may have shifted
+          their boundaries. Surface this so the timeline isn't mistaken for
+          any one cluster's actual calendar. */}
+      {!clusterId && !isNucleusScope && (
+        <div className="px-4 md:px-6 py-1.5 border-b border-gray-200 bg-gray-50 text-sm italic text-gray-700 flex-shrink-0">
+          Default cycle dates shown — actual cycles may vary by cluster
+        </div>
+      )}
+
       {/* Timeline Content */}
       <div
         ref={containerRef}
@@ -1227,12 +1237,20 @@ export function Timeline({
                 );
                 const lengthPx = endMain - startMain;
                 const pending = (pendingShifts[cycle.id] ?? 0) !== 0;
-                // Cycle ladder is administrative; only admins can shift its
-                // boundaries, and only on the cluster view. The nucleus
-                // timeline shows the same ladder for context but never
-                // exposes the +/- editor here.
+                // Cycle ladder is administrative; admins and the cluster's
+                // coordinators can shift its boundaries, and only when a
+                // specific cluster is selected. The "all clusters" overview
+                // and nucleus timelines show the same ladder for calendar
+                // context but never expose the +/- editor (editing the
+                // former would shift the global default for every cluster
+                // that hasn't overridden; the latter would fork the cluster's
+                // calendar from a nucleus).
                 const showEdit =
-                  callerCtx?.isAdmin && lengthPx >= CYCLE_EDIT_MIN_PX && !isNucleusScope;
+                  !!callerCtx
+                  && !!clusterId
+                  && canManageClusterTimelineEvents(callerCtx, clusterId)
+                  && lengthPx >= CYCLE_EDIT_MIN_PX
+                  && !isNucleusScope;
                 const showLabel = lengthPx >= 50;
                 // Boundary tick: a short stripe across the center axis,
                 // on the start (leading) edge of the cycle.
