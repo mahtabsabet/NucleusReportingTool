@@ -39,6 +39,9 @@ export function PersonNameCombobox({
   const [isOpen, setIsOpen] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const [isAdding, setIsAdding] = useState(false);
+  // Surfaces add/select failures inline so they don't silently vanish into an
+  // unhandled promise rejection. Both onAdd call sites set this in catch().
+  const [addError, setAddError] = useState<string | null>(null);
 
   // New-profile dialog state
   const [showNewProfileForm, setShowNewProfileForm] = useState(false);
@@ -88,11 +91,14 @@ export function PersonNameCombobox({
 
   const selectExisting = async (match: PersonSearchMatch) => {
     setIsOpen(false);
+    setAddError(null);
     setIsAdding(true);
     try {
       await onAdd({ name: match.name, existingPersonId: match.id });
       setInputValue('');
       setSuggestions([]);
+    } catch (err: any) {
+      setAddError(err?.message ?? 'Failed to add person.');
     } finally {
       setIsAdding(false);
     }
@@ -110,6 +116,7 @@ export function PersonNameCombobox({
   const submitNewProfile = async () => {
     const name = newProfileName.trim();
     if (!name) return;
+    setAddError(null);
     setIsAdding(true);
     try {
       await onAdd({
@@ -120,6 +127,8 @@ export function PersonNameCombobox({
       setInputValue('');
       setSuggestions([]);
       setShowNewProfileForm(false);
+    } catch (err: any) {
+      setAddError(err?.message ?? 'Failed to add person.');
     } finally {
       setIsAdding(false);
     }
@@ -328,6 +337,14 @@ export function PersonNameCombobox({
             </div>
           )}
         </div>
+      )}
+      {addError && (
+        <p
+          role="alert"
+          className="mt-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-md px-2.5 py-1.5 leading-snug"
+        >
+          {addError}
+        </p>
       )}
     </div>
   );
