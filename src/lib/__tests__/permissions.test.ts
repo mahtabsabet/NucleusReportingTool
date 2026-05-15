@@ -9,7 +9,6 @@ import {
   canChangeUserRoleDirectly,
   canDeleteUserDirectly,
   canManageClusterTimelineEvents,
-  canRequestChangeUserRole,
   canRequestDeleteUser,
   canResetUserPasswordDirectly,
   creatableRoles,
@@ -197,10 +196,21 @@ describe('actionPermission', () => {
     }
   });
 
-  it('CC/NC use request flow for delete_user / change_user_permissions', () => {
+  it('CC/NC submit requests for delete_user (deletion is more drastic than role change)', () => {
     expect(actionPermission(CC, 'delete_user')).toBe('request');
-    expect(actionPermission(NC, 'change_user_permissions')).toBe('request');
+    expect(actionPermission(NC, 'delete_user')).toBe('request');
     expect(actionPermission(AL, 'delete_user')).toBe('none');
+    expect(actionPermission(REGIONAL, 'delete_user')).toBe('none');
+  });
+
+  it('CC/NC change user permissions directly within their scope', () => {
+    // The action itself is direct for CC and NC; ROLE_ASSIGNERS narrows
+    // which roles each can hand out, and the manage-user edge function
+    // does the authoritative scope check on save.
+    expect(actionPermission(CC, 'change_user_permissions')).toBe('direct');
+    expect(actionPermission(NC, 'change_user_permissions')).toBe('direct');
+    expect(actionPermission(AL, 'change_user_permissions')).toBe('none');
+    expect(actionPermission(REGIONAL, 'change_user_permissions')).toBe('none');
   });
 
   it('edit_timeline_cycles: Admin / CC only, cluster-scoped', () => {
@@ -269,7 +279,7 @@ describe('user-management safeguards', () => {
     expect(canChangeUserRoleDirectly(SUPER, summary({ id: 'x' }), 'super_admin' as any)).toBe(false);
   });
 
-  it('CC and NC must use request flow for user deletion / role change', () => {
+  it('CC and NC cannot delete directly; they submit a request', () => {
     const target = summary({
       id: 'x',
       grants: [{ role: 'activity_lead', clusterId: null, nucleusId: null, activityId: 'A' } as PermissionGrant],
@@ -278,15 +288,34 @@ describe('user-management safeguards', () => {
     expect(canRequestDeleteUser(CC, target)).toBe(true);
     expect(canDeleteUserDirectly(NC, target)).toBe(false);
     expect(canRequestDeleteUser(NC, target)).toBe(true);
-    expect(canRequestChangeUserRole(CC, target)).toBe(true);
   });
 
-  it('CC/NC cannot even request actions on a Super Admin or Admin target', () => {
+  it('CC and NC change roles directly (no request flow)', () => {
+    const al = summary({
+      id: 'x',
+      grants: [{ role: 'activity_lead', clusterId: null, nucleusId: null, activityId: 'A' } as PermissionGrant],
+    });
+    // CC can promote an AL to NC / CC / AL (different scope) directly.
+    expect(canChangeUserRoleDirectly(CC, al, 'nucleus_collaborator')).toBe(true);
+    expect(canChangeUserRoleDirectly(CC, al, 'cluster_coordinator')).toBe(true);
+    expect(canChangeUserRoleDirectly(CC, al, 'activity_lead')).toBe(true);
+    // NC can only assign activity_lead (per ROLE_ASSIGNERS).
+    expect(canChangeUserRoleDirectly(NC, al, 'activity_lead')).toBe(true);
+    expect(canChangeUserRoleDirectly(NC, al, 'nucleus_collaborator')).toBe(false);
+    expect(canChangeUserRoleDirectly(NC, al, 'cluster_coordinator')).toBe(false);
+  });
+
+  it('CC and NC cannot touch Admin or Super Admin targets, even for role changes', () => {
     const adminTarget = summary({ id: 'x', isAdmin: true });
     const superTarget = summary({ id: 'x', isAdmin: true, isSuperAdmin: true });
     expect(canRequestDeleteUser(CC, adminTarget)).toBe(false);
     expect(canRequestDeleteUser(CC, superTarget)).toBe(false);
-    expect(canRequestChangeUserRole(NC, adminTarget)).toBe(false);
+    expect(canChangeUserRoleDirectly(CC, adminTarget, 'nucleus_collaborator')).toBe(false);
+    expect(canChangeUserRoleDirectly(NC, adminTarget, 'activity_lead')).toBe(false);
+    expect(canChangeUserRoleDirectly(CC, superTarget, 'cluster_coordinator')).toBe(false);
+    // Admins can't touch other Admins either — only Super Admin may.
+    expect(canChangeUserRoleDirectly(ADMIN, adminTarget, 'regional_viewer')).toBe(false);
+    expect(canChangeUserRoleDirectly(SUPER, adminTarget, 'regional_viewer')).toBe(true);
   });
 
   // Reset-password safeguards mirror delete-user; covered alongside so a
