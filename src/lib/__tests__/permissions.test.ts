@@ -203,31 +203,38 @@ describe('actionPermission', () => {
     expect(actionPermission(AL, 'delete_user')).toBe('none');
   });
 
-  it('Timeline cycle dates and events: SuperAdmin / Admin / CC only', () => {
+  it('edit_timeline_cycles: Admin / CC only, cluster-scoped', () => {
     // Globally allowed
     expect(actionPermission(SUPER, 'edit_timeline_cycles')).toBe('direct');
-    expect(actionPermission(ADMIN, 'manage_timeline_events')).toBe('direct');
+    expect(actionPermission(ADMIN, 'edit_timeline_cycles')).toBe('direct');
     // CC only within own cluster
     expect(actionPermission(CC, 'edit_timeline_cycles', { clusterId: 'C1' })).toBe('direct');
     expect(actionPermission(CC, 'edit_timeline_cycles', { clusterId: 'OTHER' })).toBe('none');
-    expect(actionPermission(CC, 'manage_timeline_events', { clusterId: 'C1' })).toBe('direct');
-    // NC, AL, Regional: never
-    expect(actionPermission(NC, 'edit_timeline_cycles', { clusterId: 'C1' })).toBe('none');
-    expect(actionPermission(AL, 'manage_timeline_events', { clusterId: 'C1' })).toBe('none');
+    // NC, AL, Regional: never (cycles are cluster-administrative; a
+    // nucleus inherits its parent cluster's cycles, it can't fork them)
+    expect(actionPermission(NC, 'edit_timeline_cycles', { clusterId: 'C1', nucleusId: 'N1' })).toBe('none');
+    expect(actionPermission(AL, 'edit_timeline_cycles', { clusterId: 'C1' })).toBe('none');
     expect(actionPermission(REGIONAL, 'edit_timeline_cycles')).toBe('none');
   });
 
-  it('Timeline meetings and notes: same rule as events (CC and higher)', () => {
+  it('manage_timeline_events / _meetings / _notes: CC of cluster OR NC of own nucleus', () => {
     // Globally allowed
-    expect(actionPermission(SUPER, 'manage_timeline_meetings')).toBe('direct');
+    expect(actionPermission(SUPER, 'manage_timeline_events')).toBe('direct');
+    expect(actionPermission(ADMIN, 'manage_timeline_meetings')).toBe('direct');
     expect(actionPermission(ADMIN, 'manage_timeline_notes')).toBe('direct');
-    // CC only within own cluster
+    // CC within own cluster
+    expect(actionPermission(CC, 'manage_timeline_events', { clusterId: 'C1' })).toBe('direct');
     expect(actionPermission(CC, 'manage_timeline_meetings', { clusterId: 'C1' })).toBe('direct');
-    expect(actionPermission(CC, 'manage_timeline_meetings', { clusterId: 'OTHER' })).toBe('none');
     expect(actionPermission(CC, 'manage_timeline_notes', { clusterId: 'C1' })).toBe('direct');
-    // NC, AL, Regional: never
-    expect(actionPermission(NC, 'manage_timeline_meetings', { clusterId: 'C1' })).toBe('none');
-    expect(actionPermission(AL, 'manage_timeline_notes', { clusterId: 'C1' })).toBe('none');
+    expect(actionPermission(CC, 'manage_timeline_meetings', { clusterId: 'OTHER' })).toBe('none');
+    // NC within own nucleus — matches the canManageNucleusTimelineEvents
+    // helper and the timeline_events RLS in the 20260512 migration.
+    expect(actionPermission(NC, 'manage_timeline_events', { nucleusId: 'N1' })).toBe('direct');
+    expect(actionPermission(NC, 'manage_timeline_meetings', { nucleusId: 'N1' })).toBe('direct');
+    expect(actionPermission(NC, 'manage_timeline_notes', { nucleusId: 'N1' })).toBe('direct');
+    expect(actionPermission(NC, 'manage_timeline_events', { nucleusId: 'OTHER' })).toBe('none');
+    // AL, Regional: never
+    expect(actionPermission(AL, 'manage_timeline_events', { clusterId: 'C1' })).toBe('none');
     expect(actionPermission(REGIONAL, 'manage_timeline_meetings')).toBe('none');
   });
 });
