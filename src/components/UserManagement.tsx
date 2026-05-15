@@ -42,7 +42,6 @@ import {
   canRequestDeleteUser,
   canChangeUserRoleDirectly,
   canResetUserPasswordDirectly,
-  canRequestChangeUserRole,
   creatableRoles,
   highestRole,
   primaryRole,
@@ -78,25 +77,18 @@ function permissionDescription(perm: UserPermissionRow): string {
   return '';
 }
 
-// Roles offered when changing a user's role.  The list is filtered by:
-//   1. Roles the caller is allowed to assign (creatableRoles)
-//   2. Roles compatible with the existing permission's scope (if any)
+// Roles offered when changing a user's role. Since the Change Role modal
+// supports cross-scope-type replacements (a person can move from being an
+// Activity Lead to a Nucleus Coordinator, for example — handled in the
+// edge function as a delete-old + insert-new flow), we don't filter by
+// the target's current scope here. ROLE_ASSIGNERS via creatableRoles is
+// the only filter that applies: a CC may assign CC/NC/AL, an NC may
+// assign AL, etc.
 function roleOptionsForChange(
   ctx: CallerContext,
-  user: ManagedUser
+  _user: ManagedUser
 ): CreatableRole[] {
-  const callerCan = creatableRoles(ctx);
-  const perm = user.permissions[0];
-  if (!perm) {
-    // Global-only user — Admin or Regional Viewer.
-    return callerCan.filter(r => r === 'admin' || r === 'regional_viewer');
-  }
-  let scopeCompatible: CreatableRole[];
-  if (perm.clusterId) scopeCompatible = ['cluster_coordinator'];
-  else if (perm.nucleusId) scopeCompatible = ['nucleus_collaborator'];
-  else scopeCompatible = ['activity_lead'];
-  // Admin / Regional Viewer can replace a scoped permission entirely.
-  return callerCan.filter(r => scopeCompatible.includes(r) || r === 'admin' || r === 'regional_viewer');
+  return creatableRoles(ctx);
 }
 
 interface UserCardProps {
@@ -107,22 +99,23 @@ interface UserCardProps {
   onResetPassword: (user: ManagedUser) => void;
   onResetPrivacyAck: (user: ManagedUser) => void;
   onRequestDelete: (user: ManagedUser) => void;
-  onRequestChangeRole: (user: ManagedUser) => void;
 }
 
 function UserCard({
-  user, callerCtx, onDelete, onChangeRole, onResetPassword, onResetPrivacyAck, onRequestDelete, onRequestChangeRole,
+  user, callerCtx, onDelete, onChangeRole, onResetPassword, onResetPrivacyAck, onRequestDelete,
 }: UserCardProps) {
   const summary = toUserSummary(user);
   const directDelete = canDeleteUserDirectly(callerCtx, summary);
   const requestDelete = !directDelete && canRequestDeleteUser(callerCtx, summary);
-  const directChange = canChangeUserRoleDirectly(callerCtx, summary, highestRole(summary) as CreatableRole)
-    // The "any" change is more permissive — surface the button if the caller
-    // can assign at least one valid replacement role.
-    || roleOptionsForChange(callerCtx, user).length > 0
-       && callerCtx.userId !== user.id
-       && (!summary.isAdmin || callerCtx.isSuperAdmin);
-  const requestChange = !directChange && canRequestChangeUserRole(callerCtx, summary);
+  // Show the Change Role button if the caller could plausibly assign at
+  // least one role to this target. Admin / Super Admin / CC / NC all
+  // change roles directly (no request flow) — the edge function does the
+  // authoritative scope check on save.
+  const directChange =
+    callerCtx.userId !== user.id
+    && !summary.isSuperAdmin
+    && (!summary.isAdmin || callerCtx.isSuperAdmin)
+    && roleOptionsForChange(callerCtx, user).length > 0;
   const directReset = canResetUserPasswordDirectly(callerCtx, summary);
   // Admins / Super Admins can force a user to re-acknowledge the policy.
   // Useful after handoff of a test account, or when an admin wants a
@@ -166,11 +159,11 @@ function UserCard({
             <RoleBadge role="regional_viewer" />
           )}
           <div className="flex items-center gap-1">
-            {(directChange || requestChange) && (
+            {directChange && (
               <button
-                onClick={() => (directChange ? onChangeRole(user) : onRequestChangeRole(user))}
+                onClick={() => onChangeRole(user)}
                 className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-                title={directChange ? 'Change role' : 'Request role change'}
+                title="Change role"
               >
                 <PencilIcon className="w-3.5 h-3.5" />
               </button>
@@ -1115,7 +1108,6 @@ export function UserManagement() {
                     onResetPassword={u => setPendingReset(u)}
                     onResetPrivacyAck={u => setPendingPrivacyReset(u)}
                     onRequestDelete={u => setPendingRequest({ user: u, action: 'delete' })}
-                    onRequestChangeRole={u => setPendingRequest({ user: u, action: 'change_role' })}
                   />
                 ))}
               </div>
