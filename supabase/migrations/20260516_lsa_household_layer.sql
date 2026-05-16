@@ -25,10 +25,18 @@
 
 
 -- ─── 1. New scoped role ──────────────────────────────────────
--- user_permissions.role is a free-text column today, so we
--- don't need to alter an enum. The role string is treated as
--- canonical here, in src/lib/permissions.ts, and in the edge
--- functions that mirror it.
+-- user_permissions.role is the permission_role_enum (defined in
+-- schema.sql). Postgres requires a new enum value to be added in
+-- its own transaction before any later statement can reference
+-- it as a literal — hence the COMMIT below. This file is split
+-- into two transactional chunks for that reason; running it via
+-- `supabase db push` handles both halves automatically, and the
+-- Supabase SQL Editor needs two separate runs (the ALTER first,
+-- then everything after the COMMIT).
+
+alter type permission_role_enum add value if not exists 'lsa_member';
+
+commit;
 
 
 -- ─── 2. lsa_jurisdictions ────────────────────────────────────
