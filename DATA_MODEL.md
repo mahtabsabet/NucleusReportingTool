@@ -289,69 +289,66 @@ User ──< UserPermission >── Cluster | Nucleus | Activity
 
 ## Permissions Model
 
-### Role Hierarchy
-Permissions are cumulative — each role inherits everything the roles below it can do.
+> **The canonical source for what each role can do is `src/lib/permissions.ts`.** UI option lists, action gates, and the `manage-user` / `create-user` Edge Functions all consume that module. This section summarises the model; if doc and code disagree, code wins.
 
-```
-Admin
-  └── Cluster Coordinator
-        └── Nucleus Collaborator
-              └── Activity Lead
-                    └── Viewer
-```
+### Roles
 
-### What Each Role Can Do
+Six active roles. Three are **global** (boolean flags on `profiles`) and three are **scoped** (rows in `user_permissions` tying a user to a cluster / nucleus / activity). A single user holds at most one global flag and any number of scoped grants.
 
-| Action | Viewer | Activity Lead | Nucleus Collaborator | Cluster Coordinator | Admin |
-|---|:---:|:---:|:---:|:---:|:---:|
-| View reports & dashboards (within scope) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| View full person profiles (for people in their scope) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| View course history of participants (in their scope) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| View a person's enrollment & activities in other nuclei (read-only) | | ✓ | ✓ | ✓ | ✓ |
-| Create a Person | | ✓ | ✓ | ✓ | ✓ |
-| Add/remove people from their activity | | ✓ | ✓ | ✓ | ✓ |
-| Log sessions + attendance | | ✓ | ✓ | ✓ | ✓ |
-| Edit participant profiles (within their scope) | | ✓ | ✓ | ✓ | ✓ |
-| Manage activities within a nucleus | | | ✓ | ✓ | ✓ |
-| Update engagement levels within a nucleus | | | ✓ | ✓ | ✓ |
-| Update nucleus notes | | | ✓ | ✓ | ✓ |
-| Assign Activity Lead for activities in their nucleus | | | ✓ | ✓ | ✓ |
-| Assign Nucleus Collaborator for nuclei in their cluster | | | | ✓ | ✓ |
-| Manage nuclei within a cluster | | | | ✓ | ✓ |
-| View all data within a cluster | | | | ✓ | ✓ |
-| Manage courses catalog | | | | | ✓ |
-| Manage users & permissions | | | | | ✓ |
-| View all data globally | | | | | ✓ |
+| Role | Storage | Scope |
+|---|---|---|
+| **Super Admin** | `profiles.is_super_admin` | Global. Bootstrap-only — cannot be created or assigned via the app. Typically exactly one exists. |
+| **Administrator** | `profiles.is_admin` | Global. Full read + write everywhere. (Super Admins also have `is_admin = true`.) |
+| **Regional (View-Only)** | `profiles.is_regional_viewer` | Global. Read everywhere; write nowhere. |
+| **Cluster Coordinator** | `user_permissions` row with `cluster_id` | One cluster (per row). |
+| **Nucleus Coordinator** | `user_permissions` row with `nucleus_id` | One nucleus. UI label is "Nucleus Coordinator"; the enum value is the legacy `nucleus_collaborator`. |
+| **Activity Lead** | `user_permissions` row with `activity_id` | One activity. |
 
-### Scope Rules (what data each role can see)
+The `viewer` value in `permission_role_enum` is a legacy artefact and unused — Postgres doesn't support removing enum values in place, so it stays in the schema with a comment.
 
-**Viewer** — read-only, cannot edit anything. Can be scoped to a cluster or to one or more specific nuclei. If scoped to a cluster, they can view all nuclei within it.
+### Who can do what
 
-**Activity Lead** — scoped to their assigned activity for editing, but with broader read access:
-- Can add/remove people from their activity roster
-- Can log sessions and record attendance
-- Can edit basic profile fields for people in their activity
-- Can **read** a person's full profile — including course history and their enrollment/activities in other nuclei — for anyone on their roster
-- Cannot **edit** anything outside their own activity's scope
+Mostly cumulative within a scope hierarchy — a Cluster Coordinator can do everything a Nucleus Coordinator can do within their cluster, and so on. Exceptions are called out in the table.
 
-**Nucleus Collaborator** — scoped to their assigned nucleus for editing, with full read on people in their nucleus:
-- All Activity Lead permissions for every activity in the nucleus
-- Can create new activities in their nucleus
-- Can update engagement levels (NucleusEnrollment) for people in their nucleus
-- Can assign the Activity Lead role to a user for any activity within their nucleus
-- Can view **all data** about any person enrolled in their nucleus — including that person's activities, sessions, and enrollment in other nuclei. The edit restriction applies: they can only modify data within their own nucleus.
+| Action | Activity Lead | Nucleus Coord. | Cluster Coord. | Regional Viewer | Admin | Super Admin |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| View data within scope | own activity | own nucleus | own cluster | everywhere (read-only) | everywhere | everywhere |
+| Add / remove activity participants | own activity | within nucleus | within cluster | | ✓ | ✓ |
+| Manage nucleus enrollments | own activity's nucleus ¹ | within nucleus | within cluster | | ✓ | ✓ |
+| Create persons (via activity flow) | own activity | within nucleus | within cluster | | ✓ | ✓ |
+| Edit person profiles | own activity's people | within nucleus | within cluster | | ✓ | ✓ |
+| Hard-delete persons | request only | request only | within cluster | | ✓ | ✓ |
+| Create / edit / delete activities | | within nucleus | within cluster | | ✓ | ✓ |
+| Create / delete nuclei | | | within cluster | | ✓ | ✓ |
+| Add / edit timeline events, meetings, notes | | within nucleus | within cluster | | ✓ | ✓ |
+| Edit timeline cycle dates | | | within cluster ² | | ✓ | ✓ |
+| Create users (new accounts) | | within nucleus (Activity Lead only) | within cluster (CC / NC / AL) | | ✓ ³ | ✓ |
+| Change a user's role | | within nucleus (assign Activity Lead) ⁴ | within cluster (assign CC / NC / AL) ⁴ | | ✓ ³ | ✓ |
+| Delete a user entirely | | request only | request only | | ✓ ³ | ✓ |
+| Reset another user's password | | | | | ✓ ⁵ | ✓ |
+| Manage the course catalog | | | | | ✓ | ✓ |
 
-**Cluster Coordinator** — scoped to their assigned cluster:
-- All Nucleus Collaborator permissions for every nucleus in the cluster
-- Can create new nuclei in their cluster
-- Can assign the Nucleus Collaborator role to a user for any nucleus within their cluster
-- Can search and view all people within their cluster
-- Cannot see other clusters
+¹ Via the auto-enroll step in `addPersonToActivity` — adding someone to an activity also enrolls them in the parent nucleus.
+² Cycles are cluster-level administrative data. Nuclei inherit them and the cycle editor is hidden in nucleus mode for everyone.
+³ Admin cannot touch other Admins or Super Admins; only a Super Admin can.
+⁴ CC and NC change roles **directly** (no admin-review request step) within their scope. `ROLE_ASSIGNERS` narrows which roles each can hand out: CC may assign cluster_coordinator / nucleus_collaborator / activity_lead; NC may assign activity_lead.
+⁵ Admin cannot reset another Admin's password — only a Super Admin can.
 
-**Admin** — no restrictions. Can also:
-- Manage the Course catalog
-- Assign and revoke user permissions
-- View and manage all clusters, nuclei, people globally
+### Safeguards (apply regardless of role)
+
+- A user cannot delete, demote, or change their own role through this interface.
+- No one can promote anyone to Super Admin through the app.
+- No one can demote a Super Admin through the app.
+- Email-confirmation typing is required for deletes, role changes, and password resets.
+- **Children's data:** any person flagged `is_minor = true` (child / junior_youth, or youth/unknown with the manual minor toggle) has email and phone forced to `NULL` at the data-access layer regardless of what the caller submits.
+
+### Where the checks live
+
+| Layer | Where |
+|---|---|
+| Canonical helpers (intent of record) | `src/lib/permissions.ts` — `actionPermission()`, `canChangeUserRoleDirectly()`, `canDeleteUserDirectly()`, `ROLE_ASSIGNERS`, scope helpers. |
+| UI gating (what buttons appear) | `src/components/UserManagement.tsx` for user management; per-feature components for their own affordances. All consume the helpers above. |
+| Server-side enforcement | Postgres RLS in `supabase/schema.sql` + migrations; `manage-user` and `create-user` Edge Functions (which run as `service_role`, bypass RLS, and perform scope checks in code). |
 
 ---
 

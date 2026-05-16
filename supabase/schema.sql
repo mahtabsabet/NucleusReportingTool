@@ -22,6 +22,13 @@ create type participant_role_enum as enum (
   'parent', 'host', 'attendee', 'participant', 'other'
 );
 
+-- 'viewer' is a legacy enum value from an earlier permissions model and
+-- is unused by current code (see ROLE_BADGE_CLASSES in src/lib/permissions.ts
+-- where it's tagged "legacy"). It is kept here because Postgres doesn't
+-- support dropping enum values in place — the canonical scoped roles are
+-- cluster_coordinator, nucleus_collaborator, activity_lead. Global roles
+-- (admin, super_admin, regional_viewer) live as boolean flags on profiles,
+-- not in this enum.
 create type permission_role_enum as enum (
   'cluster_coordinator', 'nucleus_collaborator',
   'activity_lead', 'viewer'
