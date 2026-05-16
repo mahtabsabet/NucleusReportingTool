@@ -142,23 +142,7 @@ function UserCard({
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {user.isSuperAdmin && (
-            <div className="flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-full px-3 py-1">
-              <ShieldIcon className="w-3.5 h-3.5" />
-              <span className="text-xs font-semibold">Super Admin</span>
-            </div>
-          )}
-          {!user.isSuperAdmin && user.isAdmin && (
-            <div className="flex items-center gap-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-3 py-1">
-              <ShieldIcon className="w-3.5 h-3.5" />
-              <span className="text-xs font-semibold">Admin</span>
-            </div>
-          )}
-          {!user.isAdmin && user.isRegionalViewer && (
-            <RoleBadge role="regional_viewer" />
-          )}
-          <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-shrink-0">
             {directChange && (
               <button
                 onClick={() => onChangeRole(user)}
@@ -195,13 +179,37 @@ function UserCard({
                 <Trash2Icon className="w-3.5 h-3.5" />
               </button>
             )}
-          </div>
         </div>
       </div>
 
-      {!user.isAdmin && user.permissions.length > 0 && (
+      {/* All role badges live in a row below the header so they
+          don't compete with the user's name for horizontal space —
+          long names used to get truncated by Admin / Super Admin /
+          Regional Viewer pills rendered up top. */}
+      {(user.isSuperAdmin || user.isAdmin || user.isRegionalViewer || user.permissions.length > 0) && (
         <div className="mt-4 space-y-2">
-          {user.permissions.map(perm => {
+          {user.isSuperAdmin && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="inline-flex items-center gap-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-full px-3 py-1">
+                <ShieldIcon className="w-3.5 h-3.5" />
+                <span className="text-xs font-semibold">Super Admin</span>
+              </div>
+            </div>
+          )}
+          {!user.isSuperAdmin && user.isAdmin && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="inline-flex items-center gap-1.5 bg-purple-50 text-purple-700 border border-purple-200 rounded-full px-3 py-1">
+                <ShieldIcon className="w-3.5 h-3.5" />
+                <span className="text-xs font-semibold">Admin</span>
+              </div>
+            </div>
+          )}
+          {!user.isAdmin && user.isRegionalViewer && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <RoleBadge role="regional_viewer" />
+            </div>
+          )}
+          {!user.isAdmin && user.permissions.map(perm => {
             const scope = permissionDescription(perm);
             return (
               <div key={perm.id} className="flex items-center gap-2 flex-wrap">

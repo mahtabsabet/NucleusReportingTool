@@ -807,23 +807,30 @@ export function NucleusDashboard() {
                   <textarea
                     value={notes}
                     onChange={e => setNotes(e.target.value)}
-                    placeholder="Write any notes about this nucleus here..."
-                    className="w-full min-h-[240px] px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-800 focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-y shadow-sm"
+                    placeholder={regionalOnly && !notes ? 'No notes for this nucleus.' : 'Write any notes about this nucleus here...'}
+                    readOnly={regionalOnly}
+                    className={`w-full min-h-[240px] px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
+                      regionalOnly
+                        ? 'bg-gray-50 cursor-default focus:outline-none'
+                        : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
+                    }`}
                   />
-                  <div className="flex items-center gap-3 mt-3">
-                    <button
-                      onClick={handleSaveNotes}
-                      className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
-                    >
-                      Save Notes
-                    </button>
-                    {notesSaved && (
-                      <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
-                        <CheckCircleIcon className="w-4 h-4" />
-                        Saved!
-                      </span>
-                    )}
-                  </div>
+                  {!regionalOnly && (
+                    <div className="flex items-center gap-3 mt-3">
+                      <button
+                        onClick={handleSaveNotes}
+                        className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
+                      >
+                        Save Notes
+                      </button>
+                      {notesSaved && (
+                        <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
+                          <CheckCircleIcon className="w-4 h-4" />
+                          Saved!
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {backToDashboard}
                 </div>
               )}
