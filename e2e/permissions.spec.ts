@@ -1087,20 +1087,18 @@ test.describe('timeline — notes and documents', () => {
     });
   });
 
-  test.describe('nucleus collaborator cannot attach notes', () => {
-    test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
-
-    test('drawer opens for NC but the add-note buttons are absent', async ({ page }) => {
-      await openTestEventDrawer(page);
-      await page.getByRole('button', { name: /notes & documents/i }).click();
-      // NC has cluster-read access (via nucleus→cluster) so the drawer
-      // and the existing notes list are visible — but the add-note
-      // affordances are gated on canManageClusterTimelineNotes.
-      await expect(page.getByRole('button', { name: /paste note/i })).not.toBeVisible();
-      await expect(page.getByRole('button', { name: /upload document/i })).not.toBeVisible();
-      await expect(page.getByRole('button', { name: /add link/i })).not.toBeVisible();
-    });
-  });
+  // Nucleus collaborators no longer reach the cluster timeline UI at
+  // all — App.tsx's NC route guard redirects /timeline back to their
+  // nucleus dashboard (see the `nucleus collaborator — route guard`
+  // block above for the redirect assertion). That route guard now
+  // enforces what this test used to check at the UI level. The
+  // underlying RLS policy on timeline_item_notes still blocks NC
+  // writes as defense-in-depth.
+  //
+  // TODO: when cluster coordinators gain the ability to push selected
+  // cluster-wide events down to nucleus-level timelines, NCs will see
+  // those pushed events on /nucleus/:id/timeline. Add coverage for
+  // that flow when it lands.
 
   // Regional viewers CAN read timeline data as of migration
   // 20260514_regional_viewer_timeline_read.sql (SELECT-only policies on
