@@ -642,6 +642,19 @@ test.describe('regional (view-only)', () => {
     await expect(page.getByRole('button', { name: /save notes/i })).not.toBeVisible();
   });
 
+  test('Nucleus dashboard notes card is read-only and Save Notes is hidden', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await expect(page.getByRole('heading', { name: 'Test Nucleus' }))
+      .toBeVisible({ timeout: 15000 });
+    // Focus the Notes module via its dashboard card.
+    await page.getByRole('heading', { name: /^nucleus notes$/i }).first().click();
+    await expect(page.getByRole('heading', { name: /^nucleus notes$/i }))
+      .toBeVisible();
+    const notesTextarea = page.locator('textarea').first();
+    await expect(notesTextarea).toHaveAttribute('readonly', '');
+    await expect(page.getByRole('button', { name: /save notes/i })).not.toBeVisible();
+  });
+
   test('Concentric circles hide the "Save Engagement Levels" button', async ({ page }) => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
     await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
