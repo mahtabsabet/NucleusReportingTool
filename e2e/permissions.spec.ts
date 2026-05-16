@@ -317,30 +317,17 @@ test.describe('nucleus collaborator', () => {
 test.describe('activity lead', () => {
   test.use({ storageState: 'e2e/.auth/perm-lead.json' });
 
-  test('does not see Create User button on /users', async ({ page }) => {
-    await page.goto('/users');
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('button', { name: /create user/i })).not.toBeVisible();
-  });
-
   test('can navigate to their activity page', async ({ page }) => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
     await expect(page.getByRole('heading', { name: "Test Children's Class" })).toBeVisible({ timeout: 15000 });
   });
 
-  test('can see nucleus 1 (RLS cascades from activity to its parent nucleus)', async ({ page }) => {
-    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
-    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
-  });
-
-  test('cannot see nucleus 2 content (unrelated nucleus)', async ({ page }) => {
-    await page.goto(`/nucleus/${TEST_IDS.nucleus2Id}`);
-    await page.waitForLoadState('networkidle');
-    await expect(page.getByRole('heading', { name: 'Test Nucleus 2' })).not.toBeVisible();
-  });
-
   test('Edge Function blocks creating any user', async ({ page }) => {
-    await page.goto('/');
+    // /individual is allowed under the AL route guard; / and /users would
+    // redirect away before callCreateUser fires. The edge-function check is
+    // a pure HTTP call regardless of the rendered page, so any allowed URL
+    // works as the "host" page.
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
     await page.waitForLoadState('networkidle');
 
     const { status, body } = await callCreateUser(page, {
@@ -353,6 +340,41 @@ test.describe('activity lead', () => {
 
     expect(status).toBe(403);
     expect(typeof body.error).toBe('string');
+  });
+});
+
+// ── Activity Lead route guard ────────────────────────────────────────────────
+// AL-only users (no global flag, no CC/NC grant) are pinned to their own
+// activity page by the route guard in App.tsx. Any other path resolves to
+// a redirect back to /nucleus/:nucleusId/activity/:activityId. These tests
+// keep that contract honest — a regression that opens the map / nucleus
+// dashboard / users page to ALs would slip past the unit tests, since the
+// guard is wired in App.tsx rather than in any module the unit suite covers.
+test.describe('activity lead — route guard', () => {
+  test.use({ storageState: 'e2e/.auth/perm-lead.json' });
+
+  const activityUrlRegex = new RegExp(
+    `/nucleus/[0-9a-f-]+/activity/${TEST_IDS.activityId}$`,
+  );
+
+  for (const path of ['/', '/map', '/timeline', '/users']) {
+    test(`redirects ${path} → AL's activity`, async ({ page }) => {
+      await page.goto(path);
+      await page.waitForURL(activityUrlRegex, { timeout: 15000 });
+    });
+  }
+
+  test('redirects /nucleus/:id (parent nucleus) → AL\'s activity', async ({ page }) => {
+    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
+    await page.waitForURL(activityUrlRegex, { timeout: 15000 });
+  });
+
+  test('redirects /nucleus/:id (unrelated nucleus) → AL\'s activity', async ({ page }) => {
+    // Stronger guarantee than the old "can't see nucleus 2 content" check:
+    // the AL is bounced before any unrelated nucleus data could even start
+    // loading.
+    await page.goto(`/nucleus/${TEST_IDS.nucleus2Id}`);
+    await page.waitForURL(activityUrlRegex, { timeout: 15000 });
   });
 });
 
@@ -624,46 +646,12 @@ test.describe('regional (view-only)', () => {
   });
 });
 
-// ── Activity Lead: read-only nucleus-level affordances ─────────────────────
-//
-// Activity Leads can edit their own activity's roster, but they cannot
-// create new activities, edit engagement levels, or change someone's
-// primary contact. The corresponding controls must not render — otherwise
-// the UI hints at edits that won't take effect.
-
-test.describe('activity lead — nucleus-level read-only UI', () => {
-  test.use({ storageState: 'e2e/.auth/perm-lead.json' });
-
-  test('Activities tab hides the "Add New Activity" button', async ({ page }) => {
-    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
-    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
-    await page.getByText(/core and other activities/i).first().click();
-    await expect(page.getByRole('heading', { name: /core and other activities/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /add new activity/i })).not.toBeVisible();
-  });
-
-  test('Concentric circles hide the "Save Engagement Levels" button', async ({ page }) => {
-    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
-    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
-    await page.getByText(/overall participation/i).first().click();
-    await expect(page.getByRole('heading', { name: /overall participation/i })).toBeVisible();
-    await expect(page.getByRole('button', { name: /save engagement levels/i })).not.toBeVisible();
-    await expect(page.getByText(/drag to reassign/i)).not.toBeVisible();
-  });
-
-  test('Profile panel in concentric circles shows primary contact as static text (no dropdown)', async ({ page }) => {
-    await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
-    await expect(page.getByRole('heading', { name: 'Test Nucleus' })).toBeVisible({ timeout: 15000 });
-    await page.getByText(/overall participation/i).first().click();
-    await expect(page.getByRole('heading', { name: /overall participation/i })).toBeVisible();
-    const firstAvatar = page.locator('[data-node="true"]').first();
-    await expect(firstAvatar).toBeVisible({ timeout: 15000 });
-    await firstAvatar.click();
-    await expect(page.getByRole('heading', { name: /primary contact/i })).toBeVisible();
-    const panel = page.locator('div').filter({ hasText: /primary contact/i }).last();
-    await expect(panel.locator('select')).toHaveCount(0);
-  });
-});
+// ── (Activity Lead: nucleus-level read-only UI block removed) ──────────────
+// These tests asserted that read-only affordances render correctly when an
+// AL browsed the nucleus dashboard. With the App.tsx route guard, an
+// AL-only user is redirected away from the nucleus dashboard entirely —
+// the redirect is the stronger guarantee, and the "activity lead — route
+// guard" block above is the canonical assertion for it.
 
 // ── Role-dropdown shape per role ────────────────────────────────────────────
 //
@@ -938,13 +926,9 @@ test.describe('map — New Nucleus button', () => {
     });
   });
 
-  test.describe('activity lead does not see New Nucleus button', () => {
-    test.use({ storageState: 'e2e/.auth/perm-lead.json' });
-    test('button absent — AL cannot create nuclei', async ({ page }) => {
-      await selectTestCluster(page);
-      await expect(page.getByRole('button', { name: /new nucleus/i })).not.toBeVisible();
-    });
-  });
+  // AL-only users are redirected away from /map by the App.tsx route
+  // guard, so the "button absent" assertion is subsumed by the
+  // "activity lead — route guard" block above.
 
   test.describe('regional viewer does not see New Nucleus button', () => {
     test.use({ storageState: 'e2e/.auth/perm-regional.json' });
@@ -974,13 +958,8 @@ test.describe('timeline — Add Event button', () => {
     });
   });
 
-  test.describe('activity lead does not see Add Event button', () => {
-    test.use({ storageState: 'e2e/.auth/perm-lead.json' });
-    test('Add Event absent — AL cannot manage timeline events', async ({ page }) => {
-      await openTimelineForTestCluster(page);
-      await expect(page.getByRole('button', { name: /add event/i })).not.toBeVisible();
-    });
-  });
+  // AL-only users are redirected away from /timeline by the App.tsx
+  // route guard; see the "activity lead — route guard" block above.
 
   test.describe('regional viewer does not see Add Event button', () => {
     test.use({ storageState: 'e2e/.auth/perm-regional.json' });
@@ -1015,13 +994,8 @@ test.describe('timeline — Add Meeting button', () => {
     });
   });
 
-  test.describe('activity lead does not see Add Meeting button', () => {
-    test.use({ storageState: 'e2e/.auth/perm-lead.json' });
-    test('Add Meeting absent — AL cannot manage timeline meetings', async ({ page }) => {
-      await openTimelineForTestCluster(page);
-      await expect(page.getByRole('button', { name: /add meeting/i })).not.toBeVisible();
-    });
-  });
+  // AL-only users are redirected away from /timeline by the App.tsx
+  // route guard; see the "activity lead — route guard" block above.
 
   test.describe('regional viewer does not see Add Meeting button', () => {
     test.use({ storageState: 'e2e/.auth/perm-regional.json' });
