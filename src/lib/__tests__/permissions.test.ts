@@ -43,6 +43,9 @@ const NC = ctx({
 const AL = ctx({
   grants: [{ role: 'activity_lead', clusterId: null, nucleusId: null, activityId: 'A1' }],
 });
+const LSA = ctx({
+  grants: [{ role: 'lsa_member', clusterId: 'C1', nucleusId: null, activityId: null }],
+});
 
 function summary(overrides: Partial<ManagedUserSummary>): ManagedUserSummary {
   return {
@@ -58,15 +61,15 @@ function summary(overrides: Partial<ManagedUserSummary>): ManagedUserSummary {
 // ---- creatableRoles per row of the table ------------------------------
 
 describe('creatableRoles', () => {
-  it('Super Admin can assign Admin / Regional / CC / NC / AL (no Super Admin)', () => {
+  it('Super Admin can assign Admin / Regional / CC / NC / AL / LSA (no Super Admin)', () => {
     expect(creatableRoles(SUPER)).toEqual([
-      'admin', 'regional_viewer', 'cluster_coordinator', 'nucleus_collaborator', 'activity_lead',
+      'admin', 'regional_viewer', 'cluster_coordinator', 'nucleus_collaborator', 'activity_lead', 'lsa_member',
     ]);
   });
 
-  it('Admin cannot assign Admin (Super Admin only) but can assign everything else', () => {
+  it('Admin cannot assign Admin (Super Admin only) but can assign everything else (including LSA)', () => {
     expect(creatableRoles(ADMIN)).toEqual([
-      'regional_viewer', 'cluster_coordinator', 'nucleus_collaborator', 'activity_lead',
+      'regional_viewer', 'cluster_coordinator', 'nucleus_collaborator', 'activity_lead', 'lsa_member',
     ]);
   });
 
@@ -83,6 +86,43 @@ describe('creatableRoles', () => {
   it('Activity Lead and Regional Viewer cannot assign any role', () => {
     expect(creatableRoles(AL)).toEqual([]);
     expect(creatableRoles(REGIONAL)).toEqual([]);
+  });
+
+  it('LSA Member can assign LSA Member only', () => {
+    expect(creatableRoles(LSA)).toEqual(['lsa_member']);
+  });
+});
+
+// ---- LSA-specific behaviour -------------------------------------------
+
+describe('LSA member', () => {
+  it('isRegionalOnly returns false for LSA members', () => {
+    expect(isRegionalOnly(LSA)).toBe(false);
+  });
+  it('primaryRole picks lsa_member when LSA-only', () => {
+    expect(primaryRole(LSA)).toBe('lsa_member');
+  });
+  it('scopeRequirementFor lsa_member is cluster', () => {
+    expect(scopeRequirementFor('lsa_member')).toBe('cluster');
+  });
+  it('LSA member cannot create or delete a non-LSA user', () => {
+    const target = summary({ isAdmin: true });
+    expect(canDeleteUserDirectly(LSA, target)).toBe(false);
+  });
+  it('LSA member can delete a peer LSA-only user', () => {
+    const target = summary({
+      grants: [{ role: 'lsa_member', clusterId: 'C2', nucleusId: null, activityId: null }],
+    });
+    expect(canDeleteUserDirectly(LSA, target)).toBe(true);
+  });
+  it('LSA cannot delete a user who is also a CC', () => {
+    const target = summary({
+      grants: [
+        { role: 'lsa_member', clusterId: 'C1', nucleusId: null, activityId: null },
+        { role: 'cluster_coordinator', clusterId: 'C1', nucleusId: null, activityId: null },
+      ],
+    });
+    expect(canDeleteUserDirectly(LSA, target)).toBe(false);
   });
 });
 

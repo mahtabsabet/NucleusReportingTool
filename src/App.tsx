@@ -23,6 +23,7 @@ import { MobileTimeline } from './components/MobileTimeline';
 import { MobileNetwork } from './components/MobileNetwork';
 import { TimelineWorkspace } from './components/TimelineWorkspace';
 import { NucleusTimeline } from './components/NucleusTimeline';
+import { LsaHouseholdMapView } from './components/lsa/LsaHouseholdMapView';
 import { useIsMobile } from './lib/useIsMobile';
 import { getCallerContext } from './lib/db/users';
 import {
@@ -30,7 +31,9 @@ import {
   collaboratorNucleusIds,
   isActivityLead,
   isClusterCoordinator,
+  isLsaMemberOnly,
   isNucleusCollaborator,
+  lsaMemberClusterIds,
 } from './lib/permissions';
 import { supabase } from './lib/supabase';
 
@@ -130,12 +133,38 @@ function useNucleusCollaboratorOnlyTarget(): { ready: boolean; target: string | 
   return state;
 }
 
+// LSA-only users: pin them to their household map. They still get the toggle
+// in the header to flip over to the community-building cluster view (read-only).
+// Multi-cluster LSAs fall through — the household map's switcher handles them.
+function useLsaOnlyTarget(): { ready: boolean; target: string | null } {
+  const { user } = useAuth();
+  const [state, setState] = useState<{ ready: boolean; target: string | null }>({
+    ready: false,
+    target: null,
+  });
+  useEffect(() => {
+    if (!user) { setState({ ready: true, target: null }); return; }
+    let cancelled = false;
+    (async () => {
+      const ctx = await getCallerContext();
+      if (cancelled) return;
+      if (!ctx || !isLsaMemberOnly(ctx)) { setState({ ready: true, target: null }); return; }
+      const clusterIds = lsaMemberClusterIds(ctx);
+      if (clusterIds.length !== 1) { setState({ ready: true, target: '/lsa/households' }); return; }
+      setState({ ready: true, target: `/lsa/${clusterIds[0]}/households` });
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+  return state;
+}
+
 function AppRoutes() {
   const { user, loading } = useAuth();
   const isMobile = useIsMobile();
   const location = useLocation();
   const { ready: alReady, target: alTarget } = useActivityLeadOnlyTarget();
   const { ready: ncReady, target: ncTarget } = useNucleusCollaboratorOnlyTarget();
+  const { ready: lsaReady, target: lsaTarget } = useLsaOnlyTarget();
   // The nucleus dashboard / nucleus timeline render their own AccountMenu
   // inline in their compact header, so suppress the global floating chip
   // on those routes to avoid a duplicate avatar.
@@ -163,7 +192,7 @@ function AppRoutes() {
   // Hold rendering until we know whether this user is AL-only or NC-only.
   // Otherwise the full app would flash on screen for a beat before the
   // redirect takes hold.
-  if (!alReady || !ncReady) {
+  if (!alReady || !ncReady || !lsaReady) {
     return (
       <div className="min-h-screen bg-stone-50 flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-stone-300 border-t-stone-700 rounded-full animate-spin" />
@@ -183,6 +212,33 @@ function AppRoutes() {
           <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
           <Route path="/individual/:id" element={<IndividualProfile />} />
           <Route path="*" element={<Navigate to={alTarget} replace />} />
+        </Routes>
+      </PrivacyAcknowledgementGate>
+    );
+  }
+
+  // LSA-only users: pin them to their household map. The header toggle inside
+  // LsaHouseholdMapView lets them flip to a read-only view of their cluster's
+  // community-building data, so we let the normal cluster routes through too.
+  if (lsaTarget) {
+    return (
+      <PrivacyAcknowledgementGate>
+        {!isMobile && <AccountMenu />}
+        <ForcedChangePasswordGate />
+        <Routes>
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/guide" element={<UserGuide />} />
+          <Route path="/users" element={<UserManagement />} />
+          <Route path="/lsa/households" element={<LsaHouseholdMapView />} />
+          <Route path="/lsa/:clusterId/households" element={<LsaHouseholdMapView />} />
+          {/* Read-only community-building views in their cluster. */}
+          <Route path="/" element={<ClusterMapView />} />
+          <Route path="/map" element={<ClusterMapView />} />
+          <Route path="/nucleus/:id" element={<NucleusDashboard />} />
+          <Route path="/nucleus/:id/timeline" element={<NucleusTimeline />} />
+          <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
+          <Route path="/individual/:id" element={<IndividualProfile />} />
+          <Route path="*" element={<Navigate to={lsaTarget} replace />} />
         </Routes>
       </PrivacyAcknowledgementGate>
     );
@@ -241,6 +297,8 @@ function AppRoutes() {
       <Route path="/growth-report" element={<GrowthReport />} />
       <Route path="/nucleus/:nucleusId/growth-report" element={<GrowthReport />} />
       <Route path="/users" element={<UserManagement />} />
+      <Route path="/lsa/households" element={<LsaHouseholdMapView />} />
+      <Route path="/lsa/:clusterId/households" element={<LsaHouseholdMapView />} />
       </Routes>
     </PrivacyAcknowledgementGate>
   );

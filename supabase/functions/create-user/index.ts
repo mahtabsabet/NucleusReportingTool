@@ -14,10 +14,12 @@ const ROLE_ASSIGNERS: Record<string, string[]> = {
   cluster_coordinator:  ['super_admin', 'admin', 'cluster_coordinator'],
   nucleus_collaborator: ['super_admin', 'admin', 'cluster_coordinator'],
   activity_lead:        ['super_admin', 'admin', 'cluster_coordinator', 'nucleus_collaborator'],
+  // LSA Members grow their own membership; CC/NC do not.
+  lsa_member:           ['super_admin', 'admin', 'lsa_member'],
 };
 
 const ROLES_NEEDING_SCOPE = new Set([
-  'cluster_coordinator', 'nucleus_collaborator', 'activity_lead',
+  'cluster_coordinator', 'nucleus_collaborator', 'activity_lead', 'lsa_member',
 ]);
 
 Deno.serve(async (req) => {
@@ -64,14 +66,19 @@ Deno.serve(async (req) => {
     const myNucleusIds = perms
       .filter(p => p.role === 'nucleus_collaborator' && p.nucleus_id)
       .map(p => p.nucleus_id);
+    const myLsaClusterIds = perms
+      .filter(p => p.role === 'lsa_member' && p.cluster_id)
+      .map(p => p.cluster_id);
     const isCC = myClusterIds.length > 0;
     const isNC = myNucleusIds.length > 0;
+    const isLsa = myLsaClusterIds.length > 0;
 
     const callerRoles = new Set<string>();
     if (isSuperAdmin) callerRoles.add('super_admin');
     if (isAdmin) callerRoles.add('admin');
     if (isCC) callerRoles.add('cluster_coordinator');
     if (isNC) callerRoles.add('nucleus_collaborator');
+    if (isLsa) callerRoles.add('lsa_member');
 
     const body = await req.json();
     const { name, email, password, role, clusterId, nucleusId, activityId } = body;
@@ -122,6 +129,12 @@ Deno.serve(async (req) => {
           if (!nucleus || !myClusterIds.includes((nucleus as any).cluster_id)) {
             return json({ error: 'Nucleus is not in your cluster' }, 403);
           }
+        }
+      } else if (role === 'lsa_member') {
+        if (!clusterId) return json({ error: 'A cluster must be specified for LSA members' }, 400);
+        // Non-admin LSA caller may only grant LSA membership within their own cluster.
+        if (!isAdmin && isLsa && !myLsaClusterIds.includes(clusterId)) {
+          return json({ error: 'Cluster is not in your LSA scope' }, 403);
         }
       } else if (role === 'activity_lead') {
         if (!activityId) return json({ error: 'An activity must be specified for activity leads' }, 400);
@@ -189,6 +202,7 @@ Deno.serve(async (req) => {
       if (role === 'cluster_coordinator') permData.cluster_id = clusterId;
       else if (role === 'nucleus_collaborator') permData.nucleus_id = nucleusId;
       else if (role === 'activity_lead') permData.activity_id = activityId;
+      else if (role === 'lsa_member') permData.cluster_id = clusterId;
 
       const { error: permError } = await supabaseAdmin
         .from('user_permissions')

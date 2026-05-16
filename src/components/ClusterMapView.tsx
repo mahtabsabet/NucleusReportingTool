@@ -34,7 +34,7 @@ import { useIsMobile } from '../lib/useIsMobile';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
-import { canCreateAnyNucleus, type CallerContext } from '../lib/permissions';
+import { canAccessLsaLayer, canCreateAnyNucleus, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
 import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
@@ -239,6 +239,18 @@ export function ClusterMapView() {
     && (callerCtx.isAdmin || callerCtx.isSuperAdmin || callerCtx.isRegionalViewer);
   const canSwitchClusters = hasGlobalAccess || clusters.length > 1;
 
+  // Households toggle: show for Super Admins and any user with at least one
+  // lsa_member grant. Target the toggle to the currently-selected cluster
+  // when one is chosen — otherwise let the LSA view auto-pick.
+  const showLsaToggle = !!callerCtx && canAccessLsaLayer(callerCtx);
+  const lsaTargetClusterId = (() => {
+    if (!callerCtx) return null;
+    if (selectedCluster) return selectedCluster;
+    const accessible = lsaAccessibleClusterIds(callerCtx);
+    if (accessible === 'all') return null;
+    return accessible.length === 1 ? accessible[0] : null;
+  })();
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-gray-50">
@@ -287,6 +299,25 @@ export function ClusterMapView() {
           </div>
         )}
         <div className="flex items-center gap-2 sm:gap-3">
+          {showLsaToggle && !isMobile && (
+            <div className="flex items-center bg-stone-100 rounded-xl p-1 mr-1">
+              <button
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-stone-900 shadow-sm"
+                title="Community-building view (current)">
+                Community
+              </button>
+              <button
+                onClick={() => navigate(
+                  lsaTargetClusterId
+                    ? `/lsa/${lsaTargetClusterId}/households`
+                    : '/lsa/households'
+                )}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg text-stone-600 hover:text-stone-900"
+                title="Switch to the LSA household map">
+                Households
+              </button>
+            </div>
+          )}
           {!isMobile && (
             <>
               <button
