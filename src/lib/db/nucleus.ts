@@ -360,10 +360,22 @@ export async function fetchActivityDetail(activityId: string): Promise<ActivityD
   if (error && isMissingColumnError(error)) {
     ({ data, error } = await run(ACTIVITY_LEGACY_COLUMNS));
   }
-  if (error) return null;
+  if (error) {
+    console.warn('[fetchActivityDetail] activities query failed', { activityId, error });
+    return null;
+  }
 
   const a = data as any;
-  const activeParticipants = (a.activity_participants ?? []).filter((p: any) => !p.deleted_at);
+  const rawParticipants = (a.activity_participants ?? []) as any[];
+  const activeParticipants = rawParticipants.filter((p: any) => !p.deleted_at);
+  if (rawParticipants.length === 0) {
+    // Either the activity has no participants, or RLS is hiding them
+    // from the caller. The user can tell which by checking the DB; this
+    // log makes the path visible from the browser.
+    console.warn('[fetchActivityDetail] no activity_participants returned (may be RLS-hidden)', {
+      activityId,
+    });
+  }
 
   const participants: Record<string, string[]> = {};
   activeParticipants.forEach((p: any) => {
@@ -374,10 +386,23 @@ export async function fetchActivityDetail(activityId: string): Promise<ActivityD
   const personNames: Record<string, string> = {};
   const allPersonIds = activeParticipants.map((p: any) => p.person_id);
   if (allPersonIds.length > 0) {
-    const { data: persons } = await supabase
+    const { data: persons, error: personsError } = await supabase
       .from('persons')
       .select('id, name')
       .in('id', allPersonIds);
+    if (personsError) {
+      console.warn('[fetchActivityDetail] persons fetch failed', {
+        activityId,
+        personIds: allPersonIds,
+        error: personsError,
+      });
+    } else if (!persons || persons.length < allPersonIds.length) {
+      console.warn('[fetchActivityDetail] persons fetch returned fewer rows than expected (RLS?)', {
+        activityId,
+        requested: allPersonIds.length,
+        returned: persons?.length ?? 0,
+      });
+    }
     ((persons ?? []) as any[]).forEach((p: any) => { personNames[p.id] = p.name; });
   }
 
