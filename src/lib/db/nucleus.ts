@@ -423,13 +423,13 @@ export async function addPersonToActivity(params: {
     // least one nucleus + activity link by the end of this function.
     //
     // We generate the id client-side and skip the post-insert .select()
-    // because the persons SELECT RLS requires the person to already be
-    // enrolled in a nucleus / activity the caller can read — which they
-    // aren't yet (those rows are inserted in the next two steps). For
-    // a non-admin caller (CC, NC, AL) a chained `.insert().select()`
-    // returns "no rows" because the read-back is blocked, the call
-    // throws, and the caller never reaches the enrollment step.
-    // Generating the id locally avoids the RLS read-back entirely.
+    // to keep this path working against both the old and new persons
+    // SELECT policies. The new policy (migration
+    // 20260516_persons_created_by.sql, this PR) adds a
+    // created_by = auth.uid() branch that makes the natural
+    // .insert(...).select(...).single() pattern work for non-admin
+    // callers. Once that migration is applied everywhere the workaround
+    // can be reverted in a follow-up.
     personId = crypto.randomUUID();
     personName = params.name;
     const { error } = await supabase
