@@ -776,9 +776,15 @@ test.describe('manage-user safeguards', () => {
     });
   });
 
-  test.describe('cluster coordinator cannot use manage-user', () => {
+  test.describe('cluster coordinator manage-user surface', () => {
     test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
-    test('change-role rejected — must use request flow', async ({ page }) => {
+    test('change-role is accepted past the admin gate; missing scope returns 400', async ({ page }) => {
+      // PR #58 opened the manage-user change-role action to CC/NC with
+      // scope validation in code. The admin-only gate that used to send
+      // CCs into the request flow is gone — so calling change-role now
+      // gets past that gate and lands in the scope-validation block.
+      // With no activityId supplied for an activity_lead newRole, the
+      // edge function returns 400 "An activity must be specified…".
       await page.goto('/');
       await page.waitForLoadState('networkidle');
       const { status } = await callManageUser(page, {
@@ -787,13 +793,15 @@ test.describe('manage-user safeguards', () => {
         newRole: 'activity_lead',
         confirmedEmail: 'whatever@x',
       });
-      expect(status).toBe(403);
+      expect(status).toBe(400);
     });
   });
 
-  test.describe('nucleus collaborator cannot use manage-user', () => {
+  test.describe('nucleus collaborator manage-user surface', () => {
     test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
-    test('change-role rejected — must use request flow', async ({ page }) => {
+    test('change-role is accepted past the admin gate; missing scope returns 400', async ({ page }) => {
+      // Same as the CC test above — PR #58 opened change-role to NC too
+      // (limited to activity_lead via ROLE_ASSIGNERS).
       await page.goto('/');
       await page.waitForLoadState('networkidle');
       const { status } = await callManageUser(page, {
@@ -802,7 +810,7 @@ test.describe('manage-user safeguards', () => {
         newRole: 'activity_lead',
         confirmedEmail: 'whatever@x',
       });
-      expect(status).toBe(403);
+      expect(status).toBe(400);
     });
   });
 });
