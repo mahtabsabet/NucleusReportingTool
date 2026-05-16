@@ -422,24 +422,26 @@ export async function addPersonToActivity(params: {
     // longer a fully-disconnected provisional profile — they have at
     // least one nucleus + activity link by the end of this function.
     //
-    // The chained `.select(...).single()` works for any caller (admin
-    // or CC / NC / AL) because the persons SELECT policy now includes
-    // a created_by = auth.uid() branch — populated by the column
-    // DEFAULT on insert. See migration 20260516_persons_created_by.sql.
-    const { data: person, error } = await supabase
+    // We generate the id client-side and skip the post-insert .select()
+    // to keep this path working against both the old and new persons
+    // SELECT policies. The new policy (migration
+    // 20260516_persons_created_by.sql, this PR) adds a
+    // created_by = auth.uid() branch that makes the natural
+    // .insert(...).select(...).single() pattern work for non-admin
+    // callers. Once that migration is applied everywhere the workaround
+    // can be reverted in a follow-up.
+    personId = crypto.randomUUID();
+    personName = params.name;
+    const { error } = await supabase
       .from('persons')
       .insert({
+        id: personId,
         name: params.name,
         age_group: ageGroup,
         is_minor: isMinor,
         profile_status: 'confirmed',
-      })
-      .select('id, name')
-      .single();
+      });
     if (error) throw error;
-    const p = person as any;
-    personId = p.id;
-    personName = p.name;
   }
 
   const { data: existingEnrollment } = await supabase
