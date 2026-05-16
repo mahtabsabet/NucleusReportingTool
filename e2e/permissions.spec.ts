@@ -778,39 +778,43 @@ test.describe('manage-user safeguards', () => {
 
   test.describe('cluster coordinator manage-user surface', () => {
     test.use({ storageState: 'e2e/.auth/perm-coordinator.json' });
-    test('change-role is accepted past the admin gate; missing scope returns 400', async ({ page }) => {
+    test('change-role is accepted past the admin gate (reaches user lookup)', async ({ page }) => {
       // PR #58 opened the manage-user change-role action to CC/NC with
-      // scope validation in code. The admin-only gate that used to send
-      // CCs into the request flow is gone — so calling change-role now
-      // gets past that gate and lands in the scope-validation block.
-      // With no activityId supplied for an activity_lead newRole, the
-      // edge function returns 400 "An activity must be specified…".
+      // scope validation in code — the admin-only gate that used to
+      // send CCs into the request flow is gone. With the gate gone, the
+      // request now reaches the user-lookup step; targetUserId
+      // '11111111-...' is a deliberately fake id, so the lookup returns
+      // 404 'User not found'. The old admin-gate behaviour would have
+      // returned 403 'Admin access required' before the lookup ran.
       await page.goto('/');
       await page.waitForLoadState('networkidle');
-      const { status } = await callManageUser(page, {
+      const { status, body } = await callManageUser(page, {
         action: 'change-role',
         targetUserId: '11111111-2222-3333-4444-555555555555',
         newRole: 'activity_lead',
         confirmedEmail: 'whatever@x',
       });
-      expect(status).toBe(400);
+      expect(status).toBe(404);
+      expect(body.error).toBe('User not found');
     });
   });
 
   test.describe('nucleus collaborator manage-user surface', () => {
     test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
-    test('change-role is accepted past the admin gate; missing scope returns 400', async ({ page }) => {
+    test('change-role is accepted past the admin gate (reaches user lookup)', async ({ page }) => {
       // Same as the CC test above — PR #58 opened change-role to NC too
-      // (limited to activity_lead via ROLE_ASSIGNERS).
+      // (limited to activity_lead via ROLE_ASSIGNERS). The fake target
+      // id reaches the user lookup and returns 404.
       await page.goto('/');
       await page.waitForLoadState('networkidle');
-      const { status } = await callManageUser(page, {
+      const { status, body } = await callManageUser(page, {
         action: 'change-role',
         targetUserId: '11111111-2222-3333-4444-555555555555',
         newRole: 'activity_lead',
         confirmedEmail: 'whatever@x',
       });
-      expect(status).toBe(400);
+      expect(status).toBe(404);
+      expect(body.error).toBe('User not found');
     });
   });
 });
