@@ -47,7 +47,12 @@ import {
 } from '../lib/db/nucleus';
 import { fetchCourses } from '../lib/db/clusterProfile';
 import { getCallerContext } from '../lib/db/users';
-import { actionPermission, isRegionalOnly } from '../lib/permissions';
+import {
+  actionPermission,
+  collaboratorNucleusIds,
+  isClusterCoordinator,
+  isRegionalOnly,
+} from '../lib/permissions';
 
 const activityTypeLabels: Record<string, string> = {
   'children-class': "Children's Class",
@@ -109,6 +114,10 @@ export function NucleusDashboard() {
 
   const [canDelete, setCanDelete] = useState(false);
   const [regionalOnly, setRegionalOnly] = useState(false);
+  // Nucleus-Collaborator-only users are pinned to this nucleus by the
+  // route guard in App.tsx, so the "Back to Cluster Map" link would
+  // point them at a page they're not allowed to see. Hide it for them.
+  const [nucleusCollaboratorOnly, setNucleusCollaboratorOnly] = useState(false);
   const [canCreateActivity, setCanCreateActivity] = useState(false);
   const [canEditCircles, setCanEditCircles] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -166,6 +175,12 @@ export function NucleusDashboard() {
     ]).then(([n, acts, persons, courseList, renameAllowed, deleteAllowed, ctx]) => {
       const target = { nucleusId: id, clusterId: n?.clusterId ?? null };
       setRegionalOnly(ctx ? isRegionalOnly(ctx) : false);
+      setNucleusCollaboratorOnly(
+        !!ctx
+        && !ctx.isSuperAdmin && !ctx.isAdmin && !ctx.isRegionalViewer
+        && !isClusterCoordinator(ctx)
+        && collaboratorNucleusIds(ctx).length === 1,
+      );
       setCanCreateActivity(ctx ? actionPermission(ctx, 'create_activity', target) === 'direct' : false);
       setCanEditCircles(ctx ? actionPermission(ctx, 'edit_concentric_circles', target) === 'direct' : false);
       setNucleus(n);
@@ -397,15 +412,19 @@ export function NucleusDashboard() {
         }
       >
         <div className="max-w-[1600px] mx-auto flex items-center gap-3 sm:gap-4 relative z-10">
-          <button
-            onClick={() => navigate('/')}
-            className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors bg-white/50 px-2.5 py-1.5 rounded-lg backdrop-blur-sm flex-shrink-0"
-          >
-            <ChevronLeftIcon className="w-4 h-4" />
-            <span className="hidden sm:inline">Back to Cluster Map</span>
-          </button>
+          {!nucleusCollaboratorOnly && (
+            <>
+              <button
+                onClick={() => navigate('/')}
+                className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors bg-white/50 px-2.5 py-1.5 rounded-lg backdrop-blur-sm flex-shrink-0"
+              >
+                <ChevronLeftIcon className="w-4 h-4" />
+                <span className="hidden sm:inline">Back to Cluster Map</span>
+              </button>
 
-          <div className="h-6 w-px bg-gray-300/70 hidden sm:block" />
+              <div className="h-6 w-px bg-gray-300/70 hidden sm:block" />
+            </>
+          )}
 
           <div className="flex items-center gap-2 min-w-0 flex-shrink">
             <div className="w-8 h-8 bg-blue-600 text-white rounded-lg flex items-center justify-center shadow-sm flex-shrink-0">
