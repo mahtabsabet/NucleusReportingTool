@@ -86,6 +86,7 @@ export function LsaHouseholdMapView() {
   const [includeArchived, setIncludeArchived] = useState(false);
   const [loading, setLoading] = useState(true);
   const [accessDenied, setAccessDenied] = useState(false);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
   // Map placement / move state
   const [placing, setPlacing] = useState<null | { mode: 'new' } | { mode: 'move'; householdId: string }>(null);
@@ -104,34 +105,48 @@ export function LsaHouseholdMapView() {
   // ── Bootstrap ─────────────────────────────────────────────
   useEffect(() => {
     (async () => {
-      const ctx = await getCallerContext();
-      setCallerCtx(ctx);
-      if (!ctx || !canAccessLsaLayer(ctx)) {
-        setAccessDenied(true);
+      try {
+        const ctx = await getCallerContext();
+        setCallerCtx(ctx);
+        if (!ctx || !canAccessLsaLayer(ctx)) {
+          setAccessDenied(true);
+          return;
+        }
+        const [allClusters, allJurisdictions] = await Promise.all([
+          fetchClusters(),
+          fetchJurisdictions(),
+        ]);
+
+        const accessible = lsaAccessibleClusterIds(ctx);
+        const filteredClusters = accessible === 'all'
+          ? allClusters
+          : allClusters.filter(c => accessible.includes(c.id));
+        setClusters(filteredClusters);
+        setJurisdictions(allJurisdictions);
+
+        // Resolve initial cluster from route param, ?cluster=, or single
+        // accessible cluster fallback.
+        const fromRoute = params.clusterId ?? null;
+        const fromQuery = searchParams.get('cluster');
+        const initialId = fromRoute
+          ?? fromQuery
+          ?? (filteredClusters.length === 1 ? filteredClusters[0].id : null);
+        if (initialId) selectCluster(initialId, filteredClusters, allJurisdictions);
+      } catch (err: any) {
+        // The most common cause here is the DB migration not yet having
+        // been applied (lsa_jurisdictions / households tables missing,
+        // or RLS denying the SELECT). Surface the error so the LSA can
+        // ask a Super Admin / engineer to apply the migration instead
+        // of staring at an infinite spinner.
+        const message = err?.message ?? String(err);
+        setBootstrapError(
+          /lsa_jurisdictions|households|relation .* does not exist/i.test(message)
+            ? `Couldn't load the LSA tables. The database migration (20260516_lsa_household_layer.sql) probably hasn't been applied yet. Underlying error: ${message}`
+            : `Failed to load LSA data: ${message}`
+        );
+      } finally {
         setLoading(false);
-        return;
       }
-      const [allClusters, allJurisdictions] = await Promise.all([
-        fetchClusters(),
-        fetchJurisdictions(),
-      ]);
-
-      const accessible = lsaAccessibleClusterIds(ctx);
-      const filteredClusters = accessible === 'all'
-        ? allClusters
-        : allClusters.filter(c => accessible.includes(c.id));
-      setClusters(filteredClusters);
-      setJurisdictions(allJurisdictions);
-
-      // Resolve initial cluster from route param, ?cluster=, or single
-      // accessible cluster fallback.
-      const fromRoute = params.clusterId ?? null;
-      const fromQuery = searchParams.get('cluster');
-      const initialId = fromRoute
-        ?? fromQuery
-        ?? (filteredClusters.length === 1 ? filteredClusters[0].id : null);
-      if (initialId) selectCluster(initialId, filteredClusters, allJurisdictions);
-      setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -268,6 +283,28 @@ export function LsaHouseholdMapView() {
     return (
       <div className="flex h-screen items-center justify-center bg-stone-50">
         <LoaderIcon className="w-6 h-6 text-stone-500 animate-spin" />
+      </div>
+    );
+  }
+  if (bootstrapError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-stone-50 px-6">
+        <div className="max-w-xl">
+          <h1 className="text-xl font-semibold text-gray-900 mb-2">LSA layer not ready</h1>
+          <p className="text-sm text-gray-700 mb-4 whitespace-pre-wrap">{bootstrapError}</p>
+          <div className="flex gap-2">
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 rounded-lg bg-stone-700 text-white text-sm font-semibold hover:bg-stone-800">
+              Retry
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              className="px-4 py-2 rounded-lg border border-stone-200 text-stone-700 text-sm font-semibold hover:bg-stone-100">
+              Back to map
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
