@@ -51,7 +51,7 @@ import {
   actionPermission,
   collaboratorNucleusIds,
   isClusterCoordinator,
-  isRegionalOnly,
+  viewsOrdinaryLayerReadOnly,
 } from '../lib/permissions';
 
 const activityTypeLabels: Record<string, string> = {
@@ -174,7 +174,7 @@ export function NucleusDashboard() {
       safe(getCallerContext(), null, 'caller context'),
     ]).then(([n, acts, persons, courseList, renameAllowed, deleteAllowed, ctx]) => {
       const target = { nucleusId: id, clusterId: n?.clusterId ?? null };
-      setRegionalOnly(ctx ? isRegionalOnly(ctx) : false);
+      setRegionalOnly(ctx ? viewsOrdinaryLayerReadOnly(ctx) : false);
       setNucleusCollaboratorOnly(
         !!ctx
         && !ctx.isSuperAdmin && !ctx.isAdmin && !ctx.isRegionalViewer

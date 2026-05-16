@@ -36,7 +36,7 @@ import {
   type CompletionStatus,
 } from '../lib/curriculum';
 import { getCallerContext } from '../lib/db/users';
-import { isRegionalOnly } from '../lib/permissions';
+import { viewsOrdinaryLayerReadOnly } from '../lib/permissions';
 import { GlobalSearch } from './GlobalSearch';
 import { CurriculumProgress } from './CurriculumProgress';
 
@@ -97,7 +97,7 @@ export function IndividualProfile() {
   const [regionalOnly, setRegionalOnly] = useState(false);
 
   useEffect(() => {
-    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
+    getCallerContext().then(ctx => setRegionalOnly(ctx ? viewsOrdinaryLayerReadOnly(ctx) : false));
   }, []);
 
   useEffect(() => {

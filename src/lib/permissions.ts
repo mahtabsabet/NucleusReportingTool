@@ -164,6 +164,25 @@ export function isRegionalOnly(ctx: CallerContext): boolean {
   return ctx.isRegionalViewer;
 }
 
+// True when the caller's view of the ordinary community-building layer
+// (nuclei, activities, persons) is read-only. Covers two cases that the
+// UI should treat identically — both see everything in their scope but
+// cannot edit nucleus notes, change activity lifecycle, edit person
+// profiles, etc.:
+//   * Regional Viewer (global read across all clusters)
+//   * LSA Member, when browsing outside the LSA layer (cluster-scoped
+//     read, no write on community-building data)
+//
+// Distinct from isRegionalOnly because LSAs DO have write access to the
+// LSA layer; this helper is specifically about the ordinary layer.
+export function viewsOrdinaryLayerReadOnly(ctx: CallerContext): boolean {
+  if (ctx.isSuperAdmin || ctx.isAdmin) return false;
+  if (isClusterCoordinator(ctx) || isNucleusCollaborator(ctx) || isActivityLead(ctx)) {
+    return false;
+  }
+  return ctx.isRegionalViewer || isLsaMember(ctx);
+}
+
 // True when the caller's *only* role is lsa_member — used by App.tsx to pin
 // these users to their LSA home cluster (mirroring the NC-only / AL-only
 // redirect pattern). Multi-cluster LSAs (today only possible via direct DB
