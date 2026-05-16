@@ -343,6 +343,30 @@ test.describe('activity lead', () => {
   });
 });
 
+// ── Nucleus Collaborator route guard ─────────────────────────────────────────
+// NC-only users (no global flag, no CC grant, exactly one nucleus grant) are
+// pinned to their nucleus by the route guard in App.tsx. The cluster map and
+// cross-cluster reports are off-limits and redirect to /nucleus/:id. /users
+// is still reachable so they can create Activity Leads.
+test.describe('nucleus collaborator — route guard', () => {
+  test.use({ storageState: 'e2e/.auth/perm-collaborator.json' });
+
+  const nucleusUrlRegex = new RegExp(`/nucleus/${TEST_IDS.nucleusId}$`);
+
+  for (const path of ['/', '/map', '/timeline', '/cluster-profile', '/growth-report']) {
+    test(`redirects ${path} → NC's nucleus`, async ({ page }) => {
+      await page.goto(path);
+      await page.waitForURL(nucleusUrlRegex, { timeout: 15000 });
+    });
+  }
+
+  test('/users is reachable (NC can create Activity Leads)', async ({ page }) => {
+    await page.goto('/users');
+    await page.waitForLoadState('networkidle');
+    expect(page.url()).toContain('/users');
+  });
+});
+
 // ── Activity Lead route guard ────────────────────────────────────────────────
 // AL-only users (no global flag, no CC/NC grant) are pinned to their own
 // activity page by the route guard in App.tsx. Any other path resolves to

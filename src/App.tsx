@@ -190,8 +190,9 @@ function AppRoutes() {
 
   // Nucleus-Collaborator-only users: pin them to their nucleus. They can
   // reach the dashboard, its timeline, its activities, individual
-  // profiles, the per-nucleus growth report, and the user guide.
-  // Everything else (cluster map, cross-cluster reports, user management)
+  // profiles, the per-nucleus growth report, the user guide, and
+  // /users (where they're allowed to create Activity Leads for their
+  // nucleus). Everything else (cluster map, cross-cluster reports)
   // redirects back to their nucleus dashboard.
   if (ncTarget) {
     return (
@@ -201,6 +202,7 @@ function AppRoutes() {
         <Routes>
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/guide" element={<UserGuide />} />
+          <Route path="/users" element={<UserManagement />} />
           <Route path="/nucleus/:id" element={<NucleusDashboard />} />
           <Route path="/nucleus/:id/timeline" element={<NucleusTimeline />} />
           <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
