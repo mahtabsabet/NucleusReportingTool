@@ -599,6 +599,25 @@ create policy "Nucleus collaborators manage activities" on activities
     )
   );
 
+create policy "Activity leads update own activity" on activities
+  for update
+  using (
+    deleted_at is null and exists (
+      select 1 from user_permissions
+      where user_id = auth.uid()
+        and role = 'activity_lead'
+        and activity_id = activities.id
+    )
+  )
+  with check (
+    deleted_at is null and exists (
+      select 1 from user_permissions
+      where user_id = auth.uid()
+        and role = 'activity_lead'
+        and activity_id = activities.id
+    )
+  );
+
 -- activity_participants
 create policy "Read participants in accessible activities" on activity_participants
   for select using (deleted_at is null and (is_admin() or user_has_activity_access(activity_id)));
