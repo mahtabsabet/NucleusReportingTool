@@ -147,6 +147,20 @@ export function ActivityDetail() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  // Snapshot of the editable form values as they were last loaded from
+  // (or last saved to) the DB. Used to detect unsaved changes so the
+  // top banner can surface a Save / Discard prompt — at the bottom of
+  // a long activity page the save button is easy to miss.
+  const [initialForm, setInitialForm] = useState<{
+    schedule: string;
+    notes: string;
+    schedulingMode: ActivitySchedulingMode;
+    daysOfWeek: number[];
+    time: string;
+    intervalWeeks: number;
+    startDate: string;
+    endDate: string;
+  } | null>(null);
   const [lifecycleSaving, setLifecycleSaving] = useState(false);
   const [deletePermission, setDeletePermission] = useState<'direct' | 'request' | 'none'>('none');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -185,14 +199,32 @@ export function ActivityDetail() {
         setActivity(a);
         setNucleusName(nName);
         setPersonNames(pNames);
-        setSchedule(a.schedule ?? '');
-        setNotes(a.notes ?? '');
-        setSchedulingMode(a.schedulingMode ?? 'sporadic_ongoing');
-        setDaysOfWeek(a.daysOfWeek ?? []);
-        setTime(a.time ?? '');
-        setIntervalWeeks(a.intervalWeeks ?? 1);
-        setStartDate(a.startDate ? formatDateForInput(a.startDate) : '');
-        setEndDate(a.endDate ? formatDateForInput(a.endDate) : '');
+        const loadedSchedule = a.schedule ?? '';
+        const loadedNotes = a.notes ?? '';
+        const loadedMode = a.schedulingMode ?? 'sporadic_ongoing';
+        const loadedDays = [...(a.daysOfWeek ?? [])].sort();
+        const loadedTime = a.time ?? '';
+        const loadedInterval = a.intervalWeeks ?? 1;
+        const loadedStart = a.startDate ? formatDateForInput(a.startDate) : '';
+        const loadedEnd = a.endDate ? formatDateForInput(a.endDate) : '';
+        setSchedule(loadedSchedule);
+        setNotes(loadedNotes);
+        setSchedulingMode(loadedMode);
+        setDaysOfWeek(loadedDays);
+        setTime(loadedTime);
+        setIntervalWeeks(loadedInterval);
+        setStartDate(loadedStart);
+        setEndDate(loadedEnd);
+        setInitialForm({
+          schedule: loadedSchedule,
+          notes: loadedNotes,
+          schedulingMode: loadedMode,
+          daysOfWeek: loadedDays,
+          time: loadedTime,
+          intervalWeeks: loadedInterval,
+          startDate: loadedStart,
+          endDate: loadedEnd,
+        });
         // Pre-fill expected roles
         const expectedRoles = ROLES_FOR_TYPE[a.type] ?? [];
         const initialParticipants = { ...a.participants };
@@ -222,6 +254,23 @@ export function ActivityDetail() {
     startDate,
     endDate,
   }), [schedulingMode, schedule, daysOfWeek, time, intervalWeeks, startDate, endDate]);
+
+  // True whenever the form has changes that haven't been saved. Drives
+  // the sticky "unsaved changes" banner.
+  const isDirty = useMemo(() => {
+    if (!initialForm) return false;
+    if (initialForm.schedule !== schedule) return true;
+    if (initialForm.notes !== notes) return true;
+    if (initialForm.schedulingMode !== schedulingMode) return true;
+    if (initialForm.time !== time) return true;
+    if (initialForm.intervalWeeks !== intervalWeeks) return true;
+    if (initialForm.startDate !== startDate) return true;
+    if (initialForm.endDate !== endDate) return true;
+    const a = [...daysOfWeek].sort().join(',');
+    const b = initialForm.daysOfWeek.join(',');
+    if (a !== b) return true;
+    return false;
+  }, [initialForm, schedule, notes, schedulingMode, daysOfWeek, time, intervalWeeks, startDate, endDate]);
 
   if (loading) {
     return (
@@ -346,6 +395,18 @@ export function ActivityDetail() {
       // generated/refreshed a timeline_events row).
       const fresh = await fetchActivityDetail(activityId!);
       if (fresh) setActivity(fresh.activity);
+      // Re-baseline the dirty check against what's now persisted, so
+      // the "unsaved changes" banner stops nagging after a save.
+      setInitialForm({
+        schedule,
+        notes,
+        schedulingMode,
+        daysOfWeek: [...daysOfWeek].sort(),
+        time,
+        intervalWeeks,
+        startDate,
+        endDate,
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err: any) {
@@ -402,6 +463,19 @@ export function ActivityDetail() {
     );
   };
 
+  const handleDiscard = () => {
+    if (!initialForm) return;
+    setSchedule(initialForm.schedule);
+    setNotes(initialForm.notes);
+    setSchedulingMode(initialForm.schedulingMode);
+    setDaysOfWeek(initialForm.daysOfWeek);
+    setTime(initialForm.time);
+    setIntervalWeeks(initialForm.intervalWeeks);
+    setStartDate(initialForm.startDate);
+    setEndDate(initialForm.endDate);
+    setScheduleError(null);
+  };
+
   const expectedRoles = ROLES_FOR_TYPE[activity.type] ?? [];
   const extraRoles = Object.keys(participants).filter(r => !expectedRoles.includes(r));
   const roles = [...expectedRoles.filter(r => r in participants), ...extraRoles];
@@ -417,8 +491,36 @@ export function ActivityDetail() {
 
   return (
     <div className="min-h-screen bg-gray-50/50 font-sans">
-      <header className="bg-white border-b border-gray-200/80 px-4 sm:px-8 py-5 sticky top-0 z-10 shadow-sm">
-        <div className="max-w-5xl mx-auto">
+      <header className="bg-white border-b border-gray-200/80 sticky top-0 z-10 shadow-sm">
+        {!regionalOnly && isDirty && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 sm:px-8 py-2.5">
+            <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-3">
+              <span className="text-sm font-medium text-amber-900">
+                You have unsaved changes.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleDiscard}
+                  className="px-3 py-1.5 text-sm font-medium text-amber-900 border border-amber-300 rounded-lg hover:bg-amber-100 transition-colors"
+                >
+                  Discard
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="px-4 py-1.5 text-sm font-semibold bg-amber-600 text-white rounded-lg hover:bg-amber-700 shadow-sm transition-colors"
+                >
+                  Save Changes
+                </button>
+                {scheduleError && (
+                  <span className="text-sm text-red-700 bg-red-50 border border-red-200 px-2.5 py-1 rounded-lg">
+                    {scheduleError}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="max-w-5xl mx-auto px-4 sm:px-8 py-5">
           <div className="flex items-center justify-between gap-4 mb-3">
             {activityLeadOnly ? (
               <div /> /* spacer keeps GlobalSearch right-aligned */

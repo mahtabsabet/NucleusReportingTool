@@ -27,6 +27,7 @@ import { useIsMobile } from './lib/useIsMobile';
 import { getCallerContext } from './lib/db/users';
 import {
   activityLeadActivityIds,
+  collaboratorNucleusIds,
   isActivityLead,
   isClusterCoordinator,
   isNucleusCollaborator,
@@ -87,11 +88,54 @@ function useActivityLeadOnlyTarget(): { ready: boolean; target: string | null } 
   return state;
 }
 
+// Nucleus-Collaborator-only users (no global flag, no CC grant) are
+// confined to their own nucleus — dashboard, timeline, its activities,
+// individual profiles, and the per-nucleus growth report. They never
+// see the cluster map. We only pin users with *exactly one* NC grant;
+// multi-nucleus NCs (which today can only exist via direct DB grants,
+// since the user-creation UI only assigns one nucleus) fall through to
+// the normal shell so they have a place to choose between them.
+function useNucleusCollaboratorOnlyTarget(): { ready: boolean; target: string | null } {
+  const { user } = useAuth();
+  const [state, setState] = useState<{ ready: boolean; target: string | null }>({
+    ready: false,
+    target: null,
+  });
+
+  useEffect(() => {
+    if (!user) {
+      setState({ ready: true, target: null });
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const ctx = await getCallerContext();
+      if (cancelled) return;
+      if (!ctx) { setState({ ready: true, target: null }); return; }
+
+      const nucleusIds = collaboratorNucleusIds(ctx);
+      const isNCOnly =
+        !ctx.isSuperAdmin && !ctx.isAdmin && !ctx.isRegionalViewer
+        && !isClusterCoordinator(ctx)
+        && nucleusIds.length === 1;
+      if (!isNCOnly) {
+        setState({ ready: true, target: null });
+        return;
+      }
+      setState({ ready: true, target: `/nucleus/${nucleusIds[0]}` });
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  return state;
+}
+
 function AppRoutes() {
   const { user, loading } = useAuth();
   const isMobile = useIsMobile();
   const location = useLocation();
   const { ready: alReady, target: alTarget } = useActivityLeadOnlyTarget();
+  const { ready: ncReady, target: ncTarget } = useNucleusCollaboratorOnlyTarget();
   // The nucleus dashboard / nucleus timeline render their own AccountMenu
   // inline in their compact header, so suppress the global floating chip
   // on those routes to avoid a duplicate avatar.
@@ -116,9 +160,10 @@ function AppRoutes() {
     );
   }
 
-  // Hold rendering until we know whether this user is AL-only. Otherwise the
-  // full app would flash on screen for a beat before the redirect takes hold.
-  if (!alReady) {
+  // Hold rendering until we know whether this user is AL-only or NC-only.
+  // Otherwise the full app would flash on screen for a beat before the
+  // redirect takes hold.
+  if (!alReady || !ncReady) {
     return (
       <div className="min-h-screen bg-stone-50 flex items-center justify-center">
         <div className="w-6 h-6 border-2 border-stone-300 border-t-stone-700 rounded-full animate-spin" />
@@ -138,6 +183,32 @@ function AppRoutes() {
           <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
           <Route path="/individual/:id" element={<IndividualProfile />} />
           <Route path="*" element={<Navigate to={alTarget} replace />} />
+        </Routes>
+      </PrivacyAcknowledgementGate>
+    );
+  }
+
+  // Nucleus-Collaborator-only users: pin them to their nucleus. They can
+  // reach the dashboard, its timeline, its activities, individual
+  // profiles, the per-nucleus growth report, the user guide, and
+  // /users (where they're allowed to create Activity Leads for their
+  // nucleus). Everything else (cluster map, cross-cluster reports)
+  // redirects back to their nucleus dashboard.
+  if (ncTarget) {
+    return (
+      <PrivacyAcknowledgementGate>
+        {!isMobile && !nucleusDetailRoute && <AccountMenu />}
+        <ForcedChangePasswordGate />
+        <Routes>
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/guide" element={<UserGuide />} />
+          <Route path="/users" element={<UserManagement />} />
+          <Route path="/nucleus/:id" element={<NucleusDashboard />} />
+          <Route path="/nucleus/:id/timeline" element={<NucleusTimeline />} />
+          <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
+          <Route path="/nucleus/:nucleusId/growth-report" element={<GrowthReport />} />
+          <Route path="/individual/:id" element={<IndividualProfile />} />
+          <Route path="*" element={<Navigate to={ncTarget} replace />} />
         </Routes>
       </PrivacyAcknowledgementGate>
     );
