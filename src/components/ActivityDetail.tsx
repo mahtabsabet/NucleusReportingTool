@@ -23,7 +23,12 @@ import {
 } from '../lib/db/nucleus';
 import { submitPermissionRequest } from '../lib/db/requests';
 import { getCallerContext } from '../lib/db/users';
-import { isRegionalOnly } from '../lib/permissions';
+import {
+  isRegionalOnly,
+  isActivityLead,
+  isClusterCoordinator,
+  isNucleusCollaborator,
+} from '../lib/permissions';
 import { markPersonUnplaced } from '../lib/unplacedTracker';
 import {
   Activity,
@@ -154,9 +159,22 @@ export function ActivityDetail() {
   const [requestSubmitting, setRequestSubmitting] = useState(false);
   const [requestSent, setRequestSent] = useState(false);
   const [regionalOnly, setRegionalOnly] = useState(false);
+  // Activity-Lead-only users (no global flag, no CC/NC grants) have no
+  // nucleus / cluster page they can navigate "back" to — they're pinned
+  // to this activity by the route guard in App.tsx. Hide the back link
+  // for them so the UI matches what they can actually do.
+  const [activityLeadOnly, setActivityLeadOnly] = useState(false);
 
   useEffect(() => {
-    getCallerContext().then(ctx => setRegionalOnly(ctx ? isRegionalOnly(ctx) : false));
+    getCallerContext().then(ctx => {
+      setRegionalOnly(ctx ? isRegionalOnly(ctx) : false);
+      if (!ctx) { setActivityLeadOnly(false); return; }
+      setActivityLeadOnly(
+        !ctx.isSuperAdmin && !ctx.isAdmin && !ctx.isRegionalViewer
+        && !isClusterCoordinator(ctx) && !isNucleusCollaborator(ctx)
+        && isActivityLead(ctx),
+      );
+    });
   }, []);
 
   useEffect(() => {
@@ -402,13 +420,17 @@ export function ActivityDetail() {
       <header className="bg-white border-b border-gray-200/80 px-4 sm:px-8 py-5 sticky top-0 z-10 shadow-sm">
         <div className="max-w-5xl mx-auto">
           <div className="flex items-center justify-between gap-4 mb-3">
-            <button
-              onClick={() => navigate(`/nucleus/${nucleusId}`)}
-              className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
-            >
-              <ChevronLeftIcon className="w-4 h-4" />
-              Back to {nucleusName}
-            </button>
+            {activityLeadOnly ? (
+              <div /> /* spacer keeps GlobalSearch right-aligned */
+            ) : (
+              <button
+                onClick={() => navigate(`/nucleus/${nucleusId}`)}
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
+              >
+                <ChevronLeftIcon className="w-4 h-4" />
+                Back to {nucleusName}
+              </button>
+            )}
             <div className="flex-1 max-w-sm">
               <GlobalSearch />
             </div>

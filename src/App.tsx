@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './lib/auth';
 import { LoginPage } from './components/LoginPage';
@@ -24,11 +24,74 @@ import { MobileNetwork } from './components/MobileNetwork';
 import { TimelineWorkspace } from './components/TimelineWorkspace';
 import { NucleusTimeline } from './components/NucleusTimeline';
 import { useIsMobile } from './lib/useIsMobile';
+import { getCallerContext } from './lib/db/users';
+import {
+  activityLeadActivityIds,
+  isActivityLead,
+  isClusterCoordinator,
+  isNucleusCollaborator,
+} from './lib/permissions';
+import { supabase } from './lib/supabase';
+
+// Activity-Lead-only users (no global flag, no CC/NC grant) are confined
+// to their own activity page and the individual profiles of its
+// participants. Everything else redirects to their assigned activity.
+// Returns:
+//   ready = false  → still resolving caller context / nucleus lookup
+//   ready = true, target = null → caller is NOT AL-only; render the normal app
+//   ready = true, target = "/nucleus/.../activity/..." → render the restricted shell
+function useActivityLeadOnlyTarget(): { ready: boolean; target: string | null } {
+  const { user } = useAuth();
+  const [state, setState] = useState<{ ready: boolean; target: string | null }>({
+    ready: false,
+    target: null,
+  });
+
+  useEffect(() => {
+    if (!user) {
+      setState({ ready: true, target: null });
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const ctx = await getCallerContext();
+      if (cancelled) return;
+      if (!ctx) { setState({ ready: true, target: null }); return; }
+
+      const isALOnly =
+        !ctx.isSuperAdmin && !ctx.isAdmin && !ctx.isRegionalViewer
+        && !isClusterCoordinator(ctx) && !isNucleusCollaborator(ctx)
+        && isActivityLead(ctx);
+      if (!isALOnly) {
+        setState({ ready: true, target: null });
+        return;
+      }
+
+      const activityId = activityLeadActivityIds(ctx)[0];
+      if (!activityId) { setState({ ready: true, target: null }); return; }
+
+      const { data } = await supabase
+        .from('activities')
+        .select('nucleus_id')
+        .eq('id', activityId)
+        .maybeSingle();
+      if (cancelled) return;
+      const nucleusId = (data as any)?.nucleus_id;
+      if (!nucleusId) { setState({ ready: true, target: null }); return; }
+
+      setState({ ready: true, target: `/nucleus/${nucleusId}/activity/${activityId}` });
+    })();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  return state;
+}
 
 function AppRoutes() {
   const { user, loading } = useAuth();
   const isMobile = useIsMobile();
   const location = useLocation();
+  const { ready: alReady, target: alTarget } = useActivityLeadOnlyTarget();
   // The nucleus dashboard / nucleus timeline render their own AccountMenu
   // inline in their compact header, so suppress the global floating chip
   // on those routes to avoid a duplicate avatar.
@@ -50,6 +113,33 @@ function AppRoutes() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="*" element={<LoginPage />} />
       </Routes>
+    );
+  }
+
+  // Hold rendering until we know whether this user is AL-only. Otherwise the
+  // full app would flash on screen for a beat before the redirect takes hold.
+  if (!alReady) {
+    return (
+      <div className="min-h-screen bg-stone-50 flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-stone-300 border-t-stone-700 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // Activity-Lead-only users: pin them to their own activity page (and the
+  // profiles of its participants). Every other route redirects back.
+  if (alTarget) {
+    return (
+      <PrivacyAcknowledgementGate>
+        {!isMobile && <AccountMenu />}
+        <ForcedChangePasswordGate />
+        <Routes>
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
+          <Route path="/individual/:id" element={<IndividualProfile />} />
+          <Route path="*" element={<Navigate to={alTarget} replace />} />
+        </Routes>
+      </PrivacyAcknowledgementGate>
     );
   }
 
