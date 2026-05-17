@@ -39,6 +39,12 @@ export interface HouseholdMember {
   displayName: string | null;
   relationship: string | null;
   ageGroup: string | null;
+  // LSA-side contact info — distinct from any contact details on
+  // the linked community-building person profile. Columns added
+  // in migration 20260517_lsa_household_contact_fields.sql.
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
   notes: string | null;
   createdAt: string;
 }
@@ -80,6 +86,9 @@ function mapMember(row: any): HouseholdMember {
     displayName: row.display_name ?? null,
     relationship: row.relationship ?? null,
     ageGroup: row.age_group ?? null,
+    email: row.email ?? null,
+    phone: row.phone ?? null,
+    mobile: row.mobile ?? null,
     notes: row.notes ?? null,
     createdAt: row.created_at,
   };
@@ -209,6 +218,9 @@ export interface CreateHouseholdMemberParams {
   linkedPersonId?: string | null;
   relationship?: string | null;
   ageGroup?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
   notes?: string | null;
 }
 
@@ -226,6 +238,9 @@ export async function createHouseholdMember(
       display_name: params.displayName ?? null,
       relationship: params.relationship ?? null,
       age_group: params.ageGroup ?? null,
+      email: params.email ?? null,
+      phone: params.phone ?? null,
+      mobile: params.mobile ?? null,
       notes: params.notes ?? null,
     })
     .select('*')
@@ -239,6 +254,9 @@ export interface UpdateHouseholdMemberParams {
   linkedPersonId?: string | null;
   relationship?: string | null;
   ageGroup?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
   notes?: string | null;
 }
 
@@ -251,6 +269,9 @@ export async function updateHouseholdMember(
   if (params.linkedPersonId !== undefined) update.linked_person_id = params.linkedPersonId;
   if (params.relationship !== undefined) update.relationship = params.relationship;
   if (params.ageGroup !== undefined) update.age_group = params.ageGroup;
+  if (params.email !== undefined) update.email = params.email;
+  if (params.phone !== undefined) update.phone = params.phone;
+  if (params.mobile !== undefined) update.mobile = params.mobile;
   if (params.notes !== undefined) update.notes = params.notes;
   const { data, error } = await supabase
     .from('household_members')

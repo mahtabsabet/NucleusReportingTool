@@ -24,6 +24,7 @@ import {
   ArrowLeftRightIcon,
   XIcon,
   MapPinIcon,
+  MapPinOffIcon,
   LoaderIcon,
   CrosshairIcon,
 } from 'lucide-react';
@@ -37,7 +38,7 @@ import {
   type Household,
   type LsaJurisdiction,
 } from '../../lib/db/households';
-import { geocodeAddress } from '../../lib/geocoder';
+import { geocodeAddress, geocodeAddressBatch } from '../../lib/geocoder';
 import { getCallerContext } from '../../lib/db/users';
 import {
   canAccessLsaLayer,
@@ -111,6 +112,13 @@ export function LsaHouseholdMapView() {
     }, { replace: true });
   };
   const [showImport, setShowImport] = useState(false);
+
+  // Backfill geocoding state — drives the "Geocode missing pins"
+  // affordance in the sidebar's attention card. Progress is shown
+  // so the LSA isn't left guessing during the ~1-req/sec server-
+  // paced sweep through 100+ addresses.
+  const [geocoding, setGeocoding] = useState<{ done: number; total: number } | null>(null);
+  const [geocodeError, setGeocodeError] = useState<string | null>(null);
 
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
   const [mapZoom, setMapZoom] = useState(6);
@@ -230,6 +238,42 @@ export function LsaHouseholdMapView() {
       if (activeJurisdiction) await loadHouseholds(activeJurisdiction.id);
     } finally {
       setPlacing(null);
+    }
+  }
+
+  // Backfill geocoding for households that have an address but no
+  // lat/lng. The edge function paces requests to Nominatim's rate
+  // limit, so we batch in chunks and report progress between batches.
+  // Households where the geocoder returns no hit are left alone — they
+  // remain in the "needs attention" bucket and the LSA can hand-pin
+  // them via "Move pin" on the drawer.
+  async function geocodeMissing() {
+    if (!activeJurisdiction) return;
+    const candidates = households.filter(
+      h => h.lat == null && h.archivedAt == null && (h.addressLine ?? '').trim().length > 0,
+    );
+    if (candidates.length === 0) return;
+    setGeocodeError(null);
+    setGeocoding({ done: 0, total: candidates.length });
+    const CHUNK = 25;
+    try {
+      for (let i = 0; i < candidates.length; i += CHUNK) {
+        const slice = candidates.slice(i, i + CHUNK);
+        const hits = await geocodeAddressBatch(slice.map(h => h.addressLine!));
+        await Promise.all(
+          slice.map((h, idx) => {
+            const hit = hits[idx];
+            if (!hit) return Promise.resolve();
+            return updateHousehold(h.id, { lat: hit.lat, lng: hit.lng });
+          }),
+        );
+        setGeocoding({ done: Math.min(i + slice.length, candidates.length), total: candidates.length });
+      }
+      await loadHouseholds(activeJurisdiction.id);
+    } catch (e: any) {
+      setGeocodeError(e.message ?? 'Geocoding failed');
+    } finally {
+      setGeocoding(null);
     }
   }
   async function geocodeDraft() {
@@ -431,6 +475,9 @@ export function LsaHouseholdMapView() {
               }
             }}
             onToggleArchived={() => setIncludeArchived(v => !v)}
+            onGeocodeMissing={geocodeMissing}
+            geocoding={geocoding}
+            geocodeError={geocodeError}
           />
         )}
 
@@ -568,22 +615,45 @@ function HouseholdSidebar({
   includeArchived,
   onSelect,
   onToggleArchived,
+  onGeocodeMissing,
+  geocoding,
+  geocodeError,
 }: {
   households: Household[];
   selectedId: string | null;
   includeArchived: boolean;
   onSelect: (id: string, h: Household) => void;
   onToggleArchived: () => void;
+  onGeocodeMissing: () => Promise<void> | void;
+  geocoding: { done: number; total: number } | null;
+  geocodeError: string | null;
 }) {
   const [query, setQuery] = useState('');
+  const [onlyNeedsAttention, setOnlyNeedsAttention] = useState(false);
+
+  const needsPin = useMemo(
+    () => households.filter(h => h.archivedAt == null && h.lat == null && (h.addressLine ?? '').trim().length > 0),
+    [households],
+  );
+  const needsAddress = useMemo(
+    () => households.filter(h => h.archivedAt == null && !(h.addressLine ?? '').trim().length),
+    [households],
+  );
+  const attentionCount = needsPin.length + needsAddress.length;
+
   const filtered = useMemo(() => {
+    let list = households;
+    if (onlyNeedsAttention) {
+      const flagIds = new Set([...needsPin, ...needsAddress].map(h => h.id));
+      list = list.filter(h => flagIds.has(h.id));
+    }
     const q = query.trim().toLowerCase();
-    if (!q) return households;
-    return households.filter(h =>
+    if (!q) return list;
+    return list.filter(h =>
       h.displayName.toLowerCase().includes(q)
       || (h.addressLine ?? '').toLowerCase().includes(q),
     );
-  }, [households, query]);
+  }, [households, query, onlyNeedsAttention, needsPin, needsAddress]);
 
   return (
     <aside className="bg-white border-r border-amber-200 overflow-y-auto shadow-sm flex flex-col w-80 lg:w-96">
@@ -595,13 +665,56 @@ function HouseholdSidebar({
           placeholder="Search…"
           className="w-full rounded-lg border border-amber-200 px-3 py-1.5 text-sm"
         />
-        <button
-          onClick={onToggleArchived}
-          className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 hover:text-amber-900">
-          <ArchiveIcon className="w-3 h-3" />
-          {includeArchived ? 'Hide archived' : 'Show archived'}
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            onClick={onToggleArchived}
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 hover:text-amber-900">
+            <ArchiveIcon className="w-3 h-3" />
+            {includeArchived ? 'Hide archived' : 'Show archived'}
+          </button>
+          {attentionCount > 0 && (
+            <button
+              onClick={() => setOnlyNeedsAttention(v => !v)}
+              className={`text-[11px] font-semibold ${onlyNeedsAttention ? 'text-amber-900 underline' : 'text-amber-600 hover:text-amber-900'}`}>
+              {onlyNeedsAttention ? 'Show all' : `Only needs attention (${attentionCount})`}
+            </button>
+          )}
+        </div>
       </div>
+
+      {attentionCount > 0 && (
+        <div className="mx-4 mt-3 mb-2 rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <MapPinOffIcon className="w-3.5 h-3.5 text-amber-700" />
+            <h3 className="text-[11px] font-bold uppercase tracking-wider text-amber-800">
+              Needs attention
+            </h3>
+          </div>
+          {needsPin.length > 0 && (
+            <div className="text-[11px] text-amber-900 leading-snug">
+              <strong>{needsPin.length}</strong> household{needsPin.length === 1 ? '' : 's'} ha{needsPin.length === 1 ? 's' : 've'} an address but no pin on the map.
+              <button
+                onClick={onGeocodeMissing}
+                disabled={!!geocoding}
+                className="block mt-1.5 px-2 py-1 text-[11px] font-semibold rounded-lg bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed">
+                {geocoding
+                  ? <span className="inline-flex items-center gap-1.5"><LoaderIcon className="w-3 h-3 animate-spin" /> Geocoding… {geocoding.done}/{geocoding.total}</span>
+                  : `Geocode ${needsPin.length} address${needsPin.length === 1 ? '' : 'es'}`}
+              </button>
+            </div>
+          )}
+          {needsAddress.length > 0 && (
+            <div className="text-[11px] text-amber-900 leading-snug">
+              <strong>{needsAddress.length}</strong> household{needsAddress.length === 1 ? '' : 's'} ha{needsAddress.length === 1 ? 's' : 've'} no address recorded. Open each to add one.
+            </div>
+          )}
+          {geocodeError && (
+            <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-[11px] text-red-700">
+              {geocodeError}
+            </div>
+          )}
+        </div>
+      )}
       {filtered.length === 0 ? (
         <div className="px-4 py-6 text-sm text-amber-500 italic">
           No households yet. Use <strong className="font-semibold text-amber-700">New household</strong> or <strong className="font-semibold text-amber-700">Import</strong> to add some.
@@ -626,8 +739,9 @@ function HouseholdSidebar({
                     </span>
                   )}
                   {h.lat == null && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600">
-                      No pin
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 inline-flex items-center gap-1">
+                      <MapPinOffIcon className="w-3 h-3" />
+                      {(h.addressLine ?? '').trim().length > 0 ? 'No pin' : 'No address'}
                     </span>
                   )}
                 </div>

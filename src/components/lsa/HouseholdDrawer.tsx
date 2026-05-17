@@ -28,6 +28,10 @@ import {
   EditIcon,
   ExternalLinkIcon,
   LoaderIcon,
+  MapPinOffIcon,
+  MailIcon,
+  PhoneIcon,
+  SmartphoneIcon,
 } from 'lucide-react';
 import {
   fetchHouseholdWithMembers,
@@ -42,6 +46,7 @@ import {
   type HouseholdMember,
   type PersonMatchSuggestion,
 } from '../../lib/db/households';
+import { geocodeAddress } from '../../lib/geocoder';
 
 interface Props {
   householdId: string;
@@ -95,11 +100,42 @@ export function HouseholdDrawer({
     if (!data) return;
     setSaving(true); setError(null);
     try {
-      await updateHousehold(householdId, {
+      const trimmedAddress = address.trim();
+      const addressChanged = trimmedAddress !== (data.addressLine ?? '');
+
+      // If the address changed (or was cleared), the previous pin is
+      // stale. Try to re-geocode; on success update lat/lng, on
+      // failure null them so the household flags as "needs attention"
+      // in the sidebar rather than sitting at a wrong location.
+      const update: {
+        displayName: string;
+        addressLine: string | null;
+        notes: string | null;
+        lat?: number | null;
+        lng?: number | null;
+      } = {
         displayName: name.trim(),
-        addressLine: address.trim() || null,
+        addressLine: trimmedAddress || null,
         notes: notes.trim() || null,
-      });
+      };
+
+      if (addressChanged) {
+        if (!trimmedAddress) {
+          update.lat = null;
+          update.lng = null;
+        } else {
+          try {
+            const hit = await geocodeAddress(trimmedAddress);
+            update.lat = hit?.lat ?? null;
+            update.lng = hit?.lng ?? null;
+          } catch {
+            update.lat = null;
+            update.lng = null;
+          }
+        }
+      }
+
+      await updateHousehold(householdId, update);
       setEditing(false);
       await reload();
     } catch (e: any) {
@@ -182,9 +218,14 @@ export function HouseholdDrawer({
                   {data.addressLine || <span className="text-gray-400 italic">No address recorded</span>}
                 </div>
               )}
-              {data.lat != null && data.lng != null && (
+              {data.lat != null && data.lng != null ? (
                 <div className="text-[11px] text-gray-400 mt-1">
                   {data.lat.toFixed(5)}, {data.lng.toFixed(5)}
+                </div>
+              ) : (
+                <div className="text-[11px] text-amber-700 mt-1 inline-flex items-center gap-1">
+                  <MapPinOffIcon className="w-3 h-3" />
+                  {data.addressLine ? 'Not pinned yet — edit the address to retry, or use Move pin to drop one manually.' : 'No address recorded — add one above to enable pinning.'}
                 </div>
               )}
             </div>
@@ -318,6 +359,39 @@ function MemberRow({
 }) {
   const [busy, setBusy] = useState(false);
   const [showLink, setShowLink] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(member.displayName ?? '');
+  const [editRelationship, setEditRelationship] = useState(member.relationship ?? '');
+  const [editEmail, setEditEmail] = useState(member.email ?? '');
+  const [editPhone, setEditPhone] = useState(member.phone ?? '');
+  const [editMobile, setEditMobile] = useState(member.mobile ?? '');
+
+  async function handleSaveMember() {
+    setBusy(true);
+    try {
+      await updateHouseholdMember(member.id, {
+        // Display name can only be cleared if a linked profile exists
+        // (the check_constraint requires one or the other). The form
+        // disables the Save button when both would be empty.
+        displayName: editName.trim() || (member.linkedPersonId ? null : member.displayName),
+        relationship: editRelationship.trim() || null,
+        email:  editEmail.trim()  || null,
+        phone:  editPhone.trim()  || null,
+        mobile: editMobile.trim() || null,
+      });
+      setEditing(false);
+      await onChanged();
+    } finally { setBusy(false); }
+  }
+
+  function cancelEdit() {
+    setEditName(member.displayName ?? '');
+    setEditRelationship(member.relationship ?? '');
+    setEditEmail(member.email ?? '');
+    setEditPhone(member.phone ?? '');
+    setEditMobile(member.mobile ?? '');
+    setEditing(false);
+  }
 
   async function handleUnlink() {
     setBusy(true);
@@ -390,8 +464,47 @@ function MemberRow({
               </span>
             )}
           </div>
+          {/* Contact info — visible to LSA members. Distinct from any
+              contact details on the linked community-building profile. */}
+          {!editing && (member.email || member.phone || member.mobile) && (
+            <div className="flex flex-col gap-0.5 mt-1.5">
+              {member.email && (
+                <a
+                  href={`mailto:${member.email}`}
+                  className="inline-flex items-center gap-1 text-[11px] text-gray-600 hover:text-amber-700 hover:underline truncate">
+                  <MailIcon className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                  <span className="truncate">{member.email}</span>
+                </a>
+              )}
+              {member.phone && (
+                <a
+                  href={`tel:${member.phone}`}
+                  className="inline-flex items-center gap-1 text-[11px] text-gray-600 hover:text-amber-700 hover:underline">
+                  <PhoneIcon className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                  {member.phone}
+                </a>
+              )}
+              {member.mobile && (
+                <a
+                  href={`tel:${member.mobile}`}
+                  className="inline-flex items-center gap-1 text-[11px] text-gray-600 hover:text-amber-700 hover:underline">
+                  <SmartphoneIcon className="w-3 h-3 text-gray-400 flex-shrink-0" />
+                  {member.mobile}
+                </a>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-1">
+          {!editing && (
+            <button
+              onClick={() => setEditing(true)}
+              disabled={busy}
+              title="Edit member"
+              className="p-1 text-gray-400 hover:text-gray-700 hover:bg-white rounded">
+              <EditIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
           {!member.linkedPersonId && member.displayName && (
             <button
               onClick={() => setShowLink(v => !v)}
@@ -419,6 +532,58 @@ function MemberRow({
           </button>
         </div>
       </div>
+
+      {editing && (
+        <div className="mt-2 space-y-1.5 border-t border-gray-200 pt-2">
+          <input
+            value={editName}
+            onChange={e => setEditName(e.target.value)}
+            placeholder="Display name"
+            className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs"
+          />
+          <input
+            value={editRelationship}
+            onChange={e => setEditRelationship(e.target.value)}
+            placeholder="Role / relationship (optional)"
+            className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs"
+          />
+          <input
+            value={editEmail}
+            onChange={e => setEditEmail(e.target.value)}
+            type="email"
+            placeholder="Email"
+            className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs"
+          />
+          <input
+            value={editPhone}
+            onChange={e => setEditPhone(e.target.value)}
+            type="tel"
+            placeholder="Phone (home/landline)"
+            className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs"
+          />
+          <input
+            value={editMobile}
+            onChange={e => setEditMobile(e.target.value)}
+            type="tel"
+            placeholder="Mobile"
+            className="w-full rounded border border-gray-200 bg-white px-2 py-1 text-xs"
+          />
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSaveMember}
+              disabled={busy || (!editName.trim() && !member.linkedPersonId)}
+              className="flex-1 px-3 py-1 text-[11px] font-semibold rounded bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50">
+              Save
+            </button>
+            <button
+              onClick={cancelEdit}
+              disabled={busy}
+              className="px-3 py-1 text-[11px] font-semibold rounded border border-gray-200 text-gray-700 hover:bg-white">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {showLink && member.displayName && (
         <LinkSuggestionPanel
@@ -529,6 +694,10 @@ function AddMemberForm({
 }) {
   const [displayName, setDisplayName] = useState('');
   const [relationship, setRelationship] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [mobile, setMobile] = useState('');
+  const [showContact, setShowContact] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<PersonMatchSuggestion[]>([]);
@@ -552,9 +721,16 @@ function AddMemberForm({
         displayName: displayName.trim() || null,
         linkedPersonId: linkedPersonId ?? null,
         relationship: relationship.trim() || null,
+        email: email.trim() || null,
+        phone: phone.trim() || null,
+        mobile: mobile.trim() || null,
       });
       setDisplayName('');
       setRelationship('');
+      setEmail('');
+      setPhone('');
+      setMobile('');
+      setShowContact(false);
       setSuggestions([]);
       await onAdded();
     } catch (e: any) {
@@ -582,6 +758,37 @@ function AddMemberForm({
         placeholder="Role / relationship (optional)"
         className="w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
       />
+      <button
+        type="button"
+        onClick={() => setShowContact(v => !v)}
+        className="text-[11px] font-semibold text-amber-700 hover:text-amber-900 self-start">
+        {showContact ? '− Hide contact info' : '+ Add contact info'}
+      </button>
+      {showContact && (
+        <div className="space-y-1.5">
+          <input
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            type="email"
+            placeholder="Email"
+            className="w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          <input
+            value={phone}
+            onChange={e => setPhone(e.target.value)}
+            type="tel"
+            placeholder="Phone (home/landline)"
+            className="w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          <input
+            value={mobile}
+            onChange={e => setMobile(e.target.value)}
+            type="tel"
+            placeholder="Mobile"
+            className="w-full rounded-lg border border-amber-200 bg-white px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+        </div>
+      )}
       <p className="text-[10px] text-amber-800/80 leading-snug">
         We'll show possible matches from existing person profiles as you type. Click <strong>Link &amp; add</strong> on a match, or <strong>Add as unlinked</strong> if no match exists.
       </p>
