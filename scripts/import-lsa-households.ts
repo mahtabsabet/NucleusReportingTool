@@ -28,11 +28,25 @@
  *   --input=<path>        Required. Path to the source .xlsx.
  *   --cluster=<name>      Cluster name to import under. Default: "Calgary".
  *   --output=<path>       Review xlsx path. Default: ./lsa-import-review-<ts>.xlsx.
+ *   --sql=<path>          Also emit a ready-to-paste SQL file for the
+ *                         accepted bucket. Useful when you don't have
+ *                         a service-role key locally — paste the file
+ *                         into the Supabase SQL editor instead.
  *   --commit              Actually write to Supabase. Without it, dry-run only.
  *
  * Idempotency: with --commit, each household is keyed by
  * (jurisdiction_id, normalized address_line). Re-running skips
  * households already present and reports them in the review xlsx.
+ * The --sql output does NOT include an idempotency guard; the
+ * file's header tells the operator to run it exactly once.
+ *
+ * REMINDER (post-merge cleanup): the first run of this script
+ * against the dev Supabase project loads ~280 real Calgary
+ * households as sample data. After this branch merges to main and
+ * the corrected, assembly-reviewed dataset is imported into
+ * production, that sample data should be deleted from dev so we
+ * aren't sitting on PII we don't need. The PR body should repeat
+ * this reminder as a release checkbox.
  */
 
 import * as dotenv from 'dotenv';
@@ -89,6 +103,7 @@ function parseArgs() {
     input: args.input as string,
     cluster: (args.cluster as string) || 'Calgary',
     output: (args.output as string) || path.resolve(process.cwd(), `lsa-import-review-${ts}.xlsx`),
+    sql: (args.sql as string) || null,
     commit: args.commit === true,
   };
 }
@@ -353,6 +368,61 @@ function writeReview(outputPath: string, groups: Group[], skippedExisting: Group
   XLSX.writeFile(wb, outputPath);
 }
 
+// ─── SQL emit (alternative to --commit when there's no service-role key) ───
+
+function sqlStr(s: string | null | undefined): string {
+  if (s == null) return 'NULL';
+  return "'" + String(s).replace(/'/g, "''") + "'";
+}
+
+function writeSqlImport(outPath: string, accepted: Group[], clusterName: string): void {
+  const lines: string[] = [];
+  lines.push('-- ============================================================');
+  lines.push(`-- LSA household import — ${accepted.length} households / ${accepted.reduce((n, g) => n + g.members.length, 0)} people`);
+  lines.push(`-- Target cluster: ${clusterName}`);
+  lines.push(`-- Generated: ${new Date().toISOString()}`);
+  lines.push('--');
+  lines.push('-- Paste this whole file into the Supabase SQL editor and click Run.');
+  lines.push('-- It runs as one transaction — either everything lands or nothing does.');
+  lines.push('-- RUN THIS FILE EXACTLY ONCE. There is no double-import guard; running it');
+  lines.push('-- twice will create duplicate households.');
+  lines.push('-- ============================================================');
+  lines.push('');
+  lines.push('DO $LSA$');
+  lines.push('DECLARE');
+  lines.push('  jur_id uuid;');
+  lines.push('  hh_id  uuid;');
+  lines.push('BEGIN');
+  lines.push('  SELECT j.id INTO jur_id');
+  lines.push('    FROM lsa_jurisdictions j');
+  lines.push('    JOIN clusters c ON c.id = j.cluster_id');
+  lines.push(`   WHERE c.name = ${sqlStr(clusterName)}`);
+  lines.push('     AND c.deleted_at IS NULL');
+  lines.push('     AND j.archived_at IS NULL');
+  lines.push('   ORDER BY j.created_at ASC');
+  lines.push('   LIMIT 1;');
+  lines.push('');
+  lines.push(`  IF jur_id IS NULL THEN RAISE EXCEPTION 'No LSA jurisdiction for cluster ${clusterName}'; END IF;`);
+  lines.push('');
+
+  for (const g of accepted) {
+    lines.push(`  -- ${g.proposedName} @ ${g.address}`);
+    lines.push('  INSERT INTO households (jurisdiction_id, display_name, address_line, neighbourhood, sector)');
+    lines.push(`  VALUES (jur_id, ${sqlStr(g.proposedName)}, ${sqlStr(g.address)}, ${sqlStr(g.neighbourhood)}, ${sqlStr(g.sector)})`);
+    lines.push('  RETURNING id INTO hh_id;');
+    lines.push('  INSERT INTO household_members (household_id, display_name, email, phone, mobile) VALUES');
+    const memberValues = g.members.map((m) =>
+      `    (hh_id, ${sqlStr(`${m.firstName} ${m.lastName}`.trim())}, ${sqlStr(m.email)}, ${sqlStr(m.telephone)}, ${sqlStr(m.mobile)})`,
+    );
+    lines.push(memberValues.join(',\n') + ';');
+    lines.push('');
+  }
+
+  lines.push('END $LSA$;');
+  lines.push('');
+  fs.writeFileSync(outPath, lines.join('\n'));
+}
+
 // ─── DB write (only with --commit) ───────────────────────────────
 
 async function getJurisdictionId(supabase: SupabaseClient, clusterName: string): Promise<string> {
@@ -488,6 +558,12 @@ async function main() {
 
   writeReview(args.output, groups, skipped, { cluster: args.cluster, committed: args.commit });
   console.log(`Review spreadsheet: ${args.output}`);
+
+  if (args.sql) {
+    const accepted = groups.filter((g) => g.category === 'accepted');
+    writeSqlImport(args.sql, accepted, args.cluster);
+    console.log(`SQL import file:    ${args.sql} (${accepted.length} households)`);
+  }
 }
 
 main().catch((err) => {

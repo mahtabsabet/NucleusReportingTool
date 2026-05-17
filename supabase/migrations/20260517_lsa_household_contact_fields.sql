@@ -15,6 +15,12 @@
 --
 -- neighbourhood/sector live on households because they describe
 -- where the household sits, not who lives there.
+--
+-- POST-MERGE CLEANUP NOTE: this migration ships alongside a one-off
+-- import script that loads ~280 real Calgary households into the
+-- dev database as sample data. After the corrected, assembly-
+-- reviewed dataset lands in production, that dev sample data
+-- should be deleted so we aren't holding PII we don't need.
 -- ============================================================
 
 alter table household_members
