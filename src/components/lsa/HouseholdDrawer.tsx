@@ -14,6 +14,7 @@
 // ============================================================
 
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   XIcon,
   ArchiveIcon,
@@ -25,6 +26,7 @@ import {
   Link2OffIcon,
   SaveIcon,
   EditIcon,
+  ExternalLinkIcon,
   LoaderIcon,
 } from 'lucide-react';
 import {
@@ -342,14 +344,36 @@ function MemberRow({
     } finally { setBusy(false); }
   }
 
+  const navigate = useNavigate();
   const label = member.displayName?.trim() || '(linked profile)';
   const canUnlink = !!member.linkedPersonId && !!member.displayName?.trim();
+
+  // When the user clicks a linked member's name, open the ordinary
+  // person-profile page. The IndividualProfile component already
+  // renders a Back button at the top that does navigate(-1), which
+  // returns to this map view; the map reads ?household=<id> from
+  // the URL on mount and reopens this drawer, so the round-trip
+  // feels seamless even though the profile page is in a different
+  // part of the route tree.
+  const openLinkedProfile = () => {
+    if (member.linkedPersonId) navigate(`/individual/${member.linkedPersonId}`);
+  };
 
   return (
     <li className="rounded-lg border border-gray-100 px-3 py-2 bg-gray-50">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-medium text-gray-900 truncate">{label}</div>
+          {member.linkedPersonId ? (
+            <button
+              onClick={openLinkedProfile}
+              title="Open this person's profile"
+              className="group flex items-center gap-1.5 text-sm font-medium text-emerald-800 hover:text-emerald-900 hover:underline truncate text-left max-w-full">
+              <span className="truncate">{label}</span>
+              <ExternalLinkIcon className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+            </button>
+          ) : (
+            <div className="text-sm font-medium text-gray-900 truncate">{label}</div>
+          )}
           <div className="flex flex-wrap gap-1.5 mt-0.5">
             {member.relationship && (
               <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">

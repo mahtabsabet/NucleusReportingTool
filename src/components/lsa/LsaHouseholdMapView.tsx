@@ -96,7 +96,20 @@ export function LsaHouseholdMapView() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftError, setDraftError] = useState<string | null>(null);
 
-  const [selectedHouseholdId, setSelectedHouseholdId] = useState<string | null>(null);
+  // The selected household id is mirrored to ?household=<id> in
+  // the URL so that the household drawer survives a round-trip
+  // through (e.g.) a linked person's profile page: when the user
+  // hits Back on the profile, the map remounts with the param
+  // still in place and reopens the drawer where they left off.
+  const selectedHouseholdId = searchParams.get('household');
+  const setSelectedHouseholdId = (id: string | null) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set('household', id);
+      else next.delete('household');
+      return next;
+    }, { replace: true });
+  };
   const [showImport, setShowImport] = useState(false);
 
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
