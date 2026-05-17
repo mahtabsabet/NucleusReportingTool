@@ -348,7 +348,17 @@ function ChangeRoleModal({ user, callerCtx, onClose, onChanged }: ChangeRoleModa
   const [activities, setActivities] = useState<ScopeOption[]>([]);
 
   const scopeNeed = scopeRequirementFor(selectedRole);
-  const needsScopePicker = scopeNeed !== 'none' && scopeNeed !== currentScopeType;
+  // Show the scope picker whenever the new role needs a scope AND either:
+  //   - the current row's scope type doesn't match (the row needs creating
+  //     in a different table column), OR
+  //   - the role itself is changing (the existing user_permissions row
+  //     gets replaced, so a fresh scope choice is required even when the
+  //     two roles share the same scope type — e.g. lsa_member → cluster_
+  //     coordinator are both cluster-scoped but bind to different roles
+  //     and shouldn't silently reuse the LSA grant's cluster).
+  const needsScopePicker =
+    scopeNeed !== 'none'
+    && (scopeNeed !== currentScopeType || selectedRole !== perm?.role);
   // Cluster, nucleus and activity scopes all start from a cluster.
   const needsCluster = needsScopePicker;
   const needsNucleus = needsScopePicker && (scopeNeed === 'nucleus' || scopeNeed === 'activity');
