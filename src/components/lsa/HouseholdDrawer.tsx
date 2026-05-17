@@ -71,10 +71,29 @@ export function HouseholdDrawer({
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Auto-match scan: for each unlinked member with a name, query
+  // the community-building side for possible matches. Surfaced
+  // proactively on the row so the LSA doesn't have to click the
+  // link icon to discover matches member by member.
+  const [matches, setMatches] = useState<Map<string, PersonMatchSuggestion[]>>(new Map());
+
+  async function scanMatches(members: HouseholdMember[]) {
+    const candidates = members.filter(m => !m.linkedPersonId && (m.displayName ?? '').trim());
+    if (candidates.length === 0) { setMatches(new Map()); return; }
+    const results = await Promise.all(
+      candidates.map(m =>
+        suggestPersonMatches(m.displayName!, jurisdictionId, { limit: 3 })
+          .then(s => [m.id, s] as const)
+          .catch(() => [m.id, [] as PersonMatchSuggestion[]] as const),
+      ),
+    );
+    setMatches(new Map(results.filter(([, s]) => s.length > 0)));
+  }
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setMatches(new Map());
     fetchHouseholdWithMembers(householdId)
       .then(d => {
         if (cancelled) return;
@@ -83,16 +102,18 @@ export function HouseholdDrawer({
           setName(d.displayName);
           setAddress(d.addressLine ?? '');
           setNotes(d.notes ?? '');
+          scanMatches(d.members);
         }
       })
       .catch(e => !cancelled && setError(e.message ?? 'Failed to load household'))
       .finally(() => !cancelled && setLoading(false));
     return () => { cancelled = true; };
-  }, [householdId]);
+  }, [householdId, jurisdictionId]);
 
   async function reload() {
     const d = await fetchHouseholdWithMembers(householdId);
     setData(d);
+    if (d) await scanMatches(d.members);
     onChanged();
   }
 
@@ -309,6 +330,7 @@ export function HouseholdDrawer({
               members={data.members}
               jurisdictionId={jurisdictionId}
               householdId={householdId}
+              matches={matches}
               onChanged={reload}
             />
             <AddMemberForm
@@ -328,11 +350,13 @@ function MembersList({
   members,
   householdId: _householdId,
   jurisdictionId,
+  matches,
   onChanged,
 }: {
   members: HouseholdMember[];
   householdId: string;
   jurisdictionId: string;
+  matches: Map<string, PersonMatchSuggestion[]>;
   onChanged: () => Promise<void> | void;
 }) {
   if (members.length === 0) {
@@ -341,7 +365,13 @@ function MembersList({
   return (
     <ul className="space-y-2 mb-4">
       {members.map(m => (
-        <MemberRow key={m.id} member={m} jurisdictionId={jurisdictionId} onChanged={onChanged} />
+        <MemberRow
+          key={m.id}
+          member={m}
+          jurisdictionId={jurisdictionId}
+          suggestions={matches.get(m.id) ?? []}
+          onChanged={onChanged}
+        />
       ))}
     </ul>
   );
@@ -351,10 +381,12 @@ function MembersList({
 function MemberRow({
   member,
   jurisdictionId,
+  suggestions,
   onChanged,
 }: {
   member: HouseholdMember;
   jurisdictionId: string;
+  suggestions: PersonMatchSuggestion[];
   onChanged: () => Promise<void> | void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -585,6 +617,28 @@ function MemberRow({
         </div>
       )}
 
+      {/* Proactive auto-match banner: rendered when the background
+          scan in HouseholdDrawer found one or more possible community-
+          side profiles for this member. Click opens the same review
+          panel as the manual link icon does. Hidden once the member
+          is linked, while editing, or once the panel is already open. */}
+      {!member.linkedPersonId && !editing && !showLink && suggestions.length > 0 && (
+        <button
+          onClick={() => setShowLink(true)}
+          className="mt-2 w-full text-left rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 hover:bg-emerald-100 transition-colors">
+          <div className="text-[11px] font-semibold text-emerald-800 inline-flex items-center gap-1.5">
+            <Link2Icon className="w-3 h-3" />
+            {suggestions.length === 1 ? '1 possible match' : `${suggestions.length} possible matches`} — Review and link
+          </div>
+          <div className="text-[11px] text-emerald-700 mt-0.5 truncate">
+            Top: <span className="font-medium">{suggestions[0].name}</span>
+            <span className="text-emerald-600 ml-1">
+              ({suggestions[0].matchedOn === 'exact' ? 'exact match' : suggestions[0].matchedOn === 'prefix' ? 'starts with this name' : 'name contains this'})
+            </span>
+          </div>
+        </button>
+      )}
+
       {showLink && member.displayName && (
         <LinkSuggestionPanel
           memberId={member.id}
@@ -655,7 +709,9 @@ function LinkSuggestionPanel({
       {loading ? (
         <div className="text-[11px] text-gray-500 italic">Searching…</div>
       ) : results.length === 0 ? (
-        <div className="text-[11px] text-gray-500 italic">No matches found.</div>
+        <div className="text-[11px] text-gray-500 italic leading-snug">
+          No matches found. Try a different spelling, or search by just a last name or first name.
+        </div>
       ) : (
         <ul className="space-y-1 max-h-48 overflow-y-auto">
           {results.map(r => (
