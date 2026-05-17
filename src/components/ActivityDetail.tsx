@@ -24,7 +24,7 @@ import {
 import { submitPermissionRequest } from '../lib/db/requests';
 import { getCallerContext } from '../lib/db/users';
 import {
-  isRegionalOnly,
+  viewsOrdinaryLayerReadOnly,
   isActivityLead,
   isClusterCoordinator,
   isNucleusCollaborator,
@@ -181,7 +181,7 @@ export function ActivityDetail() {
 
   useEffect(() => {
     getCallerContext().then(ctx => {
-      setRegionalOnly(ctx ? isRegionalOnly(ctx) : false);
+      setRegionalOnly(ctx ? viewsOrdinaryLayerReadOnly(ctx) : false);
       if (!ctx) { setActivityLeadOnly(false); return; }
       setActivityLeadOnly(
         !ctx.isSuperAdmin && !ctx.isAdmin && !ctx.isRegionalViewer

@@ -21,13 +21,15 @@ export type Role =
   | 'regional_viewer'     // profiles.is_regional_viewer
   | 'cluster_coordinator' // user_permissions.role
   | 'nucleus_collaborator'// user_permissions.role  (label: "Nucleus Coordinator")
-  | 'activity_lead';      // user_permissions.role
+  | 'activity_lead'       // user_permissions.role
+  | 'lsa_member';         // user_permissions.role (cluster-scoped LSA stewardship)
 
 // Roles that are stored in the user_permissions table (need a scope).
 export type ScopedRole =
   | 'cluster_coordinator'
   | 'nucleus_collaborator'
-  | 'activity_lead';
+  | 'activity_lead'
+  | 'lsa_member';
 
 // Roles a user-creation form can offer. Super Admin is intentionally
 // not creatable through the UI — only the initial bootstrap assigns it.
@@ -41,6 +43,7 @@ const ROLE_LABELS: Record<Role, string> = {
   cluster_coordinator: 'Cluster Coordinator',
   nucleus_collaborator: 'Nucleus Coordinator',
   activity_lead: 'Activity Lead',
+  lsa_member: 'LSA Member',
 };
 
 export function roleLabel(role: Role | string): string {
@@ -55,6 +58,7 @@ export const ROLE_BADGE_CLASSES: Record<string, string> = {
   cluster_coordinator: 'bg-blue-100 text-blue-800',
   nucleus_collaborator: 'bg-emerald-100 text-emerald-800',
   activity_lead: 'bg-amber-100 text-amber-800',
+  lsa_member: 'bg-stone-100 text-stone-700',
   viewer: 'bg-gray-100 text-gray-600', // legacy
 };
 
@@ -67,6 +71,7 @@ export function scopeRequirementFor(role: CreatableRole): ScopeRequirement {
     case 'regional_viewer':
       return 'none';
     case 'cluster_coordinator':
+    case 'lsa_member':
       return 'cluster';
     case 'nucleus_collaborator':
       return 'nucleus';
@@ -110,8 +115,29 @@ export function activityLeadActivityIds(ctx: CallerContext): string[] {
     .filter(g => g.role === 'activity_lead' && g.activityId)
     .map(g => g.activityId as string);
 }
+export function lsaMemberClusterIds(ctx: CallerContext): string[] {
+  return ctx.grants
+    .filter(g => g.role === 'lsa_member' && g.clusterId)
+    .map(g => g.clusterId as string);
+}
 export function isClusterCoordinator(ctx: CallerContext): boolean {
   return coordinatorClusterIds(ctx).length > 0;
+}
+export function isLsaMember(ctx: CallerContext): boolean {
+  return lsaMemberClusterIds(ctx).length > 0;
+}
+// Super Admins retain LSA-layer access for system maintenance.
+export function canAccessLsaLayer(ctx: CallerContext): boolean {
+  return ctx.isSuperAdmin || isLsaMember(ctx);
+}
+// Which clusters the caller may operate on inside the LSA layer.
+// Super Admins → all (returned as 'all'); LSA members → their granted
+// clusters; everyone else → none.
+export function lsaAccessibleClusterIds(
+  ctx: CallerContext,
+): string[] | 'all' {
+  if (ctx.isSuperAdmin) return 'all';
+  return lsaMemberClusterIds(ctx);
 }
 // True if the user is permitted to create a nucleus in *any* cluster — used
 // to decide whether to render the "New Nucleus" affordance at all (vs. the
@@ -134,7 +160,39 @@ export function isRegionalOnly(ctx: CallerContext): boolean {
   if (isClusterCoordinator(ctx) || isNucleusCollaborator(ctx) || isActivityLead(ctx)) {
     return false;
   }
+  if (isLsaMember(ctx)) return false;
   return ctx.isRegionalViewer;
+}
+
+// True when the caller's view of the ordinary community-building layer
+// (nuclei, activities, persons) is read-only. Covers two cases that the
+// UI should treat identically — both see everything in their scope but
+// cannot edit nucleus notes, change activity lifecycle, edit person
+// profiles, etc.:
+//   * Regional Viewer (global read across all clusters)
+//   * LSA Member, when browsing outside the LSA layer (cluster-scoped
+//     read, no write on community-building data)
+//
+// Distinct from isRegionalOnly because LSAs DO have write access to the
+// LSA layer; this helper is specifically about the ordinary layer.
+export function viewsOrdinaryLayerReadOnly(ctx: CallerContext): boolean {
+  if (ctx.isSuperAdmin || ctx.isAdmin) return false;
+  if (isClusterCoordinator(ctx) || isNucleusCollaborator(ctx) || isActivityLead(ctx)) {
+    return false;
+  }
+  return ctx.isRegionalViewer || isLsaMember(ctx);
+}
+
+// True when the caller's *only* role is lsa_member — used by App.tsx to pin
+// these users to their LSA home cluster (mirroring the NC-only / AL-only
+// redirect pattern). Multi-cluster LSAs (today only possible via direct DB
+// grants) still get the LSA toggle but aren't auto-redirected.
+export function isLsaMemberOnly(ctx: CallerContext): boolean {
+  if (ctx.isSuperAdmin || ctx.isAdmin || ctx.isRegionalViewer) return false;
+  if (isClusterCoordinator(ctx) || isNucleusCollaborator(ctx) || isActivityLead(ctx)) {
+    return false;
+  }
+  return isLsaMember(ctx);
 }
 
 // The "primary" role of a caller, picked top-down for display purposes.
@@ -144,6 +202,7 @@ export function primaryRole(ctx: CallerContext): Role {
   if (isClusterCoordinator(ctx)) return 'cluster_coordinator';
   if (isNucleusCollaborator(ctx)) return 'nucleus_collaborator';
   if (isActivityLead(ctx)) return 'activity_lead';
+  if (isLsaMember(ctx)) return 'lsa_member';
   if (ctx.isRegionalViewer) return 'regional_viewer';
   // Default — no role assigned. Treat as least-privileged viewer.
   return 'regional_viewer';
@@ -165,6 +224,9 @@ const ROLE_ASSIGNERS: Record<CreatableRole, Role[]> = {
   nucleus_collaborator:['super_admin', 'admin', 'cluster_coordinator'],
   // "Super Admin, Admin, Cluster Coordinator, or Nucleus Coordinator"
   activity_lead:       ['super_admin', 'admin', 'cluster_coordinator', 'nucleus_collaborator'],
+  // "Super Admin, Admin, or another LSA Member" — LSAs grow their own
+  // membership; CCs / NCs deliberately have no say in LSA composition.
+  lsa_member:          ['super_admin', 'admin', 'lsa_member'],
 };
 
 export function canAssignRole(ctx: CallerContext, target: CreatableRole): boolean {
@@ -173,6 +235,7 @@ export function canAssignRole(ctx: CallerContext, target: CreatableRole): boolea
   if (ctx.isAdmin && allowed.includes('admin')) return true;
   if (isClusterCoordinator(ctx) && allowed.includes('cluster_coordinator')) return true;
   if (isNucleusCollaborator(ctx) && allowed.includes('nucleus_collaborator')) return true;
+  if (isLsaMember(ctx) && allowed.includes('lsa_member')) return true;
   return false;
 }
 
@@ -185,6 +248,7 @@ export function creatableRoles(ctx: CallerContext): CreatableRole[] {
     'cluster_coordinator',
     'nucleus_collaborator',
     'activity_lead',
+    'lsa_member',
   ];
   return all.filter(r => canAssignRole(ctx, r));
 }
@@ -215,6 +279,14 @@ export function assignableScopes(ctx: CallerContext): AssignableScopes {
       // resolved in the data-loading layer (we don't list ids here without DB hits).
       nucleusIds: 'all',
       activityIds: 'all',
+    };
+  }
+  if (isLsaMember(ctx)) {
+    // LSAs can only assign lsa_member, scoped to their own cluster(s).
+    return {
+      clusterIds: lsaMemberClusterIds(ctx),
+      nucleusIds: [],
+      activityIds: [],
     };
   }
   if (isNucleusCollaborator(ctx)) {
@@ -348,7 +420,20 @@ export function actionPermission(
 
   // Regional (View-Only): nothing.
   if (ctx.isRegionalViewer && !isClusterCoordinator(ctx)
-      && !isNucleusCollaborator(ctx) && !isActivityLead(ctx)) {
+      && !isNucleusCollaborator(ctx) && !isActivityLead(ctx)
+      && !isLsaMember(ctx)) {
+    return 'none';
+  }
+  // LSA-only members: read-only on the ordinary community-building system.
+  // Anything outside the LSA layer (which has its own permission helpers)
+  // is denied here. The 'create_user' case below is special-cased for LSAs
+  // so they can still manage peer LSA grants from the user-management page.
+  if (isLsaMember(ctx)
+      && !ctx.isSuperAdmin && !ctx.isAdmin
+      && !isClusterCoordinator(ctx) && !isNucleusCollaborator(ctx)
+      && !isActivityLead(ctx)) {
+    if (action === 'create_user') return canCreateUsers(ctx) ? 'direct' : 'none';
+    if (action === 'change_user_permissions') return 'direct';
     return 'none';
   }
 
@@ -473,6 +558,7 @@ function highestRole(u: ManagedUserSummary): Role {
   if (u.grants.some(g => g.role === 'cluster_coordinator')) return 'cluster_coordinator';
   if (u.grants.some(g => g.role === 'nucleus_collaborator')) return 'nucleus_collaborator';
   if (u.grants.some(g => g.role === 'activity_lead')) return 'activity_lead';
+  if (u.grants.some(g => g.role === 'lsa_member')) return 'lsa_member';
   if (u.isRegionalViewer) return 'regional_viewer';
   return 'regional_viewer';
 }
@@ -484,6 +570,17 @@ export function canDeleteUserDirectly(ctx: CallerContext, target: ManagedUserSum
   if (target.isSuperAdmin) return false;                  // no one deletes a Super Admin via UI
   if (ctx.isSuperAdmin) return true;                       // Super deletes anyone (except self/super)
   if (ctx.isAdmin) return !target.isAdmin;                 // Admin can't delete other Admins
+  // LSA Members can delete a peer LSA Member account (per the LSA brief:
+  // LSAs can demote / delete an LSA profile). Limited to targets whose
+  // only role is lsa_member — LSAs never delete users with elevated roles.
+  if (isLsaMember(ctx)) {
+    const targetIsLsaOnly =
+      !target.isAdmin
+      && !target.isSuperAdmin
+      && !target.isRegionalViewer
+      && target.grants.every(g => g.role === 'lsa_member');
+    return targetIsLsaOnly && target.grants.some(g => g.role === 'lsa_member');
+  }
   return false;                                            // CC/NC/AL cannot delete directly
 }
 
@@ -523,7 +620,8 @@ export function canChangeUserRoleDirectly(
   return ctx.isSuperAdmin
     || ctx.isAdmin
     || isClusterCoordinator(ctx)
-    || isNucleusCollaborator(ctx);
+    || isNucleusCollaborator(ctx)
+    || isLsaMember(ctx);
 }
 
 // "Reset password" rules mirror canDeleteUserDirectly:

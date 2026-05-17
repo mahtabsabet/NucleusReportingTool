@@ -461,6 +461,7 @@ test.describe('super admin', () => {
       'Cluster Coordinator',
       'Nucleus Coordinator',
       'Activity Lead',
+      'LSA Member',
     ]);
   });
 

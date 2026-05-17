@@ -12,6 +12,7 @@ const ROLE_ASSIGNERS: Record<string, string[]> = {
   cluster_coordinator:  ['super_admin', 'admin', 'cluster_coordinator'],
   nucleus_collaborator: ['super_admin', 'admin', 'cluster_coordinator'],
   activity_lead:        ['super_admin', 'admin', 'cluster_coordinator', 'nucleus_collaborator'],
+  lsa_member:           ['super_admin', 'admin', 'lsa_member'],
 };
 
 Deno.serve(async (req) => {
@@ -56,12 +57,12 @@ Deno.serve(async (req) => {
     // auth.users and require the service role to read.
     if (action === 'list-emails') {
       if (!callerIsAdmin) {
-        // CC/NC need emails too in order to render their managed users.
+        // CC/NC/LSA need emails too in order to render their managed users.
         const { data: ccPerms } = await supabaseAdmin
           .from('user_permissions')
           .select('id')
           .eq('user_id', caller.id)
-          .in('role', ['cluster_coordinator', 'nucleus_collaborator'])
+          .in('role', ['cluster_coordinator', 'nucleus_collaborator', 'lsa_member'])
           .limit(1);
         if (!ccPerms || ccPerms.length === 0) {
           return json({ error: 'Insufficient permissions' }, 403);
@@ -82,27 +83,65 @@ Deno.serve(async (req) => {
 
     // ── delete ───────────────────────────────────────────────────
     if (action === 'delete') {
-      if (!callerIsAdmin) return json({ error: 'Admin access required' }, 403);
       const { targetUserId, confirmedEmail } = body;
       if (!targetUserId) return json({ error: 'targetUserId required' }, 400);
       if (targetUserId === caller.id) return json({ error: 'Cannot delete your own account' }, 403);
+
+      // LSA-only callers can also delete peer LSA-only accounts. Gate
+      // applies before the admin path: an Admin caller still passes
+      // straight through the admin checks below.
+      let callerIsLsaOnly = false;
+      if (!callerIsAdmin) {
+        const { data: callerPerms } = await supabaseAdmin
+          .from('user_permissions')
+          .select('role')
+          .eq('user_id', caller.id);
+        const perms = (callerPerms ?? []) as any[];
+        const hasLsa = perms.some(p => p.role === 'lsa_member');
+        const hasOther = perms.some(p =>
+          p.role === 'cluster_coordinator'
+          || p.role === 'nucleus_collaborator'
+          || p.role === 'activity_lead');
+        callerIsLsaOnly = hasLsa && !hasOther;
+        if (!callerIsLsaOnly) return json({ error: 'Admin access required' }, 403);
+      }
 
       const { data: { user: targetUser }, error: userErr } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
       if (userErr || !targetUser) return json({ error: 'User not found' }, 404);
 
       const { data: targetProfile } = await supabaseAdmin
         .from('profiles')
-        .select('is_admin, is_super_admin')
+        .select('is_admin, is_super_admin, is_regional_viewer')
         .eq('id', targetUserId)
         .single();
       const targetIsSuper = (targetProfile as any)?.is_super_admin === true;
       const targetIsAdmin = (targetProfile as any)?.is_admin === true || targetIsSuper;
+      const targetIsRegional = (targetProfile as any)?.is_regional_viewer === true;
 
       if (targetIsSuper) {
         return json({ error: 'Super Admins cannot be deleted through the application.' }, 403);
       }
       if (targetIsAdmin && !callerIsSuperAdmin) {
         return json({ error: 'Only a Super Admin may delete an Administrator.' }, 403);
+      }
+      if (callerIsLsaOnly) {
+        // LSA caller may only delete other LSA-only users.
+        if (targetIsAdmin || targetIsRegional) {
+          return json({ error: 'LSA members may only delete peer LSA accounts.' }, 403);
+        }
+        const { data: targetPerms } = await supabaseAdmin
+          .from('user_permissions')
+          .select('role')
+          .eq('user_id', targetUserId);
+        const tps = (targetPerms ?? []) as any[];
+        const targetHasLsa = tps.some(p => p.role === 'lsa_member');
+        const targetHasOther = tps.some(p =>
+          p.role === 'cluster_coordinator'
+          || p.role === 'nucleus_collaborator'
+          || p.role === 'activity_lead');
+        if (!targetHasLsa || targetHasOther) {
+          return json({ error: 'LSA members may only delete peer LSA accounts.' }, 403);
+        }
       }
 
       if (!confirmedEmail || confirmedEmail.trim().toLowerCase() !== (targetUser.email ?? '').toLowerCase()) {
@@ -149,6 +188,7 @@ Deno.serve(async (req) => {
       if (callerIsAdmin) callerRoles.push('admin');
       let myClusterIds: string[] = [];
       let myNucleusIds: string[] = [];
+      let myLsaClusterIds: string[] = [];
       if (!callerIsAdmin) {
         const { data: callerPerms } = await supabaseAdmin
           .from('user_permissions')
@@ -161,8 +201,12 @@ Deno.serve(async (req) => {
         myNucleusIds = perms
           .filter(p => p.role === 'nucleus_collaborator' && p.nucleus_id)
           .map(p => p.nucleus_id);
+        myLsaClusterIds = perms
+          .filter(p => p.role === 'lsa_member' && p.cluster_id)
+          .map(p => p.cluster_id);
         if (myClusterIds.length > 0) callerRoles.push('cluster_coordinator');
         if (myNucleusIds.length > 0) callerRoles.push('nucleus_collaborator');
+        if (myLsaClusterIds.length > 0) callerRoles.push('lsa_member');
       }
       if (!allowed.some(r => callerRoles.includes(r))) {
         return json({ error: `You are not allowed to assign the '${newRole}' role.` }, 403);
@@ -250,6 +294,11 @@ Deno.serve(async (req) => {
           if (!okByCluster && !okByNucleus) {
             return json({ error: 'Activity is not in your scope.' }, 403);
           }
+        } else if (newRole === 'lsa_member') {
+          if (!clusterId) return json({ error: 'A cluster must be specified for the lsa_member role.' }, 400);
+          if (!myLsaClusterIds.includes(clusterId)) {
+            return json({ error: 'Cluster is not in your LSA scope.' }, 403);
+          }
         }
       }
 
@@ -277,11 +326,13 @@ Deno.serve(async (req) => {
         const scopeId =
           newRole === 'cluster_coordinator' ? clusterId
           : newRole === 'nucleus_collaborator' ? nucleusId
+          : newRole === 'lsa_member' ? clusterId
           : activityId;
         if (!scopeId) {
           const need =
             newRole === 'cluster_coordinator' ? 'cluster'
             : newRole === 'nucleus_collaborator' ? 'nucleus'
+            : newRole === 'lsa_member' ? 'cluster'
             : 'activity';
           return json({ error: `A ${need} must be specified for the '${newRole}' role.` }, 400);
         }
@@ -308,6 +359,7 @@ Deno.serve(async (req) => {
         const permRow: Record<string, unknown> = { user_id: targetUserId, role: newRole };
         if (newRole === 'cluster_coordinator') permRow.cluster_id = scopeId;
         else if (newRole === 'nucleus_collaborator') permRow.nucleus_id = scopeId;
+        else if (newRole === 'lsa_member') permRow.cluster_id = scopeId;
         else permRow.activity_id = scopeId;
 
         const { error: insertErr } = await supabaseAdmin
