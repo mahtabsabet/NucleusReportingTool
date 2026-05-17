@@ -459,9 +459,13 @@ export function LsaHouseholdMapView() {
             zoomControl={true}>
             <MapController center={mapCenter} zoom={mapZoom} />
             <MapClickCapture enabled={!!placing} onPick={handleMapClick} />
-            {/* Carto Positron — quiet monochrome, fits the administrative tone. */}
+            {/* Carto Voyager — vibrant pastel palette, full colour, but
+                visually distinct from the raw OSM tiles the community
+                map uses. Reads as "place / geography" at a glance
+                without competing with the engagement-bucket colouring
+                on the community side. */}
             <TileLayer
-              url="https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{z}/{x}/{y}.png"
+              url="https://cartodb-basemaps-a.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png"
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
               maxZoom={19}
             />
