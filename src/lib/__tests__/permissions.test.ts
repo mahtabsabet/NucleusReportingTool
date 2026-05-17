@@ -16,6 +16,7 @@ import {
   primaryRole,
   roleLabel,
   scopeRequirementFor,
+  viewsOrdinaryLayerReadOnly,
 } from '../permissions';
 
 // ---- Fixtures ----------------------------------------------------------
@@ -123,6 +124,29 @@ describe('LSA member', () => {
       ],
     });
     expect(canDeleteUserDirectly(LSA, target)).toBe(false);
+  });
+});
+
+// ---- viewsOrdinaryLayerReadOnly --------------------------------------
+// Gates the "hide edit affordances" treatment on the community-building
+// pages (nucleus dashboard, activity, person profile). True for users
+// who CAN read those pages but cannot edit them.
+
+describe('viewsOrdinaryLayerReadOnly', () => {
+  it('Regional Viewer (no grants) is read-only on the ordinary layer', () => {
+    expect(viewsOrdinaryLayerReadOnly(REGIONAL)).toBe(true);
+  });
+  it('LSA Member (no other grants) is read-only on the ordinary layer', () => {
+    expect(viewsOrdinaryLayerReadOnly(LSA)).toBe(true);
+  });
+  it('Super Admin / Admin are NOT read-only', () => {
+    expect(viewsOrdinaryLayerReadOnly(SUPER)).toBe(false);
+    expect(viewsOrdinaryLayerReadOnly(ADMIN)).toBe(false);
+  });
+  it('CC / NC / AL are NOT read-only (they have scoped write rights)', () => {
+    expect(viewsOrdinaryLayerReadOnly(CC)).toBe(false);
+    expect(viewsOrdinaryLayerReadOnly(NC)).toBe(false);
+    expect(viewsOrdinaryLayerReadOnly(AL)).toBe(false);
   });
 });
 
