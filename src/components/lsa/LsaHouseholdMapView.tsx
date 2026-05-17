@@ -264,7 +264,7 @@ export function LsaHouseholdMapView() {
   // ── Render guards ─────────────────────────────────────────
   if (accessDenied) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-50 px-6">
+      <div className="min-h-screen flex items-center justify-center bg-amber-50 px-6">
         <div className="max-w-md text-center">
           <h1 className="text-xl font-semibold text-gray-900 mb-2">LSA layer access required</h1>
           <p className="text-sm text-gray-600 mb-4">
@@ -272,7 +272,7 @@ export function LsaHouseholdMapView() {
           </p>
           <button
             onClick={() => navigate('/')}
-            className="px-4 py-2 rounded-lg bg-stone-700 text-white text-sm font-semibold hover:bg-stone-800">
+            className="px-4 py-2 rounded-lg bg-amber-700 text-white text-sm font-semibold hover:bg-amber-800">
             Back to map
           </button>
         </div>
@@ -281,26 +281,26 @@ export function LsaHouseholdMapView() {
   }
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-stone-50">
-        <LoaderIcon className="w-6 h-6 text-stone-500 animate-spin" />
+      <div className="flex h-screen items-center justify-center bg-amber-50">
+        <LoaderIcon className="w-6 h-6 text-amber-500 animate-spin" />
       </div>
     );
   }
   if (bootstrapError) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-50 px-6">
+      <div className="min-h-screen flex items-center justify-center bg-amber-50 px-6">
         <div className="max-w-xl">
           <h1 className="text-xl font-semibold text-gray-900 mb-2">LSA layer not ready</h1>
           <p className="text-sm text-gray-700 mb-4 whitespace-pre-wrap">{bootstrapError}</p>
           <div className="flex gap-2">
             <button
               onClick={() => window.location.reload()}
-              className="px-4 py-2 rounded-lg bg-stone-700 text-white text-sm font-semibold hover:bg-stone-800">
+              className="px-4 py-2 rounded-lg bg-amber-700 text-white text-sm font-semibold hover:bg-amber-800">
               Retry
             </button>
             <button
               onClick={() => navigate('/')}
-              className="px-4 py-2 rounded-lg border border-stone-200 text-stone-700 text-sm font-semibold hover:bg-stone-100">
+              className="px-4 py-2 rounded-lg border border-amber-200 text-amber-700 text-sm font-semibold hover:bg-amber-100">
               Back to map
             </button>
           </div>
@@ -310,7 +310,7 @@ export function LsaHouseholdMapView() {
   }
   if (clusters.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-50 px-6">
+      <div className="min-h-screen flex items-center justify-center bg-amber-50 px-6">
         <div className="max-w-md text-center">
           <h1 className="text-xl font-semibold text-gray-900 mb-2">No LSA jurisdiction</h1>
           <p className="text-sm text-gray-600">
@@ -322,24 +322,24 @@ export function LsaHouseholdMapView() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-stone-50 font-sans">
-      <header className="bg-white border-b border-stone-200 px-4 sm:px-6 py-3 flex items-center justify-between z-10 relative shadow-sm">
+    <div className="flex flex-col h-screen bg-amber-50 font-sans">
+      <header className="bg-white border-b border-amber-200 px-4 sm:px-6 py-3 flex items-center justify-between z-10 relative shadow-sm">
         <div className="flex items-center gap-3 min-w-0">
           <button
             onClick={() => navigate('/')}
             aria-label="Back to community map"
             title="Back to community map"
-            className="w-9 h-9 bg-stone-100 text-stone-600 rounded-xl flex items-center justify-center hover:bg-stone-200">
+            className="w-9 h-9 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center hover:bg-amber-200">
             <ArrowLeftIcon className="w-4 h-4" />
           </button>
-          <div className="w-9 h-9 bg-stone-700 text-white rounded-xl flex items-center justify-center shadow-sm hidden sm:flex">
+          <div className="w-9 h-9 bg-amber-700 text-white rounded-xl flex items-center justify-center shadow-sm hidden sm:flex">
             <HomeIcon className="w-4 h-4" />
           </div>
           <div className="min-w-0">
             <h1 className="text-base sm:text-xl font-semibold text-gray-900 tracking-tight truncate">
               LSA Households
             </h1>
-            <p className="text-[11px] sm:text-xs text-stone-500">
+            <p className="text-[11px] sm:text-xs text-amber-500">
               {activeJurisdiction
                 ? activeJurisdiction.name
                 : 'Select a jurisdiction'}
@@ -350,14 +350,14 @@ export function LsaHouseholdMapView() {
 
         <div className="flex items-center gap-2">
           {/* View toggle: Community ↔ Households */}
-          <div className="hidden sm:flex items-center bg-stone-100 rounded-xl p-1">
+          <div className="hidden sm:flex items-center bg-amber-100 rounded-xl p-1">
             <button
               onClick={() => navigate(selectedClusterId ? `/?cluster=${selectedClusterId}` : '/')}
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg text-stone-600 hover:text-stone-900">
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg text-amber-600 hover:text-amber-900">
               Community
             </button>
             <button
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-stone-900 shadow-sm">
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-amber-900 shadow-sm">
               Households
             </button>
           </div>
@@ -366,7 +366,7 @@ export function LsaHouseholdMapView() {
             <select
               value={selectedClusterId ?? ''}
               onChange={e => handleClusterSwitch(e.target.value)}
-              className="rounded-xl border border-stone-200 px-3 py-1.5 text-sm bg-white">
+              className="rounded-xl border border-amber-200 px-3 py-1.5 text-sm bg-white">
               <option value="">Choose cluster…</option>
               {clusters.map(c => (
                 <option key={c.id} value={c.id}>{c.name}</option>
@@ -379,12 +379,12 @@ export function LsaHouseholdMapView() {
               <button
                 onClick={() => setShowImport(true)}
                 title="Import from spreadsheet"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-stone-200 bg-white text-stone-700 hover:bg-stone-50">
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-amber-200 bg-white text-amber-700 hover:bg-amber-50">
                 <UploadIcon className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Import</span>
               </button>
               <button
                 onClick={startNewPlacement}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-stone-700 text-white hover:bg-stone-800">
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-700 text-white hover:bg-amber-800">
                 <PlusIcon className="w-3.5 h-3.5" /> <span className="hidden sm:inline">New household</span>
               </button>
             </>
@@ -424,8 +424,8 @@ export function LsaHouseholdMapView() {
         <main className="flex-1 relative">
           {/* Placement banner */}
           {placing && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] bg-white border border-stone-200 rounded-xl shadow-md px-4 py-2 text-xs font-semibold text-stone-800 flex items-center gap-3">
-              <CrosshairIcon className="w-3.5 h-3.5 text-stone-500" />
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] bg-white border border-amber-200 rounded-xl shadow-md px-4 py-2 text-xs font-semibold text-amber-800 flex items-center gap-3">
+              <CrosshairIcon className="w-3.5 h-3.5 text-amber-500" />
               {placing.mode === 'new'
                 ? (draftLocation
                     ? 'Pin placed — fill in the details to save.'
@@ -433,7 +433,7 @@ export function LsaHouseholdMapView() {
                 : 'Click on the map to move the pin.'}
               <button
                 onClick={cancelPlacement}
-                className="ml-2 text-stone-500 hover:text-stone-900">
+                className="ml-2 text-amber-500 hover:text-amber-900">
                 <XIcon className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -478,32 +478,32 @@ export function LsaHouseholdMapView() {
 
           {/* New household form — appears in the bottom-right once a pin is dropped. */}
           {placing?.mode === 'new' && (
-            <div className="absolute bottom-4 right-4 z-[1000] bg-white rounded-2xl border border-stone-200 shadow-lg p-4 w-80">
+            <div className="absolute bottom-4 right-4 z-[1000] bg-white rounded-2xl border border-amber-200 shadow-lg p-4 w-80">
               <h3 className="text-sm font-semibold text-gray-900 mb-3">New household</h3>
               <div className="space-y-2">
                 <input
                   value={draftName}
                   onChange={e => setDraftName(e.target.value)}
                   placeholder="Display name (e.g. Sabet family)"
-                  className="w-full rounded-lg border border-stone-200 px-2.5 py-1.5 text-sm"
+                  className="w-full rounded-lg border border-amber-200 px-2.5 py-1.5 text-sm"
                 />
                 <div className="flex gap-1">
                   <input
                     value={draftAddress}
                     onChange={e => setDraftAddress(e.target.value)}
                     placeholder="Address (optional)"
-                    className="flex-1 rounded-lg border border-stone-200 px-2.5 py-1.5 text-sm"
+                    className="flex-1 rounded-lg border border-amber-200 px-2.5 py-1.5 text-sm"
                   />
                   <button
                     onClick={geocodeDraft}
                     disabled={savingDraft || !draftAddress.trim()}
                     title="Look up address and drop pin"
-                    className="px-2 py-1.5 rounded-lg bg-stone-100 text-stone-700 hover:bg-stone-200 disabled:opacity-50">
+                    className="px-2 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 disabled:opacity-50">
                     <MapPinIcon className="w-4 h-4" />
                   </button>
                 </div>
                 {draftLocation && (
-                  <div className="text-[11px] text-stone-500">
+                  <div className="text-[11px] text-amber-500">
                     Pin: {draftLocation.lat.toFixed(5)}, {draftLocation.lng.toFixed(5)}
                   </div>
                 )}
@@ -515,13 +515,13 @@ export function LsaHouseholdMapView() {
                 <div className="flex gap-2 pt-1">
                   <button
                     onClick={cancelPlacement}
-                    className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-stone-200 text-stone-700 hover:bg-stone-50">
+                    className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg border border-amber-200 text-amber-700 hover:bg-amber-50">
                     Cancel
                   </button>
                   <button
                     onClick={commitNewHousehold}
                     disabled={savingDraft || !draftLocation || !draftName.trim()}
-                    className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-700 text-white hover:bg-stone-800 disabled:opacity-50">
+                    className="flex-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50">
                     {savingDraft ? 'Saving…' : 'Save'}
                   </button>
                 </div>
@@ -569,42 +569,42 @@ function HouseholdSidebar({
   }, [households, query]);
 
   return (
-    <aside className="bg-white border-r border-stone-200 overflow-y-auto shadow-sm flex flex-col w-80 lg:w-96">
-      <div className="p-4 border-b border-stone-100 sticky top-0 bg-white z-10 space-y-3">
-        <h2 className="text-xs font-bold text-stone-500 uppercase tracking-widest">Households</h2>
+    <aside className="bg-white border-r border-amber-200 overflow-y-auto shadow-sm flex flex-col w-80 lg:w-96">
+      <div className="p-4 border-b border-amber-100 sticky top-0 bg-white z-10 space-y-3">
+        <h2 className="text-xs font-bold text-amber-500 uppercase tracking-widest">Households</h2>
         <input
           value={query}
           onChange={e => setQuery(e.target.value)}
           placeholder="Search…"
-          className="w-full rounded-lg border border-stone-200 px-3 py-1.5 text-sm"
+          className="w-full rounded-lg border border-amber-200 px-3 py-1.5 text-sm"
         />
         <button
           onClick={onToggleArchived}
-          className="flex items-center gap-1.5 text-[11px] font-semibold text-stone-600 hover:text-stone-900">
+          className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 hover:text-amber-900">
           <ArchiveIcon className="w-3 h-3" />
           {includeArchived ? 'Hide archived' : 'Show archived'}
         </button>
       </div>
       {filtered.length === 0 ? (
-        <div className="px-4 py-6 text-sm text-stone-500 italic">
-          No households yet. Use <strong className="font-semibold text-stone-700">New household</strong> or <strong className="font-semibold text-stone-700">Import</strong> to add some.
+        <div className="px-4 py-6 text-sm text-amber-500 italic">
+          No households yet. Use <strong className="font-semibold text-amber-700">New household</strong> or <strong className="font-semibold text-amber-700">Import</strong> to add some.
         </div>
       ) : (
-        <ul className="divide-y divide-stone-100">
+        <ul className="divide-y divide-amber-100">
           {filtered.map(h => (
             <li key={h.id}>
               <button
                 onClick={() => onSelect(h.id, h)}
-                className={`w-full text-left px-4 py-3 hover:bg-stone-50 ${selectedId === h.id ? 'bg-stone-100' : ''}`}>
+                className={`w-full text-left px-4 py-3 hover:bg-amber-50 ${selectedId === h.id ? 'bg-amber-100' : ''}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     <div className="text-sm font-semibold text-gray-900 truncate">{h.displayName}</div>
-                    <div className="text-[11px] text-stone-500 truncate">
+                    <div className="text-[11px] text-amber-500 truncate">
                       {h.addressLine || 'No address'}
                     </div>
                   </div>
                   {h.archivedAt && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-stone-400">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">
                       Archived
                     </span>
                   )}
@@ -619,7 +619,7 @@ function HouseholdSidebar({
           ))}
         </ul>
       )}
-      <div className="mt-auto px-4 py-3 border-t border-stone-100 text-[10px] text-stone-400 leading-relaxed">
+      <div className="mt-auto px-4 py-3 border-t border-amber-100 text-[10px] text-amber-400 leading-relaxed">
         Household data is private to the LSA layer. Ordinary coordinators and viewers cannot see addresses or household membership.
       </div>
     </aside>

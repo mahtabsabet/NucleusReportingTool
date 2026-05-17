@@ -294,40 +294,39 @@ function normalize(s: string): string {
 
 export async function suggestPersonMatches(
   rawName: string,
-  jurisdictionId: string,
+  _jurisdictionId: string,
   opts: { limit?: number } = {},
 ): Promise<PersonMatchSuggestion[]> {
   const name = normalize(rawName);
   if (name.length < 2) return [];
   const limit = opts.limit ?? 8;
 
-  // Resolve the jurisdiction's cluster — RLS already prevents an
-  // LSA from seeing other clusters' persons, but scoping the
-  // query is cheaper than filtering client-side.
-  const { data: juris } = await supabase
-    .from('lsa_jurisdictions')
-    .select('cluster_id')
-    .eq('id', jurisdictionId)
-    .maybeSingle();
-  const clusterId = (juris as any)?.cluster_id;
-  if (!clusterId) return [];
-
   // Pull persons whose name contains the typed text, then rank by
   // proximity in JS so we can express "exact / prefix / substring"
-  // tiers without a custom SQL operator. Scope by cluster via the
-  // enrollment join — Postgres ilike covers the rest.
+  // tiers without a custom SQL operator. Cluster scoping is
+  // handled by RLS — the LSA's "read persons in own cluster"
+  // policy already restricts visible rows to people enrolled in
+  // their cluster's nuclei (or in its activities). We deliberately
+  // don't re-add a cluster filter or an !inner join here:
+  //
+  //   * !inner on nucleus_enrollments would hide anyone visible
+  //     only through activity_participants
+  //   * the nested .eq('nucleus_enrollments.nuclei.cluster_id', ...)
+  //     filter was fragile and silently mismatching
+  //
+  // The nucleus_enrollments select is left as a (left) join purely
+  // for the display chip listing which nuclei a candidate is in.
   const { data, error } = await supabase
     .from('persons')
     .select(`
       id, name, age_group,
-      nucleus_enrollments!inner(
+      nucleus_enrollments(
         deleted_at,
-        nuclei!inner(id, name, cluster_id)
+        nuclei(id, name)
       )
     `)
     .ilike('name', `%${name}%`)
     .is('deleted_at', null)
-    .eq('nucleus_enrollments.nuclei.cluster_id', clusterId)
     .limit(limit * 3);          // overfetch; we dedupe + rank
   if (error) throw error;
 

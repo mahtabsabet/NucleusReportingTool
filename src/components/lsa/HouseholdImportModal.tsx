@@ -171,8 +171,8 @@ export function HouseholdImportModal({ jurisdictionId, onClose, onImported }: Pr
       <div className="bg-white rounded-2xl shadow-xl border border-gray-200 w-full max-w-3xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-gray-100 sticky top-0 bg-white z-10">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-stone-100 rounded-xl flex items-center justify-center">
-              <UploadCloudIcon className="w-5 h-5 text-stone-700" />
+            <div className="w-9 h-9 bg-amber-100 rounded-xl flex items-center justify-center">
+              <UploadCloudIcon className="w-5 h-5 text-amber-700" />
             </div>
             <div>
               <h2 className="text-lg font-bold text-gray-900">Import households</h2>
@@ -248,7 +248,7 @@ function Step1({
 }) {
   return (
     <div className="space-y-4">
-      <label className="block border-2 border-dashed border-gray-200 rounded-2xl p-10 text-center cursor-pointer hover:border-stone-400 hover:bg-stone-50/50 transition-colors">
+      <label className="block border-2 border-dashed border-gray-200 rounded-2xl p-10 text-center cursor-pointer hover:border-amber-400 hover:bg-amber-50/50 transition-colors">
         <UploadCloudIcon className="w-8 h-8 text-gray-400 mx-auto mb-2" />
         <div className="text-sm font-semibold text-gray-700">Choose a CSV or Excel file</div>
         <div className="text-xs text-gray-500 mt-1">.csv · .xlsx · .xls</div>
@@ -385,7 +385,7 @@ function Step2({
         <button
           onClick={onImport}
           disabled={validRowCount === 0}
-          className="flex-1 px-4 py-2.5 bg-stone-700 text-white rounded-xl hover:bg-stone-800 text-sm font-semibold disabled:opacity-50">
+          className="flex-1 px-4 py-2.5 bg-amber-700 text-white rounded-xl hover:bg-amber-800 text-sm font-semibold disabled:opacity-50">
           Import {validRowCount} household{validRowCount === 1 ? '' : 's'}
         </button>
       </div>
@@ -409,7 +409,7 @@ function Step3({
     return (
       <div className="space-y-4">
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">{error}</div>
-        <button onClick={onClose} className="px-4 py-2.5 rounded-xl bg-stone-700 text-white text-sm font-semibold">
+        <button onClick={onClose} className="px-4 py-2.5 rounded-xl bg-amber-700 text-white text-sm font-semibold">
           Close
         </button>
       </div>
@@ -423,8 +423,8 @@ function Step3({
         <div className="text-sm text-gray-700">
           Geocoding addresses (this respects OpenStreetMap's 1 request / second limit)…
         </div>
-        <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
-          <div className="h-full bg-stone-600 transition-all" style={{ width: `${pct}%` }} />
+        <div className="h-2 rounded-full bg-amber-100 overflow-hidden">
+          <div className="h-full bg-amber-600 transition-all" style={{ width: `${pct}%` }} />
         </div>
         {progress && (
           <div className="text-xs text-gray-500">{progress.done} / {progress.total} rows processed.</div>
@@ -439,12 +439,12 @@ function Step3({
         Imported <strong className="font-semibold">{report.inserted}</strong> household{report.inserted === 1 ? '' : 's'}.
       </div>
       <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-lg bg-stone-50 border border-stone-100 px-3 py-2">
-          <div className="flex items-center gap-2 text-stone-700">
+        <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
+          <div className="flex items-center gap-2 text-amber-700">
             <MapPinIcon className="w-4 h-4" />
             <span className="text-xs font-semibold uppercase tracking-wider">Geocoded</span>
           </div>
-          <div className="text-2xl font-bold text-stone-900 mt-1">{report.geocoded}</div>
+          <div className="text-2xl font-bold text-amber-900 mt-1">{report.geocoded}</div>
         </div>
         <div className="rounded-lg bg-amber-50 border border-amber-100 px-3 py-2">
           <div className="flex items-center gap-2 text-amber-700">
@@ -459,7 +459,7 @@ function Step3({
           Rows without coordinates were still inserted. Open them from the household list to drop a pin manually.
         </p>
       )}
-      <button onClick={onClose} className="w-full px-4 py-2.5 rounded-xl bg-stone-700 text-white text-sm font-semibold">
+      <button onClick={onClose} className="w-full px-4 py-2.5 rounded-xl bg-amber-700 text-white text-sm font-semibold">
         Done
       </button>
     </div>
