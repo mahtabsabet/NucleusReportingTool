@@ -13,7 +13,8 @@
     "test:coverage": "vitest run --coverage",
     "e2e": "playwright test",
     "e2e:report": "playwright show-report",
-    "seed:alberta-clusters": "tsx scripts/seed-alberta-clusters.ts"
+    "seed:alberta-clusters": "tsx scripts/seed-alberta-clusters.ts",
+    "import:lsa-households": "tsx scripts/import-lsa-households.ts"
   },
   "dependencies": {
     "@emotion/react": "^11.13.3",
