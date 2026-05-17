@@ -9,6 +9,7 @@
 // ============================================================
 
 import { supabase } from '../supabase';
+import { searchPersonsByName } from './persons';
 
 export interface LsaJurisdiction {
   id: string;
@@ -301,62 +302,35 @@ export async function suggestPersonMatches(
   if (name.length < 2) return [];
   const limit = opts.limit ?? 8;
 
-  // Pull persons whose name contains the typed text, then rank by
-  // proximity in JS so we can express "exact / prefix / substring"
-  // tiers without a custom SQL operator. Cluster scoping is
-  // handled by RLS — the LSA's "read persons in own cluster"
-  // policy already restricts visible rows to people enrolled in
-  // their cluster's nuclei (or in its activities). We deliberately
-  // don't re-add a cluster filter or an !inner join here:
+  // Reuse the canonical person-search helper. It already does the
+  // right thing: flat ilike with wildcard escaping, separate
+  // enrollment / activity fetches (no nested-select-under-RLS
+  // pitfalls), and returns enriched display data we can render in
+  // the suggestion list without extra queries.
   //
-  //   * !inner on nucleus_enrollments would hide anyone visible
-  //     only through activity_participants
-  //   * the nested .eq('nucleus_enrollments.nuclei.cluster_id', ...)
-  //     filter was fragile and silently mismatching
-  //
-  // The nucleus_enrollments select is left as a (left) join purely
-  // for the display chip listing which nuclei a candidate is in.
-  const { data, error } = await supabase
-    .from('persons')
-    .select(`
-      id, name, age_group,
-      nucleus_enrollments(
-        deleted_at,
-        nuclei(id, name)
-      )
-    `)
-    .ilike('name', `%${name}%`)
-    .is('deleted_at', null)
-    .limit(limit * 3);          // overfetch; we dedupe + rank
-  if (error) throw error;
-
-  const seen = new Map<string, PersonMatchSuggestion>();
-  for (const row of (data ?? []) as any[]) {
-    if (seen.has(row.id)) continue;
-    const candidate = normalize(row.name ?? '');
-    let matchedOn: PersonMatchSuggestion['matchedOn'] = 'substring';
-    if (candidate === name) matchedOn = 'exact';
-    else if (candidate.startsWith(name)) matchedOn = 'prefix';
-
-    const enrollments = (row.nucleus_enrollments ?? []) as any[];
-    const nuclei = Array.from(new Set(
-      enrollments
-        .filter(e => !e.deleted_at && e.nuclei)
-        .map(e => e.nuclei.name as string)
-    ));
-
-    seen.set(row.id, {
-      personId: row.id,
-      name: row.name,
-      ageGroup: row.age_group ?? null,
-      nuclei,
-      matchedOn,
-    });
-  }
+  // Cluster scoping is handled by RLS: the LSA's "read persons in
+  // own cluster" policy already restricts visible rows to people
+  // enrolled in their cluster's nuclei or in its activities.
+  const matches = await searchPersonsByName(rawName, { limit: limit * 3 });
 
   const rank = (m: PersonMatchSuggestion['matchedOn']) =>
     m === 'exact' ? 0 : m === 'prefix' ? 1 : 2;
-  return Array.from(seen.values())
+
+  return matches
+    .map<PersonMatchSuggestion>(m => {
+      const candidate = normalize(m.name ?? '');
+      const matchedOn: PersonMatchSuggestion['matchedOn'] =
+        candidate === name ? 'exact'
+          : candidate.startsWith(name) ? 'prefix'
+          : 'substring';
+      return {
+        personId: m.id,
+        name: m.name,
+        ageGroup: m.ageGroup ?? null,
+        nuclei: m.nucleusNames,
+        matchedOn,
+      };
+    })
     .sort((a, b) => rank(a.matchedOn) - rank(b.matchedOn) || a.name.localeCompare(b.name))
     .slice(0, limit);
 }
