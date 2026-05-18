@@ -15,14 +15,17 @@ import React, { useEffect, useRef } from 'react';
 
 export type SheetState = 'peek' | 'half' | 'full';
 
-// Heights tuned so 'peek' just shows the handle + the sidebar's
-// sticky header (search + toggle row); 'half' surfaces the
+// Heights tuned so 'peek' shows the prominent grab area + the
+// sidebar's sticky header (search + toggle row) clear of any iOS
+// home-indicator / address-bar overlap; 'half' surfaces the
 // attention/match-scan cards and the first few list rows; 'full'
-// is the whole list scrollable.
+// is the whole list scrollable. Heights use `svh` (small viewport
+// height) where supported so iOS Safari's shrinking address bar
+// can't crop the bottom of the sheet.
 const HEIGHTS: Record<SheetState, string> = {
-  peek: '152px',
-  half: '50vh',
-  full: '88vh',
+  peek: '200px',
+  half: '50svh',
+  full: '88svh',
 };
 
 // Swipe threshold in pixels — below this, treat as a tap (cycle
@@ -43,13 +46,13 @@ interface Props {
   state: SheetState;
   onStateChange: (next: SheetState) => void;
   children: React.ReactNode;
-  // Optional accessory bar rendered between the handle and the
-  // children — used for the "Scan / New / Import" buttons that
-  // would otherwise compete with the map's top bar for space.
-  accessory?: React.ReactNode;
+  // Short label shown next to the drag handle ("Households · 374").
+  // Makes the grab area an obvious affordance rather than a tiny pill
+  // in empty space.
+  label?: string;
 }
 
-export function MobileBottomSheet({ state, onStateChange, children, accessory }: Props) {
+export function MobileBottomSheet({ state, onStateChange, children, label }: Props) {
   const touchStartY = useRef<number | null>(null);
 
   function onHandleClick() {
@@ -83,29 +86,39 @@ export function MobileBottomSheet({ state, onStateChange, children, accessory }:
     return () => { document.body.style.overflow = prev; };
   }, [state]);
 
+  const nextLabel = state === 'peek' ? 'Expand list' : state === 'half' ? 'Expand fully' : 'Collapse';
+
   return (
     <div
       role="dialog"
       aria-label="Household list"
-      className="fixed left-0 right-0 bottom-0 bg-white border-t border-amber-200 rounded-t-2xl shadow-2xl z-[1100] flex flex-col"
+      className="fixed left-0 right-0 bg-white border-t border-amber-200 rounded-t-2xl shadow-2xl z-[1100] flex flex-col"
       style={{
+        // Anchor to the safe area (iOS home indicator) so the
+        // content doesn't slip under the system gesture row.
+        bottom: 'env(safe-area-inset-bottom, 0px)',
         height: HEIGHTS[state],
         transition: 'height 0.25s ease-out',
       }}
     >
+      {/* Grab area — entire top strip (handle + label) is the tap
+          target, not just the small pill. Big enough that an LSA
+          fumbling on a phone can reliably hit it. */}
       <button
         type="button"
         onClick={onHandleClick}
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
-        aria-label={`Sheet ${state} — tap or swipe to resize`}
-        className="w-full pt-2 pb-1 flex justify-center touch-none"
+        aria-label={`Households list — ${state} — ${nextLabel}`}
+        className="w-full pt-2 pb-2 flex flex-col items-center gap-1 select-none touch-none border-b border-amber-100"
       >
-        <span className="block w-10 h-1 bg-gray-300 rounded-full" />
+        <span className="block w-12 h-1.5 bg-gray-300 rounded-full" />
+        {label && (
+          <span className="text-[11px] font-semibold text-amber-700 uppercase tracking-wider">
+            {label}
+          </span>
+        )}
       </button>
-      {accessory && (
-        <div className="px-4 pb-2 border-b border-amber-100">{accessory}</div>
-      )}
       <div className="flex-1 min-h-0 overflow-y-auto">
         {children}
       </div>

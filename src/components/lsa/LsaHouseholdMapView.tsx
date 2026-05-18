@@ -511,10 +511,12 @@ export function LsaHouseholdMapView() {
             <HomeIcon className="w-4 h-4" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-base sm:text-xl font-semibold text-gray-900 tracking-tight truncate">
+            <h1 className="text-sm sm:text-xl font-semibold text-gray-900 tracking-tight truncate">
               LSA Households
             </h1>
-            <p className="text-[11px] sm:text-xs text-amber-500">
+            {/* Subtitle only on tablet+; on a phone the header is
+                already tight and the same info lives in the sheet. */}
+            <p className="text-[11px] sm:text-xs text-amber-500 hidden sm:block">
               {activeJurisdiction
                 ? activeJurisdiction.name
                 : 'Select a jurisdiction'}
@@ -523,18 +525,18 @@ export function LsaHouseholdMapView() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           {/* View toggle: Community ↔ Households. Always visible here
               because only Super Admins and LSA members can reach this
               route in the first place (canAccessLsaLayer gate above). */}
           <div className="flex items-center bg-amber-100 rounded-xl p-1">
             <button
               onClick={() => navigate(selectedClusterId ? `/?cluster=${selectedClusterId}` : '/')}
-              className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg text-amber-600 hover:text-amber-900">
+              className="px-2 sm:px-3 py-1.5 text-xs font-semibold rounded-lg text-amber-600 hover:text-amber-900">
               Community
             </button>
             <button
-              className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-amber-900 shadow-sm">
+              className="px-2 sm:px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-amber-900 shadow-sm">
               Households
             </button>
           </div>
@@ -543,7 +545,7 @@ export function LsaHouseholdMapView() {
             <select
               value={selectedClusterId ?? ''}
               onChange={e => handleClusterSwitch(e.target.value)}
-              className="rounded-xl border border-amber-200 px-3 py-1.5 text-sm bg-white">
+              className="rounded-xl border border-amber-200 px-2 sm:px-3 py-1.5 text-xs sm:text-sm bg-white max-w-[120px] sm:max-w-none">
               <option value="">Choose cluster…</option>
               {clusters.map(c => (
                 <option key={c.id} value={c.id}>{c.name}</option>
@@ -553,15 +555,21 @@ export function LsaHouseholdMapView() {
 
           {activeJurisdiction && !placing && (
             <>
+              {/* Import is desktop-only — a CSV/XLSX picker on a
+                  phone is a poor experience and the import flow is
+                  fundamentally a back-office task. Hidden on mobile;
+                  power users hit it from a tablet or laptop. */}
               <button
                 onClick={() => setShowImport(true)}
                 title="Import from spreadsheet"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-amber-200 bg-white text-amber-700 hover:bg-amber-50">
-                <UploadIcon className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Import</span>
+                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-amber-200 bg-white text-amber-700 hover:bg-amber-50">
+                <UploadIcon className="w-3.5 h-3.5" /> <span>Import</span>
               </button>
               <button
                 onClick={startNewPlacement}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-700 text-white hover:bg-amber-800">
+                aria-label="New household"
+                title="New household"
+                className="flex items-center gap-1.5 p-2 sm:px-3 sm:py-1.5 rounded-xl text-xs font-semibold bg-amber-700 text-white hover:bg-amber-800">
                 <PlusIcon className="w-3.5 h-3.5" /> <span className="hidden sm:inline">New household</span>
               </button>
             </>
@@ -745,7 +753,11 @@ export function LsaHouseholdMapView() {
             takes the screen) or during placement (the form replaces
             the sheet in roughly the same screen position). */}
         {isMobile && !selectedHouseholdId && !placing && (
-          <MobileBottomSheet state={sheetState} onStateChange={setSheetState}>
+          <MobileBottomSheet
+            state={sheetState}
+            onStateChange={setSheetState}
+            label={`Households${households.length > 0 ? ` · ${households.length}` : ''}`}
+          >
             <HouseholdSidebar
               mode="sheet"
               onInteract={bumpSheetUp}
