@@ -104,8 +104,94 @@ function parseArgs() {
     cluster: (args.cluster as string) || 'Calgary',
     output: (args.output as string) || path.resolve(process.cwd(), `lsa-import-review-${ts}.xlsx`),
     sql: (args.sql as string) || null,
+    decisions: (args.decisions as string) || null,
     commit: args.commit === true,
   };
+}
+
+// ─── Decisions sidecar ───────────────────────────────────────────
+// The LSA's review xlsx (the one this script emitted on the dry
+// run) can carry a "Decision" column on each review tab. We parse
+// that here and return a Map<sourceRow, decisionText>. Empty cells
+// → no entry; the original proposed name stays. "SKIP" (case-
+// insensitive) → drop that person from the import.
+
+const SOURCE_ROW_HEADER = 'Source Row';
+const DECISION_HEADER = 'Decision';
+
+function parseDecisions(decisionsPath: string): Map<number, string> {
+  const wb = XLSX.readFile(decisionsPath);
+  const out = new Map<number, string>();
+  for (const sheetName of wb.SheetNames) {
+    if (!sheetName.toLowerCase().startsWith('review')) continue;
+    const ws = wb.Sheets[sheetName];
+    const matrix: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, blankrows: false });
+    if (matrix.length === 0) continue;
+    const headers = (matrix[0] as unknown[]).map(c => (c == null ? '' : String(c).trim()));
+    const srcIdx = headers.indexOf(SOURCE_ROW_HEADER);
+    const decIdx = headers.indexOf(DECISION_HEADER);
+    if (srcIdx === -1 || decIdx === -1) continue;
+    for (let i = 1; i < matrix.length; i++) {
+      const row = matrix[i] ?? [];
+      const src = row[srcIdx];
+      const dec = row[decIdx];
+      if (src == null || dec == null) continue;
+      const srcNum = Number(src);
+      const decStr = String(dec).trim();
+      if (!Number.isFinite(srcNum) || decStr === '') continue;
+      out.set(srcNum, decStr);
+    }
+  }
+  return out;
+}
+
+// Apply decisions to the grouped output. Members whose decision is
+// "SKIP" are dropped; members with an explicit name override get
+// regrouped under that name (split if a single address has multiple
+// override names — that's the LSA flagging a co-residence as actually
+// being multiple households). Untouched members keep the proposed name.
+function applyDecisions(groups: Group[], decisions: Map<number, string>): Group[] {
+  const out: Group[] = [];
+  for (const g of groups) {
+    if (g.category === 'accepted') {
+      // Single-surname groups don't go through review, but allow
+      // overrides anyway so a decisions file can correct anything.
+      out.push(...resolveGroup(g, decisions));
+      continue;
+    }
+    out.push(...resolveGroup(g, decisions));
+  }
+  return out;
+}
+
+function resolveGroup(g: Group, decisions: Map<number, string>): Group[] {
+  const byName = new Map<string, Row[]>();
+  for (const m of g.members) {
+    const dec = decisions.get(m.sourceRow);
+    if (dec && dec.toUpperCase() === 'SKIP') continue;
+    const name = dec ?? g.proposedName;
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name)!.push(m);
+  }
+  if (byName.size === 0) return [];
+  const out: Group[] = [];
+  let i = 0;
+  for (const [name, members] of byName) {
+    out.push({
+      ...g,
+      // Differentiate split keys so the SQL dedup check stays per-name
+      // when a single address splits into multiple households.
+      key: byName.size === 1 ? g.key : `${g.key}#${i++}`,
+      members,
+      surnames: Array.from(new Set(members.map(m => m.lastName))),
+      proposedName: name,
+      // After a decision is applied the group is treated as accepted —
+      // the LSA has resolved the ambiguity. Categories above this point
+      // still drive the review xlsx grouping; we just resolve before SQL.
+      category: 'accepted',
+    });
+  }
+  return out;
 }
 
 // ─── Parse the spreadsheet ───────────────────────────────────────
@@ -384,8 +470,10 @@ function writeSqlImport(outPath: string, accepted: Group[], clusterName: string)
   lines.push('--');
   lines.push('-- Paste this whole file into the Supabase SQL editor and click Run.');
   lines.push('-- It runs as one transaction — either everything lands or nothing does.');
-  lines.push('-- RUN THIS FILE EXACTLY ONCE. There is no double-import guard; running it');
-  lines.push('-- twice will create duplicate households.');
+  lines.push('-- Idempotent: each household is guarded by a NOT EXISTS lookup');
+  lines.push('-- against (jurisdiction_id, address_line) — re-running skips any');
+  lines.push('-- household already present at the same address. Addressless rows');
+  lines.push('-- dedup on display_name + NULL address.');
   lines.push('-- ============================================================');
   lines.push('');
   lines.push('DO $LSA$');
@@ -406,15 +494,29 @@ function writeSqlImport(outPath: string, accepted: Group[], clusterName: string)
   lines.push('');
 
   for (const g of accepted) {
-    lines.push(`  -- ${g.proposedName} @ ${g.address}`);
-    lines.push('  INSERT INTO households (jurisdiction_id, display_name, address_line, neighbourhood, sector)');
-    lines.push(`  VALUES (jur_id, ${sqlStr(g.proposedName)}, ${sqlStr(g.address)}, ${sqlStr(g.neighbourhood)}, ${sqlStr(g.sector)})`);
-    lines.push('  RETURNING id INTO hh_id;');
-    lines.push('  INSERT INTO household_members (household_id, display_name, email, phone, mobile) VALUES');
+    const addrComment = g.address ?? '(no address)';
+    lines.push(`  -- ${g.proposedName} @ ${addrComment}`);
+    // Idempotency guard: skip if a non-archived household with the
+    // same identifying signature is already in this jurisdiction.
+    if (g.address) {
+      lines.push('  IF NOT EXISTS (SELECT 1 FROM households');
+      lines.push(`   WHERE jurisdiction_id = jur_id AND archived_at IS NULL`);
+      lines.push(`     AND lower(address_line) = lower(${sqlStr(g.address)})) THEN`);
+    } else {
+      lines.push('  IF NOT EXISTS (SELECT 1 FROM households');
+      lines.push(`   WHERE jurisdiction_id = jur_id AND archived_at IS NULL`);
+      lines.push(`     AND address_line IS NULL`);
+      lines.push(`     AND display_name = ${sqlStr(g.proposedName)}) THEN`);
+    }
+    lines.push('    INSERT INTO households (jurisdiction_id, display_name, address_line, neighbourhood, sector)');
+    lines.push(`    VALUES (jur_id, ${sqlStr(g.proposedName)}, ${sqlStr(g.address)}, ${sqlStr(g.neighbourhood)}, ${sqlStr(g.sector)})`);
+    lines.push('    RETURNING id INTO hh_id;');
+    lines.push('    INSERT INTO household_members (household_id, display_name, email, phone, mobile) VALUES');
     const memberValues = g.members.map((m) =>
-      `    (hh_id, ${sqlStr(`${m.firstName} ${m.lastName}`.trim())}, ${sqlStr(m.email)}, ${sqlStr(m.telephone)}, ${sqlStr(m.mobile)})`,
+      `      (hh_id, ${sqlStr(`${m.firstName} ${m.lastName}`.trim())}, ${sqlStr(m.email)}, ${sqlStr(m.telephone)}, ${sqlStr(m.mobile)})`,
     );
     lines.push(memberValues.join(',\n') + ';');
+    lines.push('  END IF;');
     lines.push('');
   }
 
@@ -536,6 +638,20 @@ async function main() {
   console.log(`  ${counts.no_address} no address`);
   console.log();
 
+  // Resolve review-bucket groups against the decisions sidecar, if
+  // provided. After this, every group reads as "accepted" — the LSA
+  // has answered the ambiguous cases — and the SQL output spans the
+  // full set instead of just the trivially-accepted ones.
+  let resolvedGroups = groups;
+  if (args.decisions) {
+    const decisions = parseDecisions(args.decisions);
+    console.log(`Loaded ${decisions.size} decision(s) from ${args.decisions}.`);
+    resolvedGroups = applyDecisions(groups, decisions);
+    const resolvedPeople = resolvedGroups.reduce((n, g) => n + g.members.length, 0);
+    console.log(`Resolved to ${resolvedGroups.length} households (${resolvedPeople} people) after applying decisions.`);
+    console.log();
+  }
+
   let skipped: Group[] = [];
   if (args.commit) {
     const supabaseUrl    = process.env.VITE_SUPABASE_URL;
@@ -560,9 +676,14 @@ async function main() {
   console.log(`Review spreadsheet: ${args.output}`);
 
   if (args.sql) {
-    const accepted = groups.filter((g) => g.category === 'accepted');
-    writeSqlImport(args.sql, accepted, args.cluster);
-    console.log(`SQL import file:    ${args.sql} (${accepted.length} households)`);
+    // Without decisions, only the unambiguous single-surname groups
+    // can be safely committed — review buckets need human input. With
+    // decisions, every group has been resolved and goes in.
+    const forSql = args.decisions
+      ? resolvedGroups
+      : resolvedGroups.filter((g) => g.category === 'accepted');
+    writeSqlImport(args.sql, forSql, args.cluster);
+    console.log(`SQL import file:    ${args.sql} (${forSql.length} households)`);
   }
 }
 
