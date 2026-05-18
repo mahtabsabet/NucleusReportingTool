@@ -51,7 +51,37 @@ export async function geocodeAddressBatch(
 // those formats inconsistently. Two API calls maximum per address;
 // both go through the rate-limited edge function.
 
-const UNIT_PREFIX = /^[A-Za-z]?\d+\s*[-/]\s*/;
+// Address fallbacks for Nominatim lookups that miss on the first
+// pass. Both kinds of unit reference confuse Nominatim's address
+// parser to varying degrees; stripping either off the *query* (never
+// the stored address — we just send a simpler string to the
+// geocoder) usually recovers the building. The original
+// address_line in the database is left intact.
+//
+// Prefix:  "1602-1025 5 Ave SW"            → "1025 5 Ave SW"
+//          "M403-1919 University Dr NW"    → "1919 University Dr NW"
+//          "a-606 25 Ave NE"               → "606 25 Ave NE"
+//          "116a-3730 50 St NW"            → "3730 50 St NW"
+// Suffix:  "80 Galbraith Dr SW Ste 36"     → "80 Galbraith Dr SW"
+//          "20 14 St NW Unit B"            → "20 14 St NW"
+//          "123 Main St #5"                → "123 Main St"
+const UNIT_PREFIX = /^[A-Za-z0-9]+\s*[-/]\s*(?=\d)/;
+const UNIT_SUFFIX = /\s+(?:ste|suite|unit|apt|#)\s*[A-Za-z0-9]+\s*$/i;
+
+// Exported for unit testing. Returns query variants to try when
+// the original address misses on the first geocoder pass.
+export function _buildGeocoderFallbacks(address: string): string[] {
+  const out: string[] = [];
+  const noPrefix = address.replace(UNIT_PREFIX, '');
+  if (noPrefix !== address) out.push(noPrefix);
+  const noSuffix = address.replace(UNIT_SUFFIX, '');
+  if (noSuffix !== address) out.push(noSuffix);
+  if (noPrefix !== address && noSuffix !== address) {
+    const noBoth = noPrefix.replace(UNIT_SUFFIX, '');
+    if (noBoth !== noPrefix && noBoth !== noSuffix) out.push(noBoth);
+  }
+  return out;
+}
 
 function contextSuffix(clusterName: string): string {
   return `, ${clusterName}, Alberta, Canada`;
@@ -66,9 +96,11 @@ export async function geocodeAddressForCluster(
   const ctx = contextSuffix(clusterName);
   const first = await geocodeAddress(trimmed + ctx);
   if (first) return first;
-  const stripped = trimmed.replace(UNIT_PREFIX, '');
-  if (stripped === trimmed) return null;
-  return geocodeAddress(stripped + ctx);
+  for (const fallback of _buildGeocoderFallbacks(trimmed)) {
+    const hit = await geocodeAddress(fallback + ctx);
+    if (hit) return hit;
+  }
+  return null;
 }
 
 export async function geocodeAddressBatchForCluster(
@@ -80,21 +112,24 @@ export async function geocodeAddressBatchForCluster(
   const trimmed = addresses.map(a => a.trim());
   const first = await geocodeAddressBatch(trimmed.map(a => a + ctx));
 
-  const retryIdx: number[] = [];
-  const retryQueries: string[] = [];
-  for (let i = 0; i < trimmed.length; i++) {
-    if (first[i]) continue;
-    const stripped = trimmed[i].replace(UNIT_PREFIX, '');
-    if (stripped === trimmed[i]) continue;
-    retryIdx.push(i);
-    retryQueries.push(stripped + ctx);
-  }
-  if (retryQueries.length === 0) return first;
-
-  const second = await geocodeAddressBatch(retryQueries);
   const out = [...first];
-  for (let j = 0; j < retryIdx.length; j++) {
-    if (second[j]) out[retryIdx[j]] = second[j];
+  // Gather one row per (missing address, fallback variant). We send
+  // all the fallbacks in one batch — the edge function paces them
+  // — and take the first hit for each missing slot.
+  const retries: Array<{ idx: number; query: string }> = [];
+  for (let i = 0; i < trimmed.length; i++) {
+    if (out[i]) continue;
+    for (const fallback of _buildGeocoderFallbacks(trimmed[i])) {
+      retries.push({ idx: i, query: fallback + ctx });
+    }
+  }
+  if (retries.length === 0) return out;
+
+  const retryHits = await geocodeAddressBatch(retries.map(r => r.query));
+  for (let k = 0; k < retries.length; k++) {
+    const { idx } = retries[k];
+    if (out[idx]) continue;
+    if (retryHits[k]) out[idx] = retryHits[k];
   }
   return out;
 }
