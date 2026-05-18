@@ -513,15 +513,17 @@ export function LsaHouseholdMapView() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* View toggle: Community ↔ Households */}
-          <div className="hidden sm:flex items-center bg-amber-100 rounded-xl p-1">
+          {/* View toggle: Community ↔ Households. Always visible here
+              because only Super Admins and LSA members can reach this
+              route in the first place (canAccessLsaLayer gate above). */}
+          <div className="flex items-center bg-amber-100 rounded-xl p-1">
             <button
               onClick={() => navigate(selectedClusterId ? `/?cluster=${selectedClusterId}` : '/')}
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg text-amber-600 hover:text-amber-900">
+              className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg text-amber-600 hover:text-amber-900">
               Community
             </button>
             <button
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-amber-900 shadow-sm">
+              className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-amber-900 shadow-sm">
               Households
             </button>
           </div>
