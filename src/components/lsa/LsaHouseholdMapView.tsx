@@ -24,6 +24,8 @@ import {
   ArrowLeftRightIcon,
   XIcon,
   MapPinIcon,
+  MapPinOffIcon,
+  Link2Icon,
   LoaderIcon,
   CrosshairIcon,
 } from 'lucide-react';
@@ -32,19 +34,24 @@ import { fetchClusters, type ClusterRow } from '../../lib/db/clusters';
 import {
   fetchJurisdictions,
   fetchHouseholds,
+  fetchUnlinkedMembersForJurisdiction,
+  fetchLinkedCountsForJurisdiction,
+  fetchMemberCountsForJurisdiction,
+  countMatchableMembersForHousehold,
+  suggestPersonMatches,
   createHousehold,
   updateHousehold,
   type Household,
   type LsaJurisdiction,
 } from '../../lib/db/households';
-import { geocodeAddress } from '../../lib/geocoder';
+import { geocodeAddressForCluster, geocodeAddressBatchForCluster } from '../../lib/geocoder';
 import { getCallerContext } from '../../lib/db/users';
 import {
   canAccessLsaLayer,
   lsaAccessibleClusterIds,
   type CallerContext,
 } from '../../lib/permissions';
-import { householdMarkerIcon, householdMarkerArchivedIcon } from './HouseholdMarkerIcon';
+import { householdMarkerIcon, householdMarkerArchivedIcon, householdMarkerEmptyIcon } from './HouseholdMarkerIcon';
 import { HouseholdDrawer } from './HouseholdDrawer';
 import { HouseholdImportModal } from './HouseholdImportModal';
 
@@ -111,6 +118,30 @@ export function LsaHouseholdMapView() {
     }, { replace: true });
   };
   const [showImport, setShowImport] = useState(false);
+
+  // Backfill geocoding state — drives the "Geocode missing pins"
+  // affordance in the sidebar's attention card. Progress is shown
+  // so the LSA isn't left guessing during the ~1-req/sec server-
+  // paced sweep through 100+ addresses.
+  const [geocoding, setGeocoding] = useState<{ done: number; total: number } | null>(null);
+  const [geocodeError, setGeocodeError] = useState<string | null>(null);
+
+  // Match-scan state — on demand the LSA can sweep every unlinked
+  // member through the community-side search and have any household
+  // with hits flagged in the list, so they can triage links without
+  // opening every household. Counts mean "members in this household
+  // with at least one possible match", not total match count.
+  const [matchScanning, setMatchScanning] = useState<{ done: number; total: number } | null>(null);
+  const [matchCounts, setMatchCounts] = useState<Map<string, number>>(new Map());
+  const [matchScanRan, setMatchScanRan] = useState(false);
+
+  // Per-household count of members already linked to a community-
+  // building profile. Refreshed alongside the household list, so the
+  // sidebar's quiet "X linked" badge always reflects current state.
+  const [linkedCounts, setLinkedCounts] = useState<Map<string, number>>(new Map());
+  // Per-household total member count. Drives the "Empty" badge and
+  // the hollow map-pin variant for households with zero members.
+  const [memberCounts, setMemberCounts] = useState<Map<string, number>>(new Map());
 
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
   const [mapZoom, setMapZoom] = useState(6);
@@ -190,10 +221,46 @@ export function LsaHouseholdMapView() {
     () => jurisdictions.find(j => j.clusterId === selectedClusterId) ?? null,
     [jurisdictions, selectedClusterId],
   );
+  const activeCluster = useMemo(
+    () => clusters.find(c => c.id === selectedClusterId) ?? null,
+    [clusters, selectedClusterId],
+  );
 
   async function loadHouseholds(jurisdictionId: string) {
-    const rows = await fetchHouseholds(jurisdictionId, { includeArchived });
+    const [rows, linked, members] = await Promise.all([
+      fetchHouseholds(jurisdictionId, { includeArchived }),
+      fetchLinkedCountsForJurisdiction(jurisdictionId).catch(() => new Map<string, number>()),
+      fetchMemberCountsForJurisdiction(jurisdictionId).catch(() => new Map<string, number>()),
+    ]);
     setHouseholds(rows);
+    setLinkedCounts(linked);
+    setMemberCounts(members);
+  }
+
+  // Refresh badges for one household after a drawer-side change
+  // (e.g., the LSA just confirmed a link). Cheap: one linked-count
+  // refetch plus a small per-member rescan, scoped to this row.
+  async function refreshHouseholdBadges(householdId: string) {
+    if (!activeJurisdiction) return;
+    // Linked counts: re-fetch the whole jurisdiction map — it is one
+    // small query and keeps the sidebar in lock-step with the DB.
+    const linked = await fetchLinkedCountsForJurisdiction(activeJurisdiction.id)
+      .catch(() => null);
+    if (linked) setLinkedCounts(linked);
+    // Possible-match count: only re-run if the scan has been run at
+    // least once; otherwise we'd be conjuring a badge the LSA never
+    // asked for.
+    if (matchScanRan) {
+      try {
+        const n = await countMatchableMembersForHousehold(householdId, activeJurisdiction.id);
+        setMatchCounts(prev => {
+          const next = new Map(prev);
+          if (n > 0) next.set(householdId, n);
+          else next.delete(householdId);
+          return next;
+        });
+      } catch { /* ignore; LSA can re-scan manually */ }
+    }
   }
 
   useEffect(() => {
@@ -232,11 +299,95 @@ export function LsaHouseholdMapView() {
       setPlacing(null);
     }
   }
+
+  // Backfill geocoding for households that have an address but no
+  // lat/lng. The edge function paces requests to Nominatim's rate
+  // limit, so we batch in chunks and report progress between batches.
+  // Households where the geocoder returns no hit are left alone — they
+  // remain in the "needs attention" bucket and the LSA can hand-pin
+  // them via "Move pin" on the drawer.
+  async function geocodeMissing() {
+    if (!activeJurisdiction || !activeCluster) return;
+    const candidates = households.filter(
+      h => h.lat == null && h.archivedAt == null && (h.addressLine ?? '').trim().length > 0,
+    );
+    if (candidates.length === 0) return;
+    setGeocodeError(null);
+    setGeocoding({ done: 0, total: candidates.length });
+    const CHUNK = 25;
+    try {
+      for (let i = 0; i < candidates.length; i += CHUNK) {
+        const slice = candidates.slice(i, i + CHUNK);
+        const hits = await geocodeAddressBatchForCluster(
+          slice.map(h => h.addressLine!),
+          activeCluster.name,
+        );
+        await Promise.all(
+          slice.map((h, idx) => {
+            const hit = hits[idx];
+            if (!hit) return Promise.resolve();
+            return updateHousehold(h.id, { lat: hit.lat, lng: hit.lng });
+          }),
+        );
+        setGeocoding({ done: Math.min(i + slice.length, candidates.length), total: candidates.length });
+      }
+      await loadHouseholds(activeJurisdiction.id);
+    } catch (e: any) {
+      setGeocodeError(e.message ?? 'Geocoding failed');
+    } finally {
+      setGeocoding(null);
+    }
+  }
+
+  // Walk every unlinked household member in this jurisdiction and
+  // ask the community-building search for possible matches. Results
+  // are aggregated by household and surfaced as a green badge on
+  // each list row, so the LSA can see at-a-glance which households
+  // are worth opening to review links. The drawer's own per-row
+  // scan still runs independently when a household is opened.
+  async function scanForMatches() {
+    if (!activeJurisdiction) return;
+    let members: Awaited<ReturnType<typeof fetchUnlinkedMembersForJurisdiction>>;
+    try {
+      members = await fetchUnlinkedMembersForJurisdiction(activeJurisdiction.id);
+    } catch {
+      return;
+    }
+    if (members.length === 0) {
+      setMatchCounts(new Map());
+      setMatchScanRan(true);
+      return;
+    }
+    setMatchScanning({ done: 0, total: members.length });
+    const counts = new Map<string, number>();
+    const CONCURRENCY = 5;
+    try {
+      for (let i = 0; i < members.length; i += CONCURRENCY) {
+        const slice = members.slice(i, i + CONCURRENCY);
+        const hits = await Promise.all(
+          slice.map(m =>
+            suggestPersonMatches(m.displayName, activeJurisdiction.id, { limit: 1 })
+              .then(s => [m.householdId, s.length > 0] as const)
+              .catch(() => [m.householdId, false] as const),
+          ),
+        );
+        for (const [hid, hasMatch] of hits) {
+          if (hasMatch) counts.set(hid, (counts.get(hid) ?? 0) + 1);
+        }
+        setMatchScanning({ done: Math.min(i + slice.length, members.length), total: members.length });
+      }
+      setMatchCounts(counts);
+      setMatchScanRan(true);
+    } finally {
+      setMatchScanning(null);
+    }
+  }
+
   async function geocodeDraft() {
-    if (!draftAddress.trim()) return;
+    if (!draftAddress.trim() || !activeCluster) return;
     setSavingDraft(true); setDraftError(null);
     try {
-      const hit = await geocodeAddress(draftAddress.trim());
+      const hit = await geocodeAddressForCluster(draftAddress.trim(), activeCluster.name);
       if (!hit) { setDraftError('Address not found. Click on the map to place a pin manually.'); return; }
       setDraftLocation({ lat: hit.lat, lng: hit.lng });
       setMapCenter([hit.lat, hit.lng]);
@@ -407,16 +558,26 @@ export function LsaHouseholdMapView() {
 
       <div className="flex flex-1 overflow-hidden relative flex-col lg:flex-row">
         {/* Left panel: either household detail (when selected) or the household list. */}
-        {selectedHouseholdId && activeJurisdiction ? (
+        {selectedHouseholdId && activeJurisdiction && activeCluster ? (
           <HouseholdDrawer
             householdId={selectedHouseholdId}
             jurisdictionId={activeJurisdiction.id}
+            clusterName={activeCluster.name}
             onClose={() => setSelectedHouseholdId(null)}
             onStartMove={(hid) => {
               setSelectedHouseholdId(null);
               setPlacing({ mode: 'move', householdId: hid });
             }}
-            onChanged={() => activeJurisdiction && loadHouseholds(activeJurisdiction.id)}
+            onChanged={async (alsoRefresh) => {
+              if (!activeJurisdiction) return;
+              await loadHouseholds(activeJurisdiction.id);
+              await refreshHouseholdBadges(selectedHouseholdId);
+              for (const otherId of (alsoRefresh ?? [])) {
+                if (otherId && otherId !== selectedHouseholdId) {
+                  await refreshHouseholdBadges(otherId);
+                }
+              }
+            }}
           />
         ) : (
           <HouseholdSidebar
@@ -431,6 +592,15 @@ export function LsaHouseholdMapView() {
               }
             }}
             onToggleArchived={() => setIncludeArchived(v => !v)}
+            onGeocodeMissing={geocodeMissing}
+            geocoding={geocoding}
+            geocodeError={geocodeError}
+            onScanForMatches={scanForMatches}
+            matchScanning={matchScanning}
+            matchCounts={matchCounts}
+            matchScanRan={matchScanRan}
+            linkedCounts={linkedCounts}
+            memberCounts={memberCounts}
           />
         )}
 
@@ -471,11 +641,15 @@ export function LsaHouseholdMapView() {
             />
             {households.map(h => {
               if (h.lat == null || h.lng == null) return null;
+              const isEmpty = (memberCounts.get(h.id) ?? 0) === 0;
+              const icon = h.archivedAt
+                ? householdMarkerArchivedIcon
+                : (isEmpty ? householdMarkerEmptyIcon : householdMarkerIcon);
               return (
                 <Marker
                   key={h.id}
                   position={[h.lat, h.lng]}
-                  icon={h.archivedAt ? householdMarkerArchivedIcon : householdMarkerIcon}
+                  icon={icon}
                   eventHandlers={{
                     click: () => setSelectedHouseholdId(h.id),
                   }}>
@@ -568,22 +742,57 @@ function HouseholdSidebar({
   includeArchived,
   onSelect,
   onToggleArchived,
+  onGeocodeMissing,
+  geocoding,
+  geocodeError,
+  onScanForMatches,
+  matchScanning,
+  matchCounts,
+  matchScanRan,
+  linkedCounts,
+  memberCounts,
 }: {
   households: Household[];
   selectedId: string | null;
   includeArchived: boolean;
   onSelect: (id: string, h: Household) => void;
   onToggleArchived: () => void;
+  onGeocodeMissing: () => Promise<void> | void;
+  geocoding: { done: number; total: number } | null;
+  geocodeError: string | null;
+  onScanForMatches: () => Promise<void> | void;
+  matchScanning: { done: number; total: number } | null;
+  matchCounts: Map<string, number>;
+  matchScanRan: boolean;
+  linkedCounts: Map<string, number>;
+  memberCounts: Map<string, number>;
 }) {
   const [query, setQuery] = useState('');
+  const [onlyNeedsAttention, setOnlyNeedsAttention] = useState(false);
+
+  const needsPin = useMemo(
+    () => households.filter(h => h.archivedAt == null && h.lat == null && (h.addressLine ?? '').trim().length > 0),
+    [households],
+  );
+  const needsAddress = useMemo(
+    () => households.filter(h => h.archivedAt == null && !(h.addressLine ?? '').trim().length),
+    [households],
+  );
+  const attentionCount = needsPin.length + needsAddress.length;
+
   const filtered = useMemo(() => {
+    let list = households;
+    if (onlyNeedsAttention) {
+      const flagIds = new Set([...needsPin, ...needsAddress].map(h => h.id));
+      list = list.filter(h => flagIds.has(h.id));
+    }
     const q = query.trim().toLowerCase();
-    if (!q) return households;
-    return households.filter(h =>
+    if (!q) return list;
+    return list.filter(h =>
       h.displayName.toLowerCase().includes(q)
       || (h.addressLine ?? '').toLowerCase().includes(q),
     );
-  }, [households, query]);
+  }, [households, query, onlyNeedsAttention, needsPin, needsAddress]);
 
   return (
     <aside className="bg-white border-r border-amber-200 overflow-y-auto shadow-sm flex flex-col w-80 lg:w-96">
@@ -595,13 +804,92 @@ function HouseholdSidebar({
           placeholder="Search…"
           className="w-full rounded-lg border border-amber-200 px-3 py-1.5 text-sm"
         />
-        <button
-          onClick={onToggleArchived}
-          className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 hover:text-amber-900">
-          <ArchiveIcon className="w-3 h-3" />
-          {includeArchived ? 'Hide archived' : 'Show archived'}
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            onClick={onToggleArchived}
+            className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-600 hover:text-amber-900">
+            <ArchiveIcon className="w-3 h-3" />
+            {includeArchived ? 'Hide archived' : 'Show archived'}
+          </button>
+          {attentionCount > 0 && (
+            <button
+              onClick={() => setOnlyNeedsAttention(v => !v)}
+              className={`text-[11px] font-semibold ${onlyNeedsAttention ? 'text-amber-900 underline' : 'text-amber-600 hover:text-amber-900'}`}>
+              {onlyNeedsAttention ? 'Show all' : `Only needs attention (${attentionCount})`}
+            </button>
+          )}
+        </div>
       </div>
+
+      {attentionCount > 0 && (
+        <div className="mx-4 mt-3 mb-2 rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <MapPinOffIcon className="w-3.5 h-3.5 text-amber-700" />
+            <h3 className="text-[11px] font-bold uppercase tracking-wider text-amber-800">
+              Needs attention
+            </h3>
+          </div>
+          {needsPin.length > 0 && (
+            <div className="text-[11px] text-amber-900 leading-snug">
+              <strong>{needsPin.length}</strong> household{needsPin.length === 1 ? '' : 's'} ha{needsPin.length === 1 ? 's' : 've'} an address but no pin on the map.
+              <button
+                onClick={onGeocodeMissing}
+                disabled={!!geocoding}
+                className="block mt-1.5 px-2 py-1 text-[11px] font-semibold rounded-lg bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50 disabled:cursor-not-allowed">
+                {geocoding
+                  ? <span className="inline-flex items-center gap-1.5"><LoaderIcon className="w-3 h-3 animate-spin" /> Geocoding… {geocoding.done}/{geocoding.total}</span>
+                  : `Geocode ${needsPin.length} address${needsPin.length === 1 ? '' : 'es'}`}
+              </button>
+            </div>
+          )}
+          {needsAddress.length > 0 && (
+            <div className="text-[11px] text-amber-900 leading-snug">
+              <strong>{needsAddress.length}</strong> household{needsAddress.length === 1 ? '' : 's'} ha{needsAddress.length === 1 ? 's' : 've'} no address recorded. Open each to add one.
+            </div>
+          )}
+          {geocodeError && (
+            <div className="rounded bg-red-50 border border-red-200 px-2 py-1 text-[11px] text-red-700">
+              {geocodeError}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Community-link scan — surfaces possible community-side
+          profile matches at the list level, before the LSA opens
+          individual households. The drawer still runs its own
+          per-row scan once a household is opened. */}
+      {households.length > 0 && (
+        <div className="mx-4 mt-3 mb-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Link2Icon className="w-3.5 h-3.5 text-emerald-700" />
+            <h3 className="text-[11px] font-bold uppercase tracking-wider text-emerald-800">
+              Community-side links
+            </h3>
+          </div>
+          {matchScanRan && matchCounts.size === 0 && !matchScanning ? (
+            <div className="text-[11px] text-emerald-900 leading-snug">
+              No possible community-side matches found across this jurisdiction's unlinked members.
+            </div>
+          ) : matchScanRan && !matchScanning ? (
+            <div className="text-[11px] text-emerald-900 leading-snug">
+              <strong>{matchCounts.size}</strong> household{matchCounts.size === 1 ? '' : 's'} ha{matchCounts.size === 1 ? 's' : 've'} at least one possible community-side match. Look for the amber "possible" badge in the list. Households already containing linked members carry a quieter "linked" badge.
+            </div>
+          ) : (
+            <div className="text-[11px] text-emerald-900 leading-snug">
+              Sweep every unlinked household member through the community-building search and flag households whose members might already have a profile.
+            </div>
+          )}
+          <button
+            onClick={onScanForMatches}
+            disabled={!!matchScanning}
+            className="block px-2 py-1 text-[11px] font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed">
+            {matchScanning
+              ? <span className="inline-flex items-center gap-1.5"><LoaderIcon className="w-3 h-3 animate-spin" /> Scanning… {matchScanning.done}/{matchScanning.total}</span>
+              : matchScanRan ? 'Re-scan' : 'Scan for community matches'}
+          </button>
+        </div>
+      )}
       {filtered.length === 0 ? (
         <div className="px-4 py-6 text-sm text-amber-500 italic">
           No households yet. Use <strong className="font-semibold text-amber-700">New household</strong> or <strong className="font-semibold text-amber-700">Import</strong> to add some.
@@ -625,11 +913,35 @@ function HouseholdSidebar({
                       Archived
                     </span>
                   )}
-                  {h.lat == null && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600">
-                      No pin
+                  {!h.archivedAt && (memberCounts.get(h.id) ?? 0) === 0 && (
+                    <span
+                      title="No members recorded — household shell only"
+                      className="text-[10px] font-semibold uppercase tracking-wider text-orange-700 bg-orange-100 border border-orange-200 rounded-full px-1.5 py-px">
+                      Empty
                     </span>
                   )}
+                  {h.lat == null && (
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 inline-flex items-center gap-1">
+                      <MapPinOffIcon className="w-3 h-3" />
+                      {(h.addressLine ?? '').trim().length > 0 ? 'No pin' : 'No address'}
+                    </span>
+                  )}
+                  {matchCounts.get(h.id) ? (
+                    <span
+                      title={`${matchCounts.get(h.id)} unlinked member${matchCounts.get(h.id) === 1 ? '' : 's'} with possible community-side match${matchCounts.get(h.id) === 1 ? '' : 'es'} — open this household to review and link`}
+                      className="text-[10px] font-semibold uppercase tracking-wider text-amber-800 bg-amber-100 border border-amber-200 rounded-full px-1.5 py-px inline-flex items-center gap-1">
+                      <Link2Icon className="w-3 h-3" />
+                      {matchCounts.get(h.id)} possible
+                    </span>
+                  ) : null}
+                  {linkedCounts.get(h.id) ? (
+                    <span
+                      title={`${linkedCounts.get(h.id)} member${linkedCounts.get(h.id) === 1 ? '' : 's'} already linked to community-building profile${linkedCounts.get(h.id) === 1 ? '' : 's'}`}
+                      className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 inline-flex items-center gap-1">
+                      <Link2Icon className="w-3 h-3" />
+                      {linkedCounts.get(h.id)} linked
+                    </span>
+                  ) : null}
                 </div>
               </button>
             </li>

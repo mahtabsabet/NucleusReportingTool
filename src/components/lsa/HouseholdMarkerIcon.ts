@@ -23,6 +23,26 @@ export const householdMarkerIcon = L.divIcon({
   iconAnchor: [10, 10],
 });
 
+// "Empty" pin — same colour family so it still reads as a household,
+// but hollow / outlined to signal "this place exists but no one is
+// recorded as living here right now." Used when a household has zero
+// members (e.g., everyone has moved out via the member-move flow and
+// the LSA hasn't archived the shell yet).
+export const householdMarkerEmptyIcon = L.divIcon({
+  className: 'lsa-household-marker-empty',
+  html: `
+    <span style="
+      display:inline-block;
+      width:16px;height:16px;
+      background:#ffffff;
+      border:2px solid ${HOUSEHOLD_COLOR};
+      border-radius:3px;
+      box-shadow:0 1px 3px rgba(122,46,12,0.25);
+    "></span>`,
+  iconSize: [20, 20],
+  iconAnchor: [10, 10],
+});
+
 export const householdMarkerArchivedIcon = L.divIcon({
   className: 'lsa-household-marker-archived',
   html: `

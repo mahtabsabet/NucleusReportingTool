@@ -39,6 +39,12 @@ export interface HouseholdMember {
   displayName: string | null;
   relationship: string | null;
   ageGroup: string | null;
+  // LSA-side contact info — distinct from any contact details on
+  // the linked community-building person profile. Columns added
+  // in migration 20260517_lsa_household_contact_fields.sql.
+  email: string | null;
+  phone: string | null;
+  mobile: string | null;
   notes: string | null;
   createdAt: string;
 }
@@ -80,6 +86,9 @@ function mapMember(row: any): HouseholdMember {
     displayName: row.display_name ?? null,
     relationship: row.relationship ?? null,
     ageGroup: row.age_group ?? null,
+    email: row.email ?? null,
+    phone: row.phone ?? null,
+    mobile: row.mobile ?? null,
     notes: row.notes ?? null,
     createdAt: row.created_at,
   };
@@ -209,6 +218,9 @@ export interface CreateHouseholdMemberParams {
   linkedPersonId?: string | null;
   relationship?: string | null;
   ageGroup?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
   notes?: string | null;
 }
 
@@ -226,6 +238,9 @@ export async function createHouseholdMember(
       display_name: params.displayName ?? null,
       relationship: params.relationship ?? null,
       age_group: params.ageGroup ?? null,
+      email: params.email ?? null,
+      phone: params.phone ?? null,
+      mobile: params.mobile ?? null,
       notes: params.notes ?? null,
     })
     .select('*')
@@ -239,6 +254,9 @@ export interface UpdateHouseholdMemberParams {
   linkedPersonId?: string | null;
   relationship?: string | null;
   ageGroup?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  mobile?: string | null;
   notes?: string | null;
 }
 
@@ -251,6 +269,9 @@ export async function updateHouseholdMember(
   if (params.linkedPersonId !== undefined) update.linked_person_id = params.linkedPersonId;
   if (params.relationship !== undefined) update.relationship = params.relationship;
   if (params.ageGroup !== undefined) update.age_group = params.ageGroup;
+  if (params.email !== undefined) update.email = params.email;
+  if (params.phone !== undefined) update.phone = params.phone;
+  if (params.mobile !== undefined) update.mobile = params.mobile;
   if (params.notes !== undefined) update.notes = params.notes;
   const { data, error } = await supabase
     .from('household_members')
@@ -268,6 +289,25 @@ export async function deleteHouseholdMember(memberId: string): Promise<void> {
     .delete()
     .eq('id', memberId);
   if (error) throw error;
+}
+
+// Move a member to another household. RLS already constrains the
+// LSA to both source and destination households being inside their
+// own jurisdiction — the database rejects cross-jurisdiction moves.
+// Contact info, linked community profile, relationship label, and
+// notes all travel with the member; only household_id changes.
+export async function moveHouseholdMember(
+  memberId: string,
+  destinationHouseholdId: string,
+): Promise<HouseholdMember> {
+  const { data, error } = await supabase
+    .from('household_members')
+    .update({ household_id: destinationHouseholdId })
+    .eq('id', memberId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapMember(data);
 }
 
 
@@ -292,6 +332,130 @@ export interface PersonMatchSuggestion {
 function normalize(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
 }
+
+// Compact reference for a household member, used by the sidebar's
+// "scan for community matches" sweep: we need to look up matches
+// for every unlinked member in the jurisdiction in one trip, then
+// fan out to suggestPersonMatches per row.
+export interface UnlinkedMemberRef {
+  id: string;
+  householdId: string;
+  displayName: string;
+}
+
+export async function fetchUnlinkedMembersForJurisdiction(
+  jurisdictionId: string,
+): Promise<UnlinkedMemberRef[]> {
+  const { data: hh, error: hhErr } = await supabase
+    .from('households')
+    .select('id')
+    .eq('jurisdiction_id', jurisdictionId)
+    .is('archived_at', null);
+  if (hhErr) throw hhErr;
+  const householdIds = (hh ?? []).map((h: any) => h.id);
+  if (householdIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('household_members')
+    .select('id, household_id, display_name')
+    .in('household_id', householdIds)
+    .is('linked_person_id', null);
+  if (error) throw error;
+  return (data ?? [])
+    .filter((r: any) => (r.display_name ?? '').trim().length > 0)
+    .map((r: any) => ({
+      id: r.id,
+      householdId: r.household_id,
+      displayName: r.display_name,
+    }));
+}
+
+// Per-household total member count. Used to flag empty households —
+// shells that exist (with an address / a pin on the map) but contain
+// zero people, typically after the LSA moves everyone out via the
+// member-move flow.
+export async function fetchMemberCountsForJurisdiction(
+  jurisdictionId: string,
+): Promise<Map<string, number>> {
+  const { data: hh, error: hhErr } = await supabase
+    .from('households')
+    .select('id')
+    .eq('jurisdiction_id', jurisdictionId)
+    .is('archived_at', null);
+  if (hhErr) throw hhErr;
+  const householdIds = (hh ?? []).map((h: any) => h.id);
+  if (householdIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('household_members')
+    .select('household_id')
+    .in('household_id', householdIds);
+  if (error) throw error;
+  const counts = new Map<string, number>();
+  // Seed every household at 0 so callers can distinguish "no entry yet"
+  // (jurisdiction never queried) from "zero members" (empty household).
+  for (const id of householdIds) counts.set(id, 0);
+  for (const row of data ?? []) {
+    const id = (row as any).household_id;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+// Per-household count of linked members. Powers the quiet "X linked"
+// indicator in the sidebar — separate from the "X possible" badge,
+// which is review-me state set by the on-demand match scan.
+export async function fetchLinkedCountsForJurisdiction(
+  jurisdictionId: string,
+): Promise<Map<string, number>> {
+  const { data: hh, error: hhErr } = await supabase
+    .from('households')
+    .select('id')
+    .eq('jurisdiction_id', jurisdictionId)
+    .is('archived_at', null);
+  if (hhErr) throw hhErr;
+  const householdIds = (hh ?? []).map((h: any) => h.id);
+  if (householdIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('household_members')
+    .select('household_id')
+    .in('household_id', householdIds)
+    .not('linked_person_id', 'is', null);
+  if (error) throw error;
+  const counts = new Map<string, number>();
+  for (const row of data ?? []) {
+    const id = (row as any).household_id;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+// Re-run the per-member match search for one household — used after
+// a link change in the drawer so the sidebar's "X possible" badge
+// reflects the new state without making the LSA re-scan the whole
+// jurisdiction.
+export async function countMatchableMembersForHousehold(
+  householdId: string,
+  jurisdictionId: string,
+): Promise<number> {
+  const { data, error } = await supabase
+    .from('household_members')
+    .select('display_name')
+    .eq('household_id', householdId)
+    .is('linked_person_id', null);
+  if (error) throw error;
+  const candidates = (data ?? [])
+    .map((r: any) => (r.display_name ?? '').trim())
+    .filter((n: string) => n.length > 0);
+  if (candidates.length === 0) return 0;
+  let withMatch = 0;
+  for (const name of candidates) {
+    try {
+      const hits = await suggestPersonMatches(name, jurisdictionId, { limit: 1 });
+      if (hits.length > 0) withMatch += 1;
+    } catch { /* ignore — treat as no match */ }
+  }
+  return withMatch;
+}
+
 
 export async function suggestPersonMatches(
   rawName: string,
