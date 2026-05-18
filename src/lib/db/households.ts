@@ -350,6 +350,62 @@ export async function fetchUnlinkedMembersForJurisdiction(
     }));
 }
 
+// Per-household count of linked members. Powers the quiet "X linked"
+// indicator in the sidebar — separate from the "X possible" badge,
+// which is review-me state set by the on-demand match scan.
+export async function fetchLinkedCountsForJurisdiction(
+  jurisdictionId: string,
+): Promise<Map<string, number>> {
+  const { data: hh, error: hhErr } = await supabase
+    .from('households')
+    .select('id')
+    .eq('jurisdiction_id', jurisdictionId)
+    .is('archived_at', null);
+  if (hhErr) throw hhErr;
+  const householdIds = (hh ?? []).map((h: any) => h.id);
+  if (householdIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('household_members')
+    .select('household_id')
+    .in('household_id', householdIds)
+    .not('linked_person_id', 'is', null);
+  if (error) throw error;
+  const counts = new Map<string, number>();
+  for (const row of data ?? []) {
+    const id = (row as any).household_id;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+// Re-run the per-member match search for one household — used after
+// a link change in the drawer so the sidebar's "X possible" badge
+// reflects the new state without making the LSA re-scan the whole
+// jurisdiction.
+export async function countMatchableMembersForHousehold(
+  householdId: string,
+  jurisdictionId: string,
+): Promise<number> {
+  const { data, error } = await supabase
+    .from('household_members')
+    .select('display_name')
+    .eq('household_id', householdId)
+    .is('linked_person_id', null);
+  if (error) throw error;
+  const candidates = (data ?? [])
+    .map((r: any) => (r.display_name ?? '').trim())
+    .filter((n: string) => n.length > 0);
+  if (candidates.length === 0) return 0;
+  let withMatch = 0;
+  for (const name of candidates) {
+    try {
+      const hits = await suggestPersonMatches(name, jurisdictionId, { limit: 1 });
+      if (hits.length > 0) withMatch += 1;
+    } catch { /* ignore — treat as no match */ }
+  }
+  return withMatch;
+}
+
 
 export async function suggestPersonMatches(
   rawName: string,

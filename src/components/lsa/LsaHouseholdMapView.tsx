@@ -35,6 +35,8 @@ import {
   fetchJurisdictions,
   fetchHouseholds,
   fetchUnlinkedMembersForJurisdiction,
+  fetchLinkedCountsForJurisdiction,
+  countMatchableMembersForHousehold,
   suggestPersonMatches,
   createHousehold,
   updateHousehold,
@@ -132,6 +134,11 @@ export function LsaHouseholdMapView() {
   const [matchCounts, setMatchCounts] = useState<Map<string, number>>(new Map());
   const [matchScanRan, setMatchScanRan] = useState(false);
 
+  // Per-household count of members already linked to a community-
+  // building profile. Refreshed alongside the household list, so the
+  // sidebar's quiet "X linked" badge always reflects current state.
+  const [linkedCounts, setLinkedCounts] = useState<Map<string, number>>(new Map());
+
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
   const [mapZoom, setMapZoom] = useState(6);
 
@@ -216,8 +223,38 @@ export function LsaHouseholdMapView() {
   );
 
   async function loadHouseholds(jurisdictionId: string) {
-    const rows = await fetchHouseholds(jurisdictionId, { includeArchived });
+    const [rows, linked] = await Promise.all([
+      fetchHouseholds(jurisdictionId, { includeArchived }),
+      fetchLinkedCountsForJurisdiction(jurisdictionId).catch(() => new Map<string, number>()),
+    ]);
     setHouseholds(rows);
+    setLinkedCounts(linked);
+  }
+
+  // Refresh badges for one household after a drawer-side change
+  // (e.g., the LSA just confirmed a link). Cheap: one linked-count
+  // refetch plus a small per-member rescan, scoped to this row.
+  async function refreshHouseholdBadges(householdId: string) {
+    if (!activeJurisdiction) return;
+    // Linked counts: re-fetch the whole jurisdiction map — it is one
+    // small query and keeps the sidebar in lock-step with the DB.
+    const linked = await fetchLinkedCountsForJurisdiction(activeJurisdiction.id)
+      .catch(() => null);
+    if (linked) setLinkedCounts(linked);
+    // Possible-match count: only re-run if the scan has been run at
+    // least once; otherwise we'd be conjuring a badge the LSA never
+    // asked for.
+    if (matchScanRan) {
+      try {
+        const n = await countMatchableMembersForHousehold(householdId, activeJurisdiction.id);
+        setMatchCounts(prev => {
+          const next = new Map(prev);
+          if (n > 0) next.set(householdId, n);
+          else next.delete(householdId);
+          return next;
+        });
+      } catch { /* ignore; LSA can re-scan manually */ }
+    }
   }
 
   useEffect(() => {
@@ -525,7 +562,11 @@ export function LsaHouseholdMapView() {
               setSelectedHouseholdId(null);
               setPlacing({ mode: 'move', householdId: hid });
             }}
-            onChanged={() => activeJurisdiction && loadHouseholds(activeJurisdiction.id)}
+            onChanged={async () => {
+              if (!activeJurisdiction) return;
+              await loadHouseholds(activeJurisdiction.id);
+              await refreshHouseholdBadges(selectedHouseholdId);
+            }}
           />
         ) : (
           <HouseholdSidebar
@@ -547,6 +588,7 @@ export function LsaHouseholdMapView() {
             matchScanning={matchScanning}
             matchCounts={matchCounts}
             matchScanRan={matchScanRan}
+            linkedCounts={linkedCounts}
           />
         )}
 
@@ -691,6 +733,7 @@ function HouseholdSidebar({
   matchScanning,
   matchCounts,
   matchScanRan,
+  linkedCounts,
 }: {
   households: Household[];
   selectedId: string | null;
@@ -704,6 +747,7 @@ function HouseholdSidebar({
   matchScanning: { done: number; total: number } | null;
   matchCounts: Map<string, number>;
   matchScanRan: boolean;
+  linkedCounts: Map<string, number>;
 }) {
   const [query, setQuery] = useState('');
   const [onlyNeedsAttention, setOnlyNeedsAttention] = useState(false);
@@ -811,7 +855,7 @@ function HouseholdSidebar({
             </div>
           ) : matchScanRan && !matchScanning ? (
             <div className="text-[11px] text-emerald-900 leading-snug">
-              <strong>{matchCounts.size}</strong> household{matchCounts.size === 1 ? '' : 's'} ha{matchCounts.size === 1 ? 's' : 've'} at least one possible community-side match. Look for the green badge in the list below.
+              <strong>{matchCounts.size}</strong> household{matchCounts.size === 1 ? '' : 's'} ha{matchCounts.size === 1 ? 's' : 've'} at least one possible community-side match. Look for the amber "possible" badge in the list. Households already containing linked members carry a quieter "linked" badge.
             </div>
           ) : (
             <div className="text-[11px] text-emerald-900 leading-snug">
@@ -859,10 +903,18 @@ function HouseholdSidebar({
                   )}
                   {matchCounts.get(h.id) ? (
                     <span
-                      title={`${matchCounts.get(h.id)} member${matchCounts.get(h.id) === 1 ? '' : 's'} with possible community-side match${matchCounts.get(h.id) === 1 ? '' : 'es'}`}
+                      title={`${matchCounts.get(h.id)} unlinked member${matchCounts.get(h.id) === 1 ? '' : 's'} with possible community-side match${matchCounts.get(h.id) === 1 ? '' : 'es'} — open this household to review and link`}
+                      className="text-[10px] font-semibold uppercase tracking-wider text-amber-800 bg-amber-100 border border-amber-200 rounded-full px-1.5 py-px inline-flex items-center gap-1">
+                      <Link2Icon className="w-3 h-3" />
+                      {matchCounts.get(h.id)} possible
+                    </span>
+                  ) : null}
+                  {linkedCounts.get(h.id) ? (
+                    <span
+                      title={`${linkedCounts.get(h.id)} member${linkedCounts.get(h.id) === 1 ? '' : 's'} already linked to community-building profile${linkedCounts.get(h.id) === 1 ? '' : 's'}`}
                       className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 inline-flex items-center gap-1">
                       <Link2Icon className="w-3 h-3" />
-                      {matchCounts.get(h.id)} match{matchCounts.get(h.id) === 1 ? '' : 'es'}
+                      {linkedCounts.get(h.id)} linked
                     </span>
                   ) : null}
                 </div>
