@@ -11,11 +11,12 @@ import {
   ChevronRightIcon,
   XIcon,
   CheckIcon,
+  HomeIcon,
 } from 'lucide-react';
 import { fetchClusters, fetchNuclei } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext } from '../lib/db/users';
-import type { CallerContext } from '../lib/permissions';
+import { canAccessLsaLayer, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { GlobalSearch } from './GlobalSearch';
 import { AccountMenu } from './AccountMenu';
 
@@ -69,6 +70,23 @@ export function MobileLanding() {
   const currentClusterName = selectedCluster ? clusterById.get(selectedCluster)?.name ?? null : null;
   const contextKindLabel = currentClusterName ? 'Cluster' : 'Region';
   const contextValueLabel = currentClusterName ?? `All ${REGION_NAME} Clusters`;
+
+  // LSA layer entry — same gating as the desktop toggle. Super
+  // Admins and lsa_member grant-holders see a card; everyone else
+  // sees nothing. Target the user's current cluster if one is
+  // picked; otherwise route to /lsa/households and let the LSA view
+  // auto-pick (or fall back to its single-jurisdiction default).
+  const showLsaEntry = !!callerCtx && canAccessLsaLayer(callerCtx);
+  const lsaTargetClusterId = (() => {
+    if (!callerCtx) return null;
+    if (selectedCluster) return selectedCluster;
+    const accessible = lsaAccessibleClusterIds(callerCtx);
+    if (accessible === 'all') return null;
+    return accessible.length === 1 ? accessible[0] : null;
+  })();
+  const lsaHref = lsaTargetClusterId
+    ? `/lsa/${lsaTargetClusterId}/households`
+    : '/lsa/households';
 
   function navigateToWorkspace(key: WorkspaceKey) {
     const params = new URLSearchParams();
@@ -145,6 +163,28 @@ export function MobileLanding() {
           </div>
         )}
       </section>
+
+      {showLsaEntry && (
+        <section className="px-4 pt-6">
+          <SectionHeading>LSA Layer</SectionHeading>
+          <button
+            type="button"
+            onClick={() => navigate(lsaHref)}
+            className="mt-3 w-full bg-white border border-amber-200 rounded-2xl px-4 py-3.5 flex items-center gap-3 text-left hover:bg-amber-50 transition-colors"
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center flex-shrink-0">
+              <HomeIcon className="w-5 h-5 text-amber-700" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-bold text-gray-900">Households</p>
+              <p className="text-xs font-medium text-gray-500 truncate">
+                LSA-only view of every household in the cluster
+              </p>
+            </div>
+            <ChevronRightIcon className="w-5 h-5 text-gray-400 flex-shrink-0" />
+          </button>
+        </section>
+      )}
 
       <section className="px-4 pt-6">
         <SectionHeading>Workspaces</SectionHeading>

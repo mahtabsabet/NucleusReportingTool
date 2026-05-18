@@ -192,7 +192,7 @@ export function HouseholdDrawer({
   }
 
   return (
-    <aside className="bg-white border-r border-gray-200 overflow-y-auto shadow-sm flex flex-col w-80 lg:w-96 relative">
+    <aside className="bg-white border-r border-gray-200 overflow-y-auto shadow-sm flex flex-col w-full md:w-80 lg:w-96 relative">
       <div className="flex items-center justify-between p-4 border-b border-gray-100 sticky top-0 bg-white z-10">
         <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest">Household</h2>
         <button

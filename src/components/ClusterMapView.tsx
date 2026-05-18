@@ -299,10 +299,10 @@ export function ClusterMapView() {
           </div>
         )}
         <div className="flex items-center gap-2 sm:gap-3">
-          {showLsaToggle && !isMobile && (
+          {showLsaToggle && (
             <div className="flex items-center bg-stone-100 rounded-xl p-1 mr-1">
               <button
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-stone-900 shadow-sm"
+                className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-stone-900 shadow-sm"
                 title="Community-building view (current)">
                 Community
               </button>
@@ -312,7 +312,7 @@ export function ClusterMapView() {
                     ? `/lsa/${lsaTargetClusterId}/households`
                     : '/lsa/households'
                 )}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg text-stone-600 hover:text-stone-900"
+                className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg text-stone-600 hover:text-stone-900"
                 title="Switch to the LSA household map">
                 Households
               </button>
