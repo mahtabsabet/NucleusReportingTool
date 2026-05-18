@@ -291,6 +291,25 @@ export async function deleteHouseholdMember(memberId: string): Promise<void> {
   if (error) throw error;
 }
 
+// Move a member to another household. RLS already constrains the
+// LSA to both source and destination households being inside their
+// own jurisdiction — the database rejects cross-jurisdiction moves.
+// Contact info, linked community profile, relationship label, and
+// notes all travel with the member; only household_id changes.
+export async function moveHouseholdMember(
+  memberId: string,
+  destinationHouseholdId: string,
+): Promise<HouseholdMember> {
+  const { data, error } = await supabase
+    .from('household_members')
+    .update({ household_id: destinationHouseholdId })
+    .eq('id', memberId)
+    .select('*')
+    .single();
+  if (error) throw error;
+  return mapMember(data);
+}
+
 
 // ─── Match suggestions ─────────────────────────────────────
 // When an LSA types a display name for an unlinked household
@@ -348,6 +367,37 @@ export async function fetchUnlinkedMembersForJurisdiction(
       householdId: r.household_id,
       displayName: r.display_name,
     }));
+}
+
+// Per-household total member count. Used to flag empty households —
+// shells that exist (with an address / a pin on the map) but contain
+// zero people, typically after the LSA moves everyone out via the
+// member-move flow.
+export async function fetchMemberCountsForJurisdiction(
+  jurisdictionId: string,
+): Promise<Map<string, number>> {
+  const { data: hh, error: hhErr } = await supabase
+    .from('households')
+    .select('id')
+    .eq('jurisdiction_id', jurisdictionId)
+    .is('archived_at', null);
+  if (hhErr) throw hhErr;
+  const householdIds = (hh ?? []).map((h: any) => h.id);
+  if (householdIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('household_members')
+    .select('household_id')
+    .in('household_id', householdIds);
+  if (error) throw error;
+  const counts = new Map<string, number>();
+  // Seed every household at 0 so callers can distinguish "no entry yet"
+  // (jurisdiction never queried) from "zero members" (empty household).
+  for (const id of householdIds) counts.set(id, 0);
+  for (const row of data ?? []) {
+    const id = (row as any).household_id;
+    counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
 }
 
 // Per-household count of linked members. Powers the quiet "X linked"

@@ -13,7 +13,7 @@
 //     parent via the onStartMove callback)
 // ============================================================
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   XIcon,
@@ -32,16 +32,22 @@ import {
   MailIcon,
   PhoneIcon,
   SmartphoneIcon,
+  ArrowRightIcon,
+  PlusIcon,
 } from 'lucide-react';
 import {
   fetchHouseholdWithMembers,
+  fetchHouseholds,
   updateHousehold,
   archiveHousehold,
   unarchiveHousehold,
+  createHousehold,
   createHouseholdMember,
   updateHouseholdMember,
   deleteHouseholdMember,
+  moveHouseholdMember,
   suggestPersonMatches,
+  type Household,
   type HouseholdWithMembers,
   type HouseholdMember,
   type PersonMatchSuggestion,
@@ -54,7 +60,10 @@ interface Props {
   clusterName: string;
   onClose: () => void;
   onStartMove: (householdId: string) => void;
-  onChanged: () => void;
+  // Optional alsoRefresh lets nested actions (member move, link)
+  // ask the parent to refresh badges on additional households
+  // beyond the one currently open in the drawer.
+  onChanged: (alsoRefresh?: string[]) => void;
 }
 
 export function HouseholdDrawer({
@@ -112,11 +121,11 @@ export function HouseholdDrawer({
     return () => { cancelled = true; };
   }, [householdId, jurisdictionId]);
 
-  async function reload() {
+  async function reload(alsoRefresh?: string[]) {
     const d = await fetchHouseholdWithMembers(householdId);
     setData(d);
     if (d) await scanMatches(d.members);
-    onChanged();
+    onChanged(alsoRefresh);
   }
 
   async function handleSave() {
@@ -332,6 +341,7 @@ export function HouseholdDrawer({
               members={data.members}
               jurisdictionId={jurisdictionId}
               householdId={householdId}
+              clusterName={clusterName}
               matches={matches}
               onChanged={reload}
             />
@@ -350,19 +360,25 @@ export function HouseholdDrawer({
 
 function MembersList({
   members,
-  householdId: _householdId,
+  householdId,
   jurisdictionId,
+  clusterName,
   matches,
   onChanged,
 }: {
   members: HouseholdMember[];
   householdId: string;
   jurisdictionId: string;
+  clusterName: string;
   matches: Map<string, PersonMatchSuggestion[]>;
-  onChanged: () => Promise<void> | void;
+  onChanged: (alsoRefresh?: string[]) => Promise<void> | void;
 }) {
   if (members.length === 0) {
-    return <div className="text-xs text-gray-400 italic mb-3">No members yet.</div>;
+    return (
+      <div className="text-xs text-orange-700 italic mb-3 rounded-lg border border-orange-200 bg-orange-50 px-3 py-2">
+        No members in this household. It may have been emptied by moving everyone elsewhere. Add a new member below, or archive the household if it is no longer needed.
+      </div>
+    );
   }
   return (
     <ul className="space-y-2 mb-4">
@@ -370,7 +386,9 @@ function MembersList({
         <MemberRow
           key={m.id}
           member={m}
+          householdId={householdId}
           jurisdictionId={jurisdictionId}
+          clusterName={clusterName}
           suggestions={matches.get(m.id) ?? []}
           onChanged={onChanged}
         />
@@ -382,17 +400,22 @@ function MembersList({
 
 function MemberRow({
   member,
+  householdId,
   jurisdictionId,
+  clusterName,
   suggestions,
   onChanged,
 }: {
   member: HouseholdMember;
+  householdId: string;
   jurisdictionId: string;
+  clusterName: string;
   suggestions: PersonMatchSuggestion[];
-  onChanged: () => Promise<void> | void;
+  onChanged: (alsoRefresh?: string[]) => Promise<void> | void;
 }) {
   const [busy, setBusy] = useState(false);
   const [showLink, setShowLink] = useState(false);
+  const [showMove, setShowMove] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(member.displayName ?? '');
   const [editRelationship, setEditRelationship] = useState(member.relationship ?? '');
@@ -548,6 +571,15 @@ function MemberRow({
               <Link2Icon className="w-3.5 h-3.5" />
             </button>
           )}
+          {!editing && (
+            <button
+              onClick={() => setShowMove(v => !v)}
+              disabled={busy}
+              title="Move to another household"
+              className="p-1 text-gray-400 hover:text-gray-700 hover:bg-white rounded">
+              <ArrowRightIcon className="w-3.5 h-3.5" />
+            </button>
+          )}
           {canUnlink && (
             <button
               onClick={handleUnlink}
@@ -641,6 +673,24 @@ function MemberRow({
         </button>
       )}
 
+      {showMove && (
+        <MovePanel
+          memberId={member.id}
+          memberName={(member.displayName ?? '(linked profile)').trim()}
+          currentHouseholdId={householdId}
+          jurisdictionId={jurisdictionId}
+          clusterName={clusterName}
+          onMoved={async (destinationHouseholdId) => {
+            setShowMove(false);
+            // alsoRefresh tells the parent to refresh the destination
+            // household's badges too — so its linked / possible / member
+            // counts catch up to the move without a full re-scan.
+            await onChanged([destinationHouseholdId]);
+          }}
+          onClose={() => setShowMove(false)}
+        />
+      )}
+
       {showLink && member.displayName && (
         <LinkSuggestionPanel
           memberId={member.id}
@@ -731,6 +781,204 @@ function LinkSuggestionPanel({
                 disabled={busy}
                 className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
                 <Link2Icon className="w-3 h-3" /> Link
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+
+// Inline panel for moving a member to another household in the same
+// jurisdiction. RLS enforces same-jurisdiction; we additionally filter
+// out the current household and any archived ones from the picker. A
+// "+ New household" affordance opens an inline mini-form so the LSA
+// doesn't have to back out, create a household separately, and come
+// back — common case is "someone moved out / got married / spun off
+// their own household" which means the destination doesn't exist yet.
+function MovePanel({
+  memberId,
+  memberName,
+  currentHouseholdId,
+  jurisdictionId,
+  clusterName,
+  onMoved,
+  onClose,
+}: {
+  memberId: string;
+  memberName: string;
+  currentHouseholdId: string;
+  jurisdictionId: string;
+  clusterName: string;
+  onMoved: (destinationHouseholdId: string) => Promise<void> | void;
+  onClose: () => void;
+}) {
+  const [destinations, setDestinations] = useState<Household[] | null>(null);
+  const [query, setQuery] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Inline "new household" form state
+  const [creatingNew, setCreatingNew] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newAddress, setNewAddress] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchHouseholds(jurisdictionId)
+      .then(rows => { if (!cancelled) setDestinations(rows); })
+      .catch(e => { if (!cancelled) setError(e.message ?? 'Failed to load households'); });
+    return () => { cancelled = true; };
+  }, [jurisdictionId]);
+
+  const filtered = useMemo(() => {
+    if (!destinations) return [];
+    const candidates = destinations.filter(h =>
+      h.id !== currentHouseholdId && h.archivedAt == null,
+    );
+    const q = query.trim().toLowerCase();
+    if (!q) return candidates;
+    return candidates.filter(h =>
+      h.displayName.toLowerCase().includes(q)
+      || (h.addressLine ?? '').toLowerCase().includes(q),
+    );
+  }, [destinations, query, currentHouseholdId]);
+
+  async function moveToExisting(destinationHouseholdId: string) {
+    setBusy(true); setError(null);
+    try {
+      await moveHouseholdMember(memberId, destinationHouseholdId);
+      await onMoved(destinationHouseholdId);
+    } catch (e: any) {
+      setError(e.message ?? 'Move failed');
+      setBusy(false);
+    }
+  }
+
+  async function moveToNew() {
+    if (!newName.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      // Geocode the new address if one was supplied. A miss is OK —
+      // the household lands in the "needs attention" bucket and the
+      // LSA can drop a pin manually later.
+      let lat: number | null = null;
+      let lng: number | null = null;
+      if (newAddress.trim()) {
+        try {
+          const hit = await geocodeAddressForCluster(newAddress.trim(), clusterName);
+          if (hit) { lat = hit.lat; lng = hit.lng; }
+        } catch { /* leave coords null on geocoder failure */ }
+      }
+      const created = await createHousehold({
+        jurisdictionId,
+        displayName: newName.trim(),
+        addressLine: newAddress.trim() || null,
+        lat,
+        lng,
+      });
+      await moveHouseholdMember(memberId, created.id);
+      await onMoved(created.id);
+    } catch (e: any) {
+      setError(e.message ?? 'Could not create destination household');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/50 p-2">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-[11px] font-semibold text-amber-800 truncate">
+          Move <span className="font-bold">{memberName}</span> to…
+        </div>
+        <button
+          onClick={onClose}
+          className="text-xs text-amber-700 hover:underline">Cancel</button>
+      </div>
+
+      {error && (
+        <div className="mb-2 rounded bg-red-50 border border-red-200 px-2 py-1 text-[11px] text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* New-household affordance, expanded inline */}
+      {creatingNew ? (
+        <div className="mb-2 rounded-md bg-white border border-amber-200 p-2 space-y-1.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-700">
+            New household
+          </div>
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            placeholder="Household display name"
+            className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-xs"
+          />
+          <input
+            value={newAddress}
+            onChange={e => setNewAddress(e.target.value)}
+            placeholder="Address (optional — we'll try to geocode)"
+            className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-xs"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={moveToNew}
+              disabled={busy || !newName.trim()}
+              className="flex-1 px-3 py-1 text-[11px] font-semibold rounded bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50">
+              {busy ? 'Creating & moving…' : 'Create and move'}
+            </button>
+            <button
+              onClick={() => { setCreatingNew(false); setNewName(''); setNewAddress(''); }}
+              disabled={busy}
+              className="px-3 py-1 text-[11px] font-semibold rounded border border-amber-200 text-amber-700 hover:bg-amber-100">
+              Back
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          onClick={() => setCreatingNew(true)}
+          disabled={busy}
+          className="mb-2 w-full flex items-center justify-center gap-1 px-2 py-1.5 rounded-md border border-dashed border-amber-300 bg-white/70 text-[11px] font-semibold text-amber-800 hover:bg-amber-100">
+          <PlusIcon className="w-3 h-3" />
+          New household (spinoff)
+        </button>
+      )}
+
+      <input
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search existing households…"
+        className="w-full mb-2 rounded border border-amber-200 px-2 py-1 text-xs bg-white"
+      />
+
+      {destinations === null ? (
+        <div className="text-[11px] text-gray-500 italic">Loading households…</div>
+      ) : filtered.length === 0 ? (
+        <div className="text-[11px] text-gray-500 italic">
+          {query.trim()
+            ? 'No matching households.'
+            : 'No other households in this jurisdiction yet.'}
+        </div>
+      ) : (
+        <ul className="space-y-1 max-h-48 overflow-y-auto">
+          {filtered.map(h => (
+            <li
+              key={h.id}
+              className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-white border border-amber-100">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-gray-900 truncate">{h.displayName}</div>
+                <div className="text-[10px] text-gray-500 truncate">
+                  {h.addressLine || 'No address'}
+                </div>
+              </div>
+              <button
+                onClick={() => moveToExisting(h.id)}
+                disabled={busy}
+                className="flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50">
+                <ArrowRightIcon className="w-3 h-3" /> Move
               </button>
             </li>
           ))}

@@ -36,6 +36,7 @@ import {
   fetchHouseholds,
   fetchUnlinkedMembersForJurisdiction,
   fetchLinkedCountsForJurisdiction,
+  fetchMemberCountsForJurisdiction,
   countMatchableMembersForHousehold,
   suggestPersonMatches,
   createHousehold,
@@ -50,7 +51,7 @@ import {
   lsaAccessibleClusterIds,
   type CallerContext,
 } from '../../lib/permissions';
-import { householdMarkerIcon, householdMarkerArchivedIcon } from './HouseholdMarkerIcon';
+import { householdMarkerIcon, householdMarkerArchivedIcon, householdMarkerEmptyIcon } from './HouseholdMarkerIcon';
 import { HouseholdDrawer } from './HouseholdDrawer';
 import { HouseholdImportModal } from './HouseholdImportModal';
 
@@ -138,6 +139,9 @@ export function LsaHouseholdMapView() {
   // building profile. Refreshed alongside the household list, so the
   // sidebar's quiet "X linked" badge always reflects current state.
   const [linkedCounts, setLinkedCounts] = useState<Map<string, number>>(new Map());
+  // Per-household total member count. Drives the "Empty" badge and
+  // the hollow map-pin variant for households with zero members.
+  const [memberCounts, setMemberCounts] = useState<Map<string, number>>(new Map());
 
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
   const [mapZoom, setMapZoom] = useState(6);
@@ -223,12 +227,14 @@ export function LsaHouseholdMapView() {
   );
 
   async function loadHouseholds(jurisdictionId: string) {
-    const [rows, linked] = await Promise.all([
+    const [rows, linked, members] = await Promise.all([
       fetchHouseholds(jurisdictionId, { includeArchived }),
       fetchLinkedCountsForJurisdiction(jurisdictionId).catch(() => new Map<string, number>()),
+      fetchMemberCountsForJurisdiction(jurisdictionId).catch(() => new Map<string, number>()),
     ]);
     setHouseholds(rows);
     setLinkedCounts(linked);
+    setMemberCounts(members);
   }
 
   // Refresh badges for one household after a drawer-side change
@@ -562,10 +568,15 @@ export function LsaHouseholdMapView() {
               setSelectedHouseholdId(null);
               setPlacing({ mode: 'move', householdId: hid });
             }}
-            onChanged={async () => {
+            onChanged={async (alsoRefresh) => {
               if (!activeJurisdiction) return;
               await loadHouseholds(activeJurisdiction.id);
               await refreshHouseholdBadges(selectedHouseholdId);
+              for (const otherId of (alsoRefresh ?? [])) {
+                if (otherId && otherId !== selectedHouseholdId) {
+                  await refreshHouseholdBadges(otherId);
+                }
+              }
             }}
           />
         ) : (
@@ -589,6 +600,7 @@ export function LsaHouseholdMapView() {
             matchCounts={matchCounts}
             matchScanRan={matchScanRan}
             linkedCounts={linkedCounts}
+            memberCounts={memberCounts}
           />
         )}
 
@@ -629,11 +641,15 @@ export function LsaHouseholdMapView() {
             />
             {households.map(h => {
               if (h.lat == null || h.lng == null) return null;
+              const isEmpty = (memberCounts.get(h.id) ?? 0) === 0;
+              const icon = h.archivedAt
+                ? householdMarkerArchivedIcon
+                : (isEmpty ? householdMarkerEmptyIcon : householdMarkerIcon);
               return (
                 <Marker
                   key={h.id}
                   position={[h.lat, h.lng]}
-                  icon={h.archivedAt ? householdMarkerArchivedIcon : householdMarkerIcon}
+                  icon={icon}
                   eventHandlers={{
                     click: () => setSelectedHouseholdId(h.id),
                   }}>
@@ -734,6 +750,7 @@ function HouseholdSidebar({
   matchCounts,
   matchScanRan,
   linkedCounts,
+  memberCounts,
 }: {
   households: Household[];
   selectedId: string | null;
@@ -748,6 +765,7 @@ function HouseholdSidebar({
   matchCounts: Map<string, number>;
   matchScanRan: boolean;
   linkedCounts: Map<string, number>;
+  memberCounts: Map<string, number>;
 }) {
   const [query, setQuery] = useState('');
   const [onlyNeedsAttention, setOnlyNeedsAttention] = useState(false);
@@ -893,6 +911,13 @@ function HouseholdSidebar({
                   {h.archivedAt && (
                     <span className="text-[10px] font-semibold uppercase tracking-wider text-amber-400">
                       Archived
+                    </span>
+                  )}
+                  {!h.archivedAt && (memberCounts.get(h.id) ?? 0) === 0 && (
+                    <span
+                      title="No members recorded — household shell only"
+                      className="text-[10px] font-semibold uppercase tracking-wider text-orange-700 bg-orange-100 border border-orange-200 rounded-full px-1.5 py-px">
+                      Empty
                     </span>
                   )}
                   {h.lat == null && (
