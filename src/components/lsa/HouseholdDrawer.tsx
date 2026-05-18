@@ -46,11 +46,12 @@ import {
   type HouseholdMember,
   type PersonMatchSuggestion,
 } from '../../lib/db/households';
-import { geocodeAddress } from '../../lib/geocoder';
+import { geocodeAddressForCluster } from '../../lib/geocoder';
 
 interface Props {
   householdId: string;
   jurisdictionId: string;
+  clusterName: string;
   onClose: () => void;
   onStartMove: (householdId: string) => void;
   onChanged: () => void;
@@ -59,6 +60,7 @@ interface Props {
 export function HouseholdDrawer({
   householdId,
   jurisdictionId,
+  clusterName,
   onClose,
   onStartMove,
   onChanged,
@@ -146,7 +148,7 @@ export function HouseholdDrawer({
           update.lng = null;
         } else {
           try {
-            const hit = await geocodeAddress(trimmedAddress);
+            const hit = await geocodeAddressForCluster(trimmedAddress, clusterName);
             update.lat = hit?.lat ?? null;
             update.lng = hit?.lng ?? null;
           } catch {

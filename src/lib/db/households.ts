@@ -314,6 +314,43 @@ function normalize(s: string): string {
   return s.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
+// Compact reference for a household member, used by the sidebar's
+// "scan for community matches" sweep: we need to look up matches
+// for every unlinked member in the jurisdiction in one trip, then
+// fan out to suggestPersonMatches per row.
+export interface UnlinkedMemberRef {
+  id: string;
+  householdId: string;
+  displayName: string;
+}
+
+export async function fetchUnlinkedMembersForJurisdiction(
+  jurisdictionId: string,
+): Promise<UnlinkedMemberRef[]> {
+  const { data: hh, error: hhErr } = await supabase
+    .from('households')
+    .select('id')
+    .eq('jurisdiction_id', jurisdictionId)
+    .is('archived_at', null);
+  if (hhErr) throw hhErr;
+  const householdIds = (hh ?? []).map((h: any) => h.id);
+  if (householdIds.length === 0) return [];
+  const { data, error } = await supabase
+    .from('household_members')
+    .select('id, household_id, display_name')
+    .in('household_id', householdIds)
+    .is('linked_person_id', null);
+  if (error) throw error;
+  return (data ?? [])
+    .filter((r: any) => (r.display_name ?? '').trim().length > 0)
+    .map((r: any) => ({
+      id: r.id,
+      householdId: r.household_id,
+      displayName: r.display_name,
+    }));
+}
+
+
 export async function suggestPersonMatches(
   rawName: string,
   _jurisdictionId: string,

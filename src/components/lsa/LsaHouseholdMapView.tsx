@@ -25,6 +25,7 @@ import {
   XIcon,
   MapPinIcon,
   MapPinOffIcon,
+  Link2Icon,
   LoaderIcon,
   CrosshairIcon,
 } from 'lucide-react';
@@ -33,12 +34,14 @@ import { fetchClusters, type ClusterRow } from '../../lib/db/clusters';
 import {
   fetchJurisdictions,
   fetchHouseholds,
+  fetchUnlinkedMembersForJurisdiction,
+  suggestPersonMatches,
   createHousehold,
   updateHousehold,
   type Household,
   type LsaJurisdiction,
 } from '../../lib/db/households';
-import { geocodeAddress, geocodeAddressBatch } from '../../lib/geocoder';
+import { geocodeAddressForCluster, geocodeAddressBatchForCluster } from '../../lib/geocoder';
 import { getCallerContext } from '../../lib/db/users';
 import {
   canAccessLsaLayer,
@@ -120,6 +123,15 @@ export function LsaHouseholdMapView() {
   const [geocoding, setGeocoding] = useState<{ done: number; total: number } | null>(null);
   const [geocodeError, setGeocodeError] = useState<string | null>(null);
 
+  // Match-scan state — on demand the LSA can sweep every unlinked
+  // member through the community-side search and have any household
+  // with hits flagged in the list, so they can triage links without
+  // opening every household. Counts mean "members in this household
+  // with at least one possible match", not total match count.
+  const [matchScanning, setMatchScanning] = useState<{ done: number; total: number } | null>(null);
+  const [matchCounts, setMatchCounts] = useState<Map<string, number>>(new Map());
+  const [matchScanRan, setMatchScanRan] = useState(false);
+
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
   const [mapZoom, setMapZoom] = useState(6);
 
@@ -198,6 +210,10 @@ export function LsaHouseholdMapView() {
     () => jurisdictions.find(j => j.clusterId === selectedClusterId) ?? null,
     [jurisdictions, selectedClusterId],
   );
+  const activeCluster = useMemo(
+    () => clusters.find(c => c.id === selectedClusterId) ?? null,
+    [clusters, selectedClusterId],
+  );
 
   async function loadHouseholds(jurisdictionId: string) {
     const rows = await fetchHouseholds(jurisdictionId, { includeArchived });
@@ -248,7 +264,7 @@ export function LsaHouseholdMapView() {
   // remain in the "needs attention" bucket and the LSA can hand-pin
   // them via "Move pin" on the drawer.
   async function geocodeMissing() {
-    if (!activeJurisdiction) return;
+    if (!activeJurisdiction || !activeCluster) return;
     const candidates = households.filter(
       h => h.lat == null && h.archivedAt == null && (h.addressLine ?? '').trim().length > 0,
     );
@@ -259,7 +275,10 @@ export function LsaHouseholdMapView() {
     try {
       for (let i = 0; i < candidates.length; i += CHUNK) {
         const slice = candidates.slice(i, i + CHUNK);
-        const hits = await geocodeAddressBatch(slice.map(h => h.addressLine!));
+        const hits = await geocodeAddressBatchForCluster(
+          slice.map(h => h.addressLine!),
+          activeCluster.name,
+        );
         await Promise.all(
           slice.map((h, idx) => {
             const hit = hits[idx];
@@ -276,11 +295,56 @@ export function LsaHouseholdMapView() {
       setGeocoding(null);
     }
   }
+
+  // Walk every unlinked household member in this jurisdiction and
+  // ask the community-building search for possible matches. Results
+  // are aggregated by household and surfaced as a green badge on
+  // each list row, so the LSA can see at-a-glance which households
+  // are worth opening to review links. The drawer's own per-row
+  // scan still runs independently when a household is opened.
+  async function scanForMatches() {
+    if (!activeJurisdiction) return;
+    let members: Awaited<ReturnType<typeof fetchUnlinkedMembersForJurisdiction>>;
+    try {
+      members = await fetchUnlinkedMembersForJurisdiction(activeJurisdiction.id);
+    } catch {
+      return;
+    }
+    if (members.length === 0) {
+      setMatchCounts(new Map());
+      setMatchScanRan(true);
+      return;
+    }
+    setMatchScanning({ done: 0, total: members.length });
+    const counts = new Map<string, number>();
+    const CONCURRENCY = 5;
+    try {
+      for (let i = 0; i < members.length; i += CONCURRENCY) {
+        const slice = members.slice(i, i + CONCURRENCY);
+        const hits = await Promise.all(
+          slice.map(m =>
+            suggestPersonMatches(m.displayName, activeJurisdiction.id, { limit: 1 })
+              .then(s => [m.householdId, s.length > 0] as const)
+              .catch(() => [m.householdId, false] as const),
+          ),
+        );
+        for (const [hid, hasMatch] of hits) {
+          if (hasMatch) counts.set(hid, (counts.get(hid) ?? 0) + 1);
+        }
+        setMatchScanning({ done: Math.min(i + slice.length, members.length), total: members.length });
+      }
+      setMatchCounts(counts);
+      setMatchScanRan(true);
+    } finally {
+      setMatchScanning(null);
+    }
+  }
+
   async function geocodeDraft() {
-    if (!draftAddress.trim()) return;
+    if (!draftAddress.trim() || !activeCluster) return;
     setSavingDraft(true); setDraftError(null);
     try {
-      const hit = await geocodeAddress(draftAddress.trim());
+      const hit = await geocodeAddressForCluster(draftAddress.trim(), activeCluster.name);
       if (!hit) { setDraftError('Address not found. Click on the map to place a pin manually.'); return; }
       setDraftLocation({ lat: hit.lat, lng: hit.lng });
       setMapCenter([hit.lat, hit.lng]);
@@ -451,10 +515,11 @@ export function LsaHouseholdMapView() {
 
       <div className="flex flex-1 overflow-hidden relative flex-col lg:flex-row">
         {/* Left panel: either household detail (when selected) or the household list. */}
-        {selectedHouseholdId && activeJurisdiction ? (
+        {selectedHouseholdId && activeJurisdiction && activeCluster ? (
           <HouseholdDrawer
             householdId={selectedHouseholdId}
             jurisdictionId={activeJurisdiction.id}
+            clusterName={activeCluster.name}
             onClose={() => setSelectedHouseholdId(null)}
             onStartMove={(hid) => {
               setSelectedHouseholdId(null);
@@ -478,6 +543,10 @@ export function LsaHouseholdMapView() {
             onGeocodeMissing={geocodeMissing}
             geocoding={geocoding}
             geocodeError={geocodeError}
+            onScanForMatches={scanForMatches}
+            matchScanning={matchScanning}
+            matchCounts={matchCounts}
+            matchScanRan={matchScanRan}
           />
         )}
 
@@ -618,6 +687,10 @@ function HouseholdSidebar({
   onGeocodeMissing,
   geocoding,
   geocodeError,
+  onScanForMatches,
+  matchScanning,
+  matchCounts,
+  matchScanRan,
 }: {
   households: Household[];
   selectedId: string | null;
@@ -627,6 +700,10 @@ function HouseholdSidebar({
   onGeocodeMissing: () => Promise<void> | void;
   geocoding: { done: number; total: number } | null;
   geocodeError: string | null;
+  onScanForMatches: () => Promise<void> | void;
+  matchScanning: { done: number; total: number } | null;
+  matchCounts: Map<string, number>;
+  matchScanRan: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [onlyNeedsAttention, setOnlyNeedsAttention] = useState(false);
@@ -715,6 +792,42 @@ function HouseholdSidebar({
           )}
         </div>
       )}
+
+      {/* Community-link scan — surfaces possible community-side
+          profile matches at the list level, before the LSA opens
+          individual households. The drawer still runs its own
+          per-row scan once a household is opened. */}
+      {households.length > 0 && (
+        <div className="mx-4 mt-3 mb-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <Link2Icon className="w-3.5 h-3.5 text-emerald-700" />
+            <h3 className="text-[11px] font-bold uppercase tracking-wider text-emerald-800">
+              Community-side links
+            </h3>
+          </div>
+          {matchScanRan && matchCounts.size === 0 && !matchScanning ? (
+            <div className="text-[11px] text-emerald-900 leading-snug">
+              No possible community-side matches found across this jurisdiction's unlinked members.
+            </div>
+          ) : matchScanRan && !matchScanning ? (
+            <div className="text-[11px] text-emerald-900 leading-snug">
+              <strong>{matchCounts.size}</strong> household{matchCounts.size === 1 ? '' : 's'} ha{matchCounts.size === 1 ? 's' : 've'} at least one possible community-side match. Look for the green badge in the list below.
+            </div>
+          ) : (
+            <div className="text-[11px] text-emerald-900 leading-snug">
+              Sweep every unlinked household member through the community-building search and flag households whose members might already have a profile.
+            </div>
+          )}
+          <button
+            onClick={onScanForMatches}
+            disabled={!!matchScanning}
+            className="block px-2 py-1 text-[11px] font-semibold rounded-lg bg-emerald-700 text-white hover:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed">
+            {matchScanning
+              ? <span className="inline-flex items-center gap-1.5"><LoaderIcon className="w-3 h-3 animate-spin" /> Scanning… {matchScanning.done}/{matchScanning.total}</span>
+              : matchScanRan ? 'Re-scan' : 'Scan for community matches'}
+          </button>
+        </div>
+      )}
       {filtered.length === 0 ? (
         <div className="px-4 py-6 text-sm text-amber-500 italic">
           No households yet. Use <strong className="font-semibold text-amber-700">New household</strong> or <strong className="font-semibold text-amber-700">Import</strong> to add some.
@@ -744,6 +857,14 @@ function HouseholdSidebar({
                       {(h.addressLine ?? '').trim().length > 0 ? 'No pin' : 'No address'}
                     </span>
                   )}
+                  {matchCounts.get(h.id) ? (
+                    <span
+                      title={`${matchCounts.get(h.id)} member${matchCounts.get(h.id) === 1 ? '' : 's'} with possible community-side match${matchCounts.get(h.id) === 1 ? '' : 'es'}`}
+                      className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 inline-flex items-center gap-1">
+                      <Link2Icon className="w-3 h-3" />
+                      {matchCounts.get(h.id)} match{matchCounts.get(h.id) === 1 ? '' : 'es'}
+                    </span>
+                  ) : null}
                 </div>
               </button>
             </li>
