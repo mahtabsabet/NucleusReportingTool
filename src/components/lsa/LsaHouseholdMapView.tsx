@@ -52,6 +52,8 @@ import {
   type CallerContext,
 } from '../../lib/permissions';
 import { householdMarkerIcon, householdMarkerArchivedIcon, householdMarkerEmptyIcon } from './HouseholdMarkerIcon';
+import { MobileBottomSheet, type SheetState } from './MobileBottomSheet';
+import { useIsMobile } from '../../lib/useIsMobile';
 import { HouseholdDrawer } from './HouseholdDrawer';
 import { HouseholdImportModal } from './HouseholdImportModal';
 
@@ -142,6 +144,15 @@ export function LsaHouseholdMapView() {
   // Per-household total member count. Drives the "Empty" badge and
   // the hollow map-pin variant for households with zero members.
   const [memberCounts, setMemberCounts] = useState<Map<string, number>>(new Map());
+
+  // Mobile layout: full-screen map under a draggable bottom sheet
+  // that hosts the household list + attention/match cards. Sheet
+  // starts at 'peek' so the map is fully visible on first load.
+  const isMobile = useIsMobile();
+  const [sheetState, setSheetState] = useState<SheetState>('peek');
+  function bumpSheetUp() {
+    setSheetState(s => (s === 'peek' ? 'half' : s));
+  }
 
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
   const [mapZoom, setMapZoom] = useState(6);
@@ -558,52 +569,55 @@ export function LsaHouseholdMapView() {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden relative flex-col lg:flex-row">
-        {/* Left panel: either household detail (when selected) or the household list. */}
-        {selectedHouseholdId && activeJurisdiction && activeCluster ? (
-          <HouseholdDrawer
-            householdId={selectedHouseholdId}
-            jurisdictionId={activeJurisdiction.id}
-            clusterName={activeCluster.name}
-            onClose={() => setSelectedHouseholdId(null)}
-            onStartMove={(hid) => {
-              setSelectedHouseholdId(null);
-              setPlacing({ mode: 'move', householdId: hid });
-            }}
-            onChanged={async (alsoRefresh) => {
-              if (!activeJurisdiction) return;
-              await loadHouseholds(activeJurisdiction.id);
-              await refreshHouseholdBadges(selectedHouseholdId);
-              for (const otherId of (alsoRefresh ?? [])) {
-                if (otherId && otherId !== selectedHouseholdId) {
-                  await refreshHouseholdBadges(otherId);
+      <div className={`flex flex-1 overflow-hidden relative ${isMobile ? '' : 'flex-col lg:flex-row'}`}>
+        {/* Desktop left panel: either household detail (when selected) or the household list.
+            On mobile both are overlays on top of the map (rendered further below). */}
+        {!isMobile && (
+          selectedHouseholdId && activeJurisdiction && activeCluster ? (
+            <HouseholdDrawer
+              householdId={selectedHouseholdId}
+              jurisdictionId={activeJurisdiction.id}
+              clusterName={activeCluster.name}
+              onClose={() => setSelectedHouseholdId(null)}
+              onStartMove={(hid) => {
+                setSelectedHouseholdId(null);
+                setPlacing({ mode: 'move', householdId: hid });
+              }}
+              onChanged={async (alsoRefresh) => {
+                if (!activeJurisdiction) return;
+                await loadHouseholds(activeJurisdiction.id);
+                await refreshHouseholdBadges(selectedHouseholdId);
+                for (const otherId of (alsoRefresh ?? [])) {
+                  if (otherId && otherId !== selectedHouseholdId) {
+                    await refreshHouseholdBadges(otherId);
+                  }
                 }
-              }
-            }}
-          />
-        ) : (
-          <HouseholdSidebar
-            households={households}
-            selectedId={selectedHouseholdId}
-            includeArchived={includeArchived}
-            onSelect={(id, h) => {
-              setSelectedHouseholdId(id);
-              if (h.lat != null && h.lng != null) {
-                setMapCenter([h.lat, h.lng]);
-                setMapZoom(15);
-              }
-            }}
-            onToggleArchived={() => setIncludeArchived(v => !v)}
-            onGeocodeMissing={geocodeMissing}
-            geocoding={geocoding}
-            geocodeError={geocodeError}
-            onScanForMatches={scanForMatches}
-            matchScanning={matchScanning}
-            matchCounts={matchCounts}
-            matchScanRan={matchScanRan}
-            linkedCounts={linkedCounts}
-            memberCounts={memberCounts}
-          />
+              }}
+            />
+          ) : (
+            <HouseholdSidebar
+              households={households}
+              selectedId={selectedHouseholdId}
+              includeArchived={includeArchived}
+              onSelect={(id, h) => {
+                setSelectedHouseholdId(id);
+                if (h.lat != null && h.lng != null) {
+                  setMapCenter([h.lat, h.lng]);
+                  setMapZoom(15);
+                }
+              }}
+              onToggleArchived={() => setIncludeArchived(v => !v)}
+              onGeocodeMissing={geocodeMissing}
+              geocoding={geocoding}
+              geocodeError={geocodeError}
+              onScanForMatches={scanForMatches}
+              matchScanning={matchScanning}
+              matchCounts={matchCounts}
+              matchScanRan={matchScanRan}
+              linkedCounts={linkedCounts}
+              memberCounts={memberCounts}
+            />
+          )
         )}
 
         <main className="flex-1 relative">
@@ -669,9 +683,12 @@ export function LsaHouseholdMapView() {
             )}
           </MapContainer>
 
-          {/* New household form — appears in the bottom-right once a pin is dropped. */}
+          {/* New household form — desktop: floating card bottom-right.
+              Mobile: full-width bottom sheet (matches the regular
+              household-list sheet's visual position so the user's
+              focus stays where the keyboard / typing happens). */}
           {placing?.mode === 'new' && (
-            <div className="absolute bottom-4 right-4 z-[1000] bg-white rounded-2xl border border-amber-200 shadow-lg p-4 w-80">
+            <div className="absolute z-[1100] bg-white shadow-lg p-4 bottom-0 left-0 right-0 rounded-t-2xl border-t border-amber-200 md:bottom-4 md:right-4 md:left-auto md:w-80 md:rounded-2xl md:border">
               <h3 className="text-sm font-semibold text-gray-900 mb-3">New household</h3>
               <div className="space-y-2">
                 <input
@@ -722,6 +739,68 @@ export function LsaHouseholdMapView() {
             </div>
           )}
         </main>
+
+        {/* Mobile: bottom sheet hosting the household list / attention
+            cards. Hidden when a household is open (the drawer overlay
+            takes the screen) or during placement (the form replaces
+            the sheet in roughly the same screen position). */}
+        {isMobile && !selectedHouseholdId && !placing && (
+          <MobileBottomSheet state={sheetState} onStateChange={setSheetState}>
+            <HouseholdSidebar
+              mode="sheet"
+              onInteract={bumpSheetUp}
+              households={households}
+              selectedId={selectedHouseholdId}
+              includeArchived={includeArchived}
+              onSelect={(id, h) => {
+                setSelectedHouseholdId(id);
+                if (h.lat != null && h.lng != null) {
+                  setMapCenter([h.lat, h.lng]);
+                  setMapZoom(15);
+                }
+              }}
+              onToggleArchived={() => setIncludeArchived(v => !v)}
+              onGeocodeMissing={geocodeMissing}
+              geocoding={geocoding}
+              geocodeError={geocodeError}
+              onScanForMatches={scanForMatches}
+              matchScanning={matchScanning}
+              matchCounts={matchCounts}
+              matchScanRan={matchScanRan}
+              linkedCounts={linkedCounts}
+              memberCounts={memberCounts}
+            />
+          </MobileBottomSheet>
+        )}
+
+        {/* Mobile: open-household drawer rendered as a full-screen
+            overlay so the user gets the room they need on a phone.
+            The drawer's own width classes (w-80 lg:w-96) are
+            overridden to full width inside this wrapper. */}
+        {isMobile && selectedHouseholdId && activeJurisdiction && activeCluster && (
+          <div className="absolute inset-0 z-[1200] bg-white">
+            <HouseholdDrawer
+              householdId={selectedHouseholdId}
+              jurisdictionId={activeJurisdiction.id}
+              clusterName={activeCluster.name}
+              onClose={() => setSelectedHouseholdId(null)}
+              onStartMove={(hid) => {
+                setSelectedHouseholdId(null);
+                setPlacing({ mode: 'move', householdId: hid });
+              }}
+              onChanged={async (alsoRefresh) => {
+                if (!activeJurisdiction) return;
+                await loadHouseholds(activeJurisdiction.id);
+                await refreshHouseholdBadges(selectedHouseholdId);
+                for (const otherId of (alsoRefresh ?? [])) {
+                  if (otherId && otherId !== selectedHouseholdId) {
+                    await refreshHouseholdBadges(otherId);
+                  }
+                }
+              }}
+            />
+          </div>
+        )}
       </div>
 
       {showImport && activeJurisdiction && (
@@ -753,6 +832,12 @@ function HouseholdSidebar({
   matchScanRan,
   linkedCounts,
   memberCounts,
+  // 'sidebar' = legacy desktop chrome (fixed-width <aside>, border,
+  // shadow, "data is private" footer). 'sheet' strips that chrome so
+  // the component nests cleanly inside the mobile bottom sheet —
+  // same content, no outer styling that fights with the sheet.
+  mode = 'sidebar',
+  onInteract,
 }: {
   households: Household[];
   selectedId: string | null;
@@ -768,6 +853,12 @@ function HouseholdSidebar({
   matchScanRan: boolean;
   linkedCounts: Map<string, number>;
   memberCounts: Map<string, number>;
+  mode?: 'sidebar' | 'sheet';
+  // Fires when the user touches a control that suggests they want
+  // more sheet real estate (search input focus, attention card
+  // button). Only meaningful in 'sheet' mode; the parent uses it to
+  // auto-expand from peek to half.
+  onInteract?: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [onlyNeedsAttention, setOnlyNeedsAttention] = useState(false);
@@ -796,14 +887,27 @@ function HouseholdSidebar({
     );
   }, [households, query, onlyNeedsAttention, needsPin, needsAddress]);
 
+  const isSheet = mode === 'sheet';
+  // Sidebar mode owns its own scroll via overflow-y-auto on the
+  // <aside>; sheet mode defers scrolling to its parent (the bottom
+  // sheet's inner scroll container) so the sticky search header
+  // works against the right ancestor.
+  const Wrapper = isSheet ? 'div' : 'aside';
+  const wrapperClass = isSheet
+    ? 'bg-white flex flex-col'
+    : 'bg-white border-r border-amber-200 overflow-y-auto shadow-sm flex flex-col w-80 lg:w-96';
+
   return (
-    <aside className="bg-white border-r border-amber-200 overflow-y-auto shadow-sm flex flex-col w-80 lg:w-96">
+    <Wrapper className={wrapperClass}>
       <div className="p-4 border-b border-amber-100 sticky top-0 bg-white z-10 space-y-3">
-        <h2 className="text-xs font-bold text-amber-500 uppercase tracking-widest">Households</h2>
+        {!isSheet && (
+          <h2 className="text-xs font-bold text-amber-500 uppercase tracking-widest">Households</h2>
+        )}
         <input
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search…"
+          onFocus={onInteract}
+          placeholder="Search households…"
           className="w-full rounded-lg border border-amber-200 px-3 py-1.5 text-sm"
         />
         <div className="flex items-center justify-between">
@@ -815,7 +919,10 @@ function HouseholdSidebar({
           </button>
           {attentionCount > 0 && (
             <button
-              onClick={() => setOnlyNeedsAttention(v => !v)}
+              onClick={() => {
+                onInteract?.();
+                setOnlyNeedsAttention(v => !v);
+              }}
               className={`text-[11px] font-semibold ${onlyNeedsAttention ? 'text-amber-900 underline' : 'text-amber-600 hover:text-amber-900'}`}>
               {onlyNeedsAttention ? 'Show all' : `Only needs attention (${attentionCount})`}
             </button>
@@ -950,10 +1057,12 @@ function HouseholdSidebar({
           ))}
         </ul>
       )}
-      <div className="mt-auto px-4 py-3 border-t border-amber-100 text-[10px] text-amber-400 leading-relaxed">
-        Household data is private to the LSA layer. Ordinary coordinators and viewers cannot see addresses or household membership.
-      </div>
-    </aside>
+      {!isSheet && (
+        <div className="mt-auto px-4 py-3 border-t border-amber-100 text-[10px] text-amber-400 leading-relaxed">
+          Household data is private to the LSA layer. Ordinary coordinators and viewers cannot see addresses or household membership.
+        </div>
+      )}
+    </Wrapper>
   );
 }
 
