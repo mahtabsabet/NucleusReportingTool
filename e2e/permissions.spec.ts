@@ -647,7 +647,7 @@ test.describe('regional (view-only)', () => {
       .toBeVisible({ timeout: 15000 });
     // Focus the Journal module via its dashboard card.
     await page.getByRole('heading', { name: /^nucleus journal$/i }).first().click();
-    await expect(page.getByRole('heading', { name: /recording our journey together/i }))
+    await expect(page.getByRole('heading', { name: /our journey together/i }))
       .toBeVisible();
     // The composition affordances (New Entry / New Learning) must be
     // hidden for read-only viewers.
