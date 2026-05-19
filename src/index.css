@@ -71,62 +71,57 @@ body {
 }
 
 .bg-notebook-paper {
-  background-color: #f5ecd2;
+  background-color: #f1e6c4;
   background-image:
-    radial-gradient(at 0% 0%, rgba(255, 248, 220, 0.55) 0px, transparent 60%),
+    radial-gradient(at 0% 0%, rgba(255, 248, 220, 0.6) 0px, transparent 60%),
     radial-gradient(at 100% 100%, rgba(232, 213, 169, 0.55) 0px, transparent 60%),
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.43  0 0 0 0 0.31  0 0 0 0 0.17  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.43  0 0 0 0 0.31  0 0 0 0 0.17  0 0 0 0.22 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
   background-size: auto, auto, 220px 220px;
+  /* very subtle inner top shadow makes the page look like it sits
+     below the spiral binding instead of being glued to it */
+  box-shadow: inset 0 6px 8px -6px rgba(80, 50, 20, 0.35);
 }
 
 .bg-journal-paper {
-  background-color: #f4e8c8;
+  background-color: #efe2bf;
   background-image:
     radial-gradient(at 50% 0%, rgba(255, 250, 230, 0.7) 0px, transparent 70%),
     radial-gradient(at 0% 100%, rgba(214, 187, 130, 0.4) 0px, transparent 60%),
     radial-gradient(at 100% 100%, rgba(214, 187, 130, 0.4) 0px, transparent 60%),
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.38  0 0 0 0 0.27  0 0 0 0 0.12  0 0 0 0.16 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.38  0 0 0 0 0.27  0 0 0 0 0.12  0 0 0 0.18 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
   background-size: auto, auto, auto, 240px 240px;
 }
 
-/* Spiral notebook binding — thicker brass rings with shadow under
-   each one, plus a darker strip behind them that suggests the
-   cover edge of the notebook. */
-.notebook-spiral-band {
-  height: 30px;
-  background:
-    linear-gradient(to bottom, #4a3520 0%, #5e4226 40%, #382514 100%);
-  position: relative;
-  box-shadow: inset 0 -3px 5px rgba(0,0,0,0.35);
+/* The book is a real bound volume — the outer edges show the
+   stacked page edges. Achieved with a tower of box-shadows offset
+   horizontally; each layer is slightly darker and tinted toward
+   the parchment color so the effect reads as paper, not as a
+   stack of cards. */
+.book-edge-left {
+  box-shadow:
+    -2px  0 0 rgba(239, 226, 191, 1),
+    -4px  0 0 rgba(228, 211, 168, 1),
+    -6px  1px 0 rgba(217, 197, 147, 1),
+    -8px  1px 0 rgba(206, 184, 127, 0.9),
+    -10px 2px 0 rgba(196, 172, 110, 0.85),
+    -12px 2px 0 rgba(185, 160, 95,  0.78),
+    -14px 4px 6px rgba(80, 50, 20, 0.25);
 }
-.notebook-spiral-band::before {
-  /* The rings themselves: a radial-gradient repeated horizontally. */
-  content: '';
-  position: absolute;
-  inset: 4px 0 4px 0;
-  background:
-    radial-gradient(circle at 14px 11px,
-      #2a1b0c 0 3px,
-      #c9a36b 3.5px 6.5px,
-      #f0d59a 6.5px 8.5px,
-      #8a6a3a 8.5px 10px,
-      transparent 10.5px);
-  background-size: 32px 22px;
-  background-repeat: repeat-x;
-  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.4));
+.book-edge-right {
+  box-shadow:
+     2px  0 0 rgba(239, 226, 191, 1),
+     4px  0 0 rgba(228, 211, 168, 1),
+     6px  1px 0 rgba(217, 197, 147, 1),
+     8px  1px 0 rgba(206, 184, 127, 0.9),
+     10px 2px 0 rgba(196, 172, 110, 0.85),
+     12px 2px 0 rgba(185, 160, 95,  0.78),
+     14px 4px 6px rgba(80, 50, 20, 0.25);
 }
-.notebook-spiral-band::after {
-  /* Small bright reflection on the top of each ring. */
-  content: '';
-  position: absolute;
-  inset: 4px 0 4px 0;
-  background:
-    radial-gradient(ellipse 4px 1.5px at 12px 7px,
-      rgba(255,250,230,0.65) 0%, transparent 100%);
-  background-size: 32px 22px;
-  background-repeat: repeat-x;
-  pointer-events: none;
-}
+
+/* Notebook spiral binding is rendered as an inline SVG component
+   (see NotebookSpiral.tsx). It sits above the paper and overlaps
+   slightly so the wire rings appear to thread through the
+   perforations at the top of the page. */
 
 /* Journal page: vellum tone + warm vignette so the page reads as
    an actual sheet. The spine line is drawn in the parent so it

@@ -29,7 +29,7 @@ import {
 import type { JournalEntry, LearningTheme } from '../types';
 import { ThemeTag, themePalette } from './ThemeTag';
 import { ConfirmDialog } from './ConfirmDialog';
-import { LeafSprig, BotanicalSprig, OrnamentalDivider } from './JournalDecorations';
+import { HeadingFlourish, HeaderDivider } from './JournalDecorations';
 
 interface NucleusJournalProps {
   nucleusId: string;
@@ -88,28 +88,27 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
   }, [nucleusId, selectedThemeId]);
 
   return (
-    <div className="rounded-2xl overflow-hidden border border-amber-900/30 shadow-2xl bg-journal-paper journal-spine">
+    // Outer wrapper carries the stacked page-edge shadows (left
+    // and right). We use a flex/grid spread inside so the shadows
+    // sit on the actual outer edges of the book, not inside the
+    // border.
+    <div className="rounded-md bg-journal-paper border border-amber-900/30 shadow-2xl book-edge-left book-edge-right journal-spine">
       <div className="grid grid-cols-1 lg:grid-cols-2 relative">
         {/* ─── LEFT PAGE ──────────────────────────────────────────── */}
-        <div className="journal-page p-6 sm:p-10 min-h-[680px] relative">
-          {/* Top-left botanical corner */}
-          <div className="pointer-events-none absolute top-3 left-3 text-amber-800/40 w-32">
-            <LeafSprig className="w-full h-auto" />
-          </div>
-
-          <div className="mb-6 pl-10">
+        <div className="journal-page p-7 sm:p-12 min-h-[640px] relative">
+          <div className="mb-5">
             {selectedTheme ? (
               <>
                 <button
                   onClick={() => setSelectedThemeId(null)}
-                  className="inline-flex items-center gap-1 text-xs uppercase tracking-widest text-stone-500 hover:text-stone-800 mb-2"
+                  className="inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.2em] text-amber-800/80 hover:text-amber-900 mb-2"
                 >
                   <ChevronLeftIcon className="w-3.5 h-3.5" /> Back to journal
                 </button>
-                <p className="text-xs uppercase tracking-widest text-stone-500 font-journal">
+                <p className="text-[11px] uppercase tracking-[0.22em] text-amber-800/80 font-journal">
                   Theme · {selectedTheme.status}
                 </p>
-                <h2 className="font-journal text-4xl text-stone-800 leading-tight">
+                <h2 className="font-journal font-normal text-[2.4rem] sm:text-[2.7rem] text-stone-800 leading-[1.1]">
                   {selectedTheme.name}
                 </h2>
                 {selectedTheme.description && (
@@ -120,19 +119,20 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
               </>
             ) : (
               <>
-                <p className="text-xs uppercase tracking-widest text-stone-500 font-journal">
+                <p className="text-[11px] uppercase tracking-[0.22em] text-amber-800/80 font-journal">
                   Our Nucleus Journal
                 </p>
                 <div className="flex items-baseline justify-between gap-4">
-                  <h2 className="font-journal text-4xl text-stone-800 leading-tight">
-                    Recording our journey together
+                  <h2 className="font-journal font-normal text-[2.4rem] sm:text-[2.7rem] text-stone-800 leading-[1.1] flex items-baseline gap-2">
+                    <HeadingFlourish className="w-12 h-7 text-amber-800/60 self-end -mb-1" />
+                    Our Journey Together
                   </h2>
                   {!readOnly && canCurate && !composerOpen && (
                     <button
                       onClick={() => setComposerOpen(true)}
-                      className="inline-flex items-center gap-1.5 text-sm font-medium text-stone-700 bg-white/70 hover:bg-white border border-amber-900/25 rounded-lg px-3 py-1.5 transition flex-shrink-0 shadow-sm"
+                      className="inline-flex items-center gap-1.5 text-sm font-journal text-stone-700 bg-transparent hover:bg-white/60 border border-stone-400/60 rounded-md px-3.5 py-1.5 transition flex-shrink-0"
                     >
-                      <PlusIcon className="w-4 h-4" /> New Entry
+                      <PlusIcon className="w-3.5 h-3.5" /> New Entry
                     </button>
                   )}
                 </div>
@@ -140,7 +140,7 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
             )}
           </div>
 
-          <OrnamentalDivider className="text-amber-900/40 mb-6" />
+          <HeaderDivider className="text-amber-800/55 mb-7" />
 
           {composerOpen && !selectedTheme && (
             <NucleusEntryComposer
@@ -199,33 +199,27 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
             ))}
           </div>
 
-          {/* Bottom-left botanical sprig like the mockup */}
-          <div className="pointer-events-none absolute bottom-3 left-4 text-amber-900/35 w-24 hidden sm:block">
-            <BotanicalSprig className="w-full h-auto" />
-          </div>
         </div>
 
         {/* ─── RIGHT PAGE ─────────────────────────────────────────── */}
-        <div className="journal-page p-6 sm:p-10 min-h-[680px] relative">
-          {/* Top-right botanical corner (mirrored) */}
-          <div className="pointer-events-none absolute top-3 right-3 text-amber-800/40 w-32" style={{ transform: 'scaleX(-1)' }}>
-            <LeafSprig className="w-full h-auto" />
-          </div>
-
-          <div className="mb-6 pr-10">
-            <p className="text-xs uppercase tracking-widest text-stone-500 font-journal">
+        <div className="journal-page p-7 sm:p-12 min-h-[640px] relative">
+          <div className="mb-5">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-amber-800/80 font-journal">
               Objects of Learning
             </p>
             <div className="flex items-baseline justify-between gap-4">
-              <h2 className="font-journal text-4xl text-stone-800 leading-tight">
-                Themes we are learning about
+              <h2 className="font-journal font-normal text-[2.4rem] sm:text-[2.7rem] text-stone-800 leading-[1.1] flex items-baseline gap-2">
+                Our Objects of Learning
+                <span className="self-end -mb-1 inline-block" style={{ transform: 'scaleX(-1)' }}>
+                  <HeadingFlourish className="w-12 h-7 text-amber-800/60" />
+                </span>
               </h2>
               {!readOnly && canCurate && !themeComposerOpen && (
                 <button
                   onClick={() => setThemeComposerOpen(true)}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-stone-700 bg-white/70 hover:bg-white border border-amber-900/25 rounded-lg px-3 py-1.5 transition flex-shrink-0 shadow-sm"
+                  className="inline-flex items-center gap-1.5 text-sm font-journal text-stone-700 bg-transparent hover:bg-white/60 border border-stone-400/60 rounded-md px-3.5 py-1.5 transition flex-shrink-0"
                 >
-                  <PlusIcon className="w-4 h-4" /> New Learning
+                  <PlusIcon className="w-3.5 h-3.5" /> New Learning
                 </button>
               )}
             </div>
@@ -234,7 +228,7 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
             </p>
           </div>
 
-          <OrnamentalDivider className="text-amber-900/40 mb-6" />
+          <HeaderDivider className="text-amber-800/55 mb-7" />
 
           {themeComposerOpen && (
             <ThemeComposer
@@ -267,12 +261,9 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
           </div>
 
           {themes.length > 0 && (
-            <>
-              <OrnamentalDivider className="text-amber-900/35 mt-8 mb-4" />
-              <p className="text-center font-journal italic text-stone-500">
-                Our learning grows as we walk this path together.
-              </p>
-            </>
+            <p className="text-center font-journal italic text-stone-500 mt-10">
+              Our learning grows as we walk this path together.
+            </p>
           )}
         </div>
       </div>

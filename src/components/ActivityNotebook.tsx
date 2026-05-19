@@ -26,6 +26,7 @@ import {
 import type { JournalEntry, LearningTheme } from '../types';
 import { ThemeTag, themePalette } from './ThemeTag';
 import { ConfirmDialog } from './ConfirmDialog';
+import { NotebookSpiral } from './NotebookSpiral';
 
 interface ActivityNotebookProps {
   activityId: string;
@@ -80,10 +81,12 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
   useEffect(() => { load(); }, [activityId, nucleusId]);
 
   return (
-    <div className="rounded-2xl overflow-hidden shadow-xl">
-      <div className="notebook-spiral-band" />
-
-      <div className="bg-notebook-paper px-5 sm:px-9 pt-6 pb-7 relative">
+    // The wrapper deliberately does NOT clip overflow so the spiral
+    // rings can extend a few pixels above the page surface — that's
+    // what sells the "real spiral notebook" illusion.
+    <div className="relative">
+      <NotebookSpiral />
+      <div className="bg-notebook-paper rounded-b-2xl shadow-xl px-5 sm:px-9 pt-3 pb-7 relative -mt-3">
         <div className="flex items-baseline justify-between gap-4 mb-1">
           <h3 className="font-handwritten text-4xl text-stone-800 leading-none tracking-wide">
             Activity Notebook
