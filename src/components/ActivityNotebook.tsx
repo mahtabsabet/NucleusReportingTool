@@ -81,12 +81,12 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
   useEffect(() => { load(); }, [activityId, nucleusId]);
 
   return (
-    // The wrapper deliberately does NOT clip overflow so the spiral
-    // rings can extend a few pixels above the page surface — that's
-    // what sells the "real spiral notebook" illusion.
     <div className="relative">
       <NotebookSpiral />
-      <div className="bg-notebook-paper rounded-b-2xl shadow-xl px-5 sm:px-9 pt-3 pb-7 relative -mt-3">
+      {/* Page surface starts flush against the perforation strip;
+          rounded only on the bottom so the page top stays straight
+          where the binding meets it. */}
+      <div className="bg-notebook-paper rounded-b-2xl shadow-xl px-5 sm:px-9 pt-5 pb-7 relative">
         <div className="flex items-baseline justify-between gap-4 mb-1">
           <h3 className="font-handwritten text-4xl text-stone-800 leading-none tracking-wide">
             Activity Notebook

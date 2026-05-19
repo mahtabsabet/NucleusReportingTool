@@ -118,10 +118,30 @@ body {
      14px 4px 6px rgba(80, 50, 20, 0.25);
 }
 
-/* Notebook spiral binding is rendered as an inline SVG component
-   (see NotebookSpiral.tsx). It sits above the paper and overlaps
-   slightly so the wire rings appear to thread through the
-   perforations at the top of the page. */
+/* Notebook spiral binding — tiled inline SVGs so each ring keeps
+   its natural aspect ratio at any container width. The rings strip
+   sits above the page; the perforation strip overlaps the top of
+   the page so each ring reads as threaded through a real hole. */
+
+.notebook-rings {
+  height: 56px;
+  background-repeat: repeat-x;
+  background-size: 56px 56px;
+  background-position: center top;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'><defs><linearGradient id='d' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='%23383330'/><stop offset='0.4' stop-color='%230a0a09'/><stop offset='0.6' stop-color='%230a0a09'/><stop offset='1' stop-color='%23272320'/></linearGradient></defs><ellipse cx='28' cy='52' rx='14' ry='2.5' fill='rgba(0,0,0,0.35)'/><ellipse cx='28' cy='27' rx='12' ry='22' fill='none' stroke='url(%23d)' stroke-width='3.4'/><path d='M 18 27 A 10 20 0 0 1 38 27' fill='none' stroke='rgba(255,250,235,0.55)' stroke-width='1.2'/></svg>");
+}
+
+.notebook-perforations {
+  height: 14px;
+  margin-top: -10px;
+  position: relative;
+  z-index: 1;
+  background-color: #f1e6c4;
+  background-repeat: repeat-x;
+  background-size: 56px 14px;
+  background-position: center top;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='14' viewBox='0 0 56 14'><rect x='22' y='1' width='12' height='7' rx='2.5' fill='rgba(50,32,16,0.7)'/><ellipse cx='28' cy='12' rx='10' ry='1.5' fill='rgba(120,90,50,0.22)'/></svg>");
+}
 
 /* Journal page: vellum tone + warm vignette so the page reads as
    an actual sheet. The spine line is drawn in the parent so it
