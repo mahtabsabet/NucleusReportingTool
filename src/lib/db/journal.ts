@@ -26,6 +26,7 @@ function mapTheme(row: any): LearningTheme {
   return {
     id: row.id,
     nucleusId: row.nucleus_id,
+    clusterThemeId: row.cluster_theme_id ?? undefined,
     name: row.name,
     description: row.description ?? undefined,
     color: row.color ?? 'amber',
@@ -45,10 +46,13 @@ function mapEntry(row: any): JournalEntry {
     : [];
   return {
     id: row.id,
-    nucleusId: row.nucleus_id,
+    nucleusId: row.nucleus_id ?? undefined,
+    nucleusName: row.nuclei?.name ?? undefined,
     source: row.source as JournalEntrySource,
     activityId: row.activity_id ?? undefined,
     activityName: row.activities?.name ?? undefined,
+    clusterId: row.cluster_id ?? undefined,
+    clusterThemeId: row.cluster_theme_id ?? undefined,
     authorId: row.author_id ?? undefined,
     authorName: row.author?.name ?? undefined,
     occurredAt: new Date(row.occurred_at),
@@ -68,14 +72,15 @@ function mapEntry(row: any): JournalEntry {
 // Two aliased joins on profiles so we can render both "written by"
 // and "last edited by" without a second round-trip.
 const ENTRY_SELECT = `
-  id, nucleus_id, source, activity_id, author_id, occurred_at, created_at,
-  edited_at, edited_by,
+  id, nucleus_id, source, activity_id, cluster_id, cluster_theme_id,
+  author_id, occurred_at, created_at, edited_at, edited_by,
   what_happened, encouraging_signs, challenges, people_emerging, follow_up, body,
   activities ( name ),
+  nuclei ( name ),
   author:profiles!journal_entries_author_id_fkey ( name ),
   editor:profiles!journal_entries_edited_by_fkey ( name ),
   journal_entry_themes (
-    learning_themes ( id, nucleus_id, name, description, color, status, proposed_by, proposed_at, promoted_at, merged_into_id )
+    learning_themes ( id, nucleus_id, cluster_theme_id, name, description, color, status, proposed_by, proposed_at, promoted_at, merged_into_id )
   )
 `;
 

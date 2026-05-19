@@ -152,6 +152,7 @@ export type LearningThemeStatus = 'emerging' | 'established' | 'archived';
 export interface LearningTheme {
   id: string;
   nucleusId: string;
+  clusterThemeId?: string;
   name: string;
   description?: string;
   color: string;
@@ -164,14 +165,45 @@ export interface LearningTheme {
   entryCount?: number;
 }
 
-export type JournalEntrySource = 'activity' | 'nucleus';
+// Cluster-level canonical theme. Every learning_theme links to one
+// of these (auto-linked by trigger on name match within the
+// cluster). The Cluster Learning Hub is organised by these.
+export interface ClusterTheme {
+  id: string;
+  clusterId: string;
+  name: string;
+  description?: string;
+  color: string;
+  // 0–100 slider value indicating how consolidated this learning
+  // is in the cluster coordinator's judgement.
+  consolidationLevel: number;
+  createdAt: Date;
+  archivedAt?: Date;
+  // Aggregates populated by Hub-specific queries.
+  nucleusCount?: number;
+  entryCount?: number;
+  lastEntryAt?: Date;
+}
+
+// One nucleus's contribution to a cluster theme.
+export interface NucleusContribution {
+  nucleusId: string;
+  nucleusName: string;
+  entryCount: number;
+  lastEntryAt?: Date;
+}
+
+export type JournalEntrySource = 'activity' | 'nucleus' | 'cluster';
 
 export interface JournalEntry {
   id: string;
-  nucleusId: string;
+  nucleusId?: string;
   source: JournalEntrySource;
   activityId?: string;
   activityName?: string;
+  clusterId?: string;
+  clusterThemeId?: string;
+  nucleusName?: string;
   authorId?: string;
   authorName?: string;
   occurredAt: Date;

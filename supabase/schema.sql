@@ -330,9 +330,11 @@ create table learning_themes (
 
 create table journal_entries (
   id                uuid primary key default gen_random_uuid(),
-  nucleus_id        uuid not null references nuclei(id) on delete cascade,
-  source            text not null check (source in ('activity', 'nucleus')),
+  nucleus_id        uuid references nuclei(id) on delete cascade,
+  source            text not null check (source in ('activity', 'nucleus', 'cluster')),
   activity_id       uuid references activities(id) on delete set null,
+  cluster_id        uuid references clusters(id) on delete cascade,
+  cluster_theme_id  uuid,
   author_id         uuid references profiles(id) on delete set null,
   occurred_at       timestamptz not null default now(),
   created_at        timestamptz not null default now(),
@@ -344,8 +346,10 @@ create table journal_entries (
   people_emerging   text,
   follow_up         text,
   body              text,
-  constraint activity_entry_has_activity check (
-    source = 'nucleus' or activity_id is not null
+  constraint source_scope_invariant check (
+    (source = 'activity' and activity_id is not null and nucleus_id is not null and cluster_id is null)
+    or (source = 'nucleus' and nucleus_id is not null and activity_id is null and cluster_id is null)
+    or (source = 'cluster' and cluster_id is not null and nucleus_id is null and activity_id is null)
   )
 );
 
@@ -471,7 +475,7 @@ create policy "Edit own entries or as curator" on journal_entries
     is_admin()
     or author_id = auth.uid()
     or (source = 'activity' and activity_id is not null and user_has_activity_access(activity_id))
-    or (source = 'nucleus' and exists (
+    or (source = 'nucleus' and nucleus_id is not null and exists (
       select 1 from user_permissions up
       where up.user_id = auth.uid()
         and up.role in ('cluster_coordinator', 'nucleus_collaborator')
@@ -479,6 +483,12 @@ create policy "Edit own entries or as curator" on journal_entries
           up.nucleus_id = journal_entries.nucleus_id
           or up.cluster_id = (select cluster_id from nuclei where id = journal_entries.nucleus_id)
         )
+    ))
+    or (source = 'cluster' and cluster_id is not null and exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role = 'cluster_coordinator'
+        and up.cluster_id = journal_entries.cluster_id
     ))
   );
 
@@ -499,6 +509,105 @@ create policy "Untag own entries" on journal_entry_themes
               )
           ))
         )
+    )
+  );
+
+
+-- ============================================================
+-- Cluster Learning Hub
+--   See migrations/20260520_cluster_learning_hub.sql.
+-- ============================================================
+
+create table cluster_themes (
+  id                  uuid primary key default gen_random_uuid(),
+  cluster_id          uuid not null references clusters(id) on delete cascade,
+  name                text not null,
+  description         text,
+  color               text not null default 'amber',
+  consolidation_level int not null default 25
+                      check (consolidation_level between 0 and 100),
+  created_at          timestamptz not null default now(),
+  created_by          uuid references profiles(id) on delete set null,
+  archived_at         timestamptz,
+  unique (cluster_id, name)
+);
+
+alter table learning_themes
+  add column cluster_theme_id uuid references cluster_themes(id) on delete set null;
+
+alter table journal_entries
+  add constraint journal_entries_cluster_theme_fk
+  foreign key (cluster_theme_id) references cluster_themes(id) on delete set null;
+
+create index on cluster_themes (cluster_id, archived_at);
+create index on learning_themes (cluster_theme_id) where cluster_theme_id is not null;
+create index on journal_entries (cluster_id, occurred_at desc) where cluster_id is not null;
+create index on journal_entries (cluster_theme_id) where cluster_theme_id is not null;
+
+create or replace function ensure_cluster_theme_link()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c_id  uuid;
+  ct_id uuid;
+begin
+  if new.cluster_theme_id is not null then return new; end if;
+  select cluster_id into c_id from nuclei where id = new.nucleus_id;
+  if c_id is null then return new; end if;
+  select id into ct_id
+    from cluster_themes
+    where cluster_id = c_id and lower(name) = lower(new.name)
+    limit 1;
+  if ct_id is null then
+    insert into cluster_themes (cluster_id, name, color, description, created_by)
+      values (c_id, new.name, coalesce(new.color, 'amber'), new.description, new.proposed_by)
+      returning id into ct_id;
+  end if;
+  new.cluster_theme_id := ct_id;
+  return new;
+end;
+$$;
+
+create trigger ensure_cluster_theme_link_trigger
+  before insert on learning_themes
+  for each row execute function ensure_cluster_theme_link();
+
+alter table cluster_themes enable row level security;
+
+create policy "Read cluster themes" on cluster_themes
+  for select using (is_admin() or user_has_cluster_access(cluster_id));
+
+create policy "Cluster coordinators manage cluster themes" on cluster_themes
+  for all using (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role = 'cluster_coordinator'
+        and up.cluster_id = cluster_themes.cluster_id
+    )
+  );
+
+create policy "Read cluster entries in accessible clusters" on journal_entries
+  for select using (
+    source = 'cluster'
+    and cluster_id is not null
+    and (is_admin() or user_has_cluster_access(cluster_id))
+  );
+
+create policy "Write cluster synthesis entries" on journal_entries
+  for insert with check (
+    source = 'cluster'
+    and cluster_id is not null
+    and (
+      is_admin() or exists (
+        select 1 from user_permissions up
+        where up.user_id = auth.uid()
+          and up.role = 'cluster_coordinator'
+          and up.cluster_id = journal_entries.cluster_id
+      )
     )
   );
 
