@@ -50,9 +50,11 @@ function mapEntry(row: any): JournalEntry {
     activityId: row.activity_id ?? undefined,
     activityName: row.activities?.name ?? undefined,
     authorId: row.author_id ?? undefined,
-    authorName: row.profiles?.name ?? undefined,
+    authorName: row.author?.name ?? undefined,
     occurredAt: new Date(row.occurred_at),
     createdAt: new Date(row.created_at),
+    editedAt: row.edited_at ? new Date(row.edited_at) : undefined,
+    editedByName: row.editor?.name ?? undefined,
     whatHappened: row.what_happened ?? undefined,
     encouragingSigns: row.encouraging_signs ?? undefined,
     challenges: row.challenges ?? undefined,
@@ -63,11 +65,15 @@ function mapEntry(row: any): JournalEntry {
   };
 }
 
+// Two aliased joins on profiles so we can render both "written by"
+// and "last edited by" without a second round-trip.
 const ENTRY_SELECT = `
   id, nucleus_id, source, activity_id, author_id, occurred_at, created_at,
+  edited_at, edited_by,
   what_happened, encouraging_signs, challenges, people_emerging, follow_up, body,
   activities ( name ),
-  profiles ( name ),
+  author:profiles!journal_entries_author_id_fkey ( name ),
+  editor:profiles!journal_entries_edited_by_fkey ( name ),
   journal_entry_themes (
     learning_themes ( id, nucleus_id, name, description, color, status, proposed_by, proposed_at, promoted_at, merged_into_id )
   )
@@ -302,6 +308,73 @@ export async function createActivityEntry(
   }
 
   return mapEntry(data);
+}
+
+// Edit an existing activity entry. All prompt fields are optional;
+// only the keys supplied are written. Stamps edited_at/edited_by.
+export async function updateActivityEntry(
+  entryId: string,
+  patch: Partial<NewActivityEntry>,
+): Promise<JournalEntry> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const update: Record<string, any> = {
+    edited_at: new Date().toISOString(),
+    edited_by: user?.id ?? null,
+  };
+  if (patch.whatHappened !== undefined)     update.what_happened     = patch.whatHappened?.trim() || null;
+  if (patch.encouragingSigns !== undefined) update.encouraging_signs = patch.encouragingSigns?.trim() || null;
+  if (patch.challenges !== undefined)       update.challenges        = patch.challenges?.trim() || null;
+  if (patch.peopleEmerging !== undefined)   update.people_emerging   = patch.peopleEmerging?.trim() || null;
+  if (patch.followUp !== undefined)         update.follow_up         = patch.followUp?.trim() || null;
+
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .update(update)
+    .eq('id', entryId)
+    .select(ENTRY_SELECT)
+    .single();
+  if (error) throw error;
+  return mapEntry(data);
+}
+
+export async function updateNucleusEntry(
+  entryId: string,
+  body: string,
+): Promise<JournalEntry> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .update({
+      body: body.trim(),
+      edited_at: new Date().toISOString(),
+      edited_by: user?.id ?? null,
+    })
+    .eq('id', entryId)
+    .select(ENTRY_SELECT)
+    .single();
+  if (error) throw error;
+  return mapEntry(data);
+}
+
+// Idempotent: silently skips any theme already tagged.
+export async function addThemesToEntry(entryId: string, themeIds: string[]): Promise<void> {
+  if (themeIds.length === 0) return;
+  const { error } = await supabase
+    .from('journal_entry_themes')
+    .upsert(
+      themeIds.map(theme_id => ({ entry_id: entryId, theme_id })),
+      { onConflict: 'entry_id,theme_id', ignoreDuplicates: true },
+    );
+  if (error) throw error;
+}
+
+export async function removeThemeFromEntry(entryId: string, themeId: string): Promise<void> {
+  const { error } = await supabase
+    .from('journal_entry_themes')
+    .delete()
+    .eq('entry_id', entryId)
+    .eq('theme_id', themeId);
+  if (error) throw error;
 }
 
 export async function createNucleusEntry(

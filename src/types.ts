@@ -176,6 +176,8 @@ export interface JournalEntry {
   authorName?: string;
   occurredAt: Date;
   createdAt: Date;
+  editedAt?: Date;
+  editedByName?: string;
   // Activity-style prompts (all optional)
   whatHappened?: string;
   encouragingSigns?: string;

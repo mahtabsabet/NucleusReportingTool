@@ -336,6 +336,8 @@ create table journal_entries (
   author_id         uuid references profiles(id) on delete set null,
   occurred_at       timestamptz not null default now(),
   created_at        timestamptz not null default now(),
+  edited_at         timestamptz,
+  edited_by         uuid references profiles(id) on delete set null,
   what_happened     text,
   encouraging_signs text,
   challenges        text,
@@ -460,6 +462,42 @@ create policy "Nucleus collaborators re-tag during merge" on journal_entry_theme
           where up.user_id = auth.uid()
             and up.role in ('cluster_coordinator', 'nucleus_collaborator')
             and (up.nucleus_id = e.nucleus_id or up.cluster_id = n.cluster_id)
+        )
+    )
+  );
+
+create policy "Edit own entries or as curator" on journal_entries
+  for update using (
+    is_admin()
+    or author_id = auth.uid()
+    or (source = 'activity' and activity_id is not null and user_has_activity_access(activity_id))
+    or (source = 'nucleus' and exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+        and (
+          up.nucleus_id = journal_entries.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = journal_entries.nucleus_id)
+        )
+    ))
+  );
+
+create policy "Untag own entries" on journal_entry_themes
+  for delete using (
+    is_admin() or exists (
+      select 1 from journal_entries e
+      where e.id = journal_entry_themes.entry_id
+        and (
+          (e.source = 'activity' and e.activity_id is not null and user_has_activity_access(e.activity_id))
+          or (e.source = 'nucleus' and exists (
+            select 1 from user_permissions up
+            where up.user_id = auth.uid()
+              and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+              and (
+                up.nucleus_id = e.nucleus_id
+                or up.cluster_id = (select cluster_id from nuclei where id = e.nucleus_id)
+              )
+          ))
         )
     )
   );
