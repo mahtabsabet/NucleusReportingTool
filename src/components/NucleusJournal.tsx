@@ -1,0 +1,495 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ClockIcon,
+  PlusIcon,
+  ChevronLeftIcon,
+  UsersIcon,
+  SproutIcon,
+  HomeIcon,
+  FlameIcon,
+  BusIcon,
+  BookOpenIcon,
+} from 'lucide-react';
+import {
+  listNucleusJournalEntries,
+  listEntriesByTheme,
+  listThemesForNucleus,
+  createNucleusEntry,
+  createEstablishedTheme,
+  promoteTheme,
+  archiveTheme,
+  THEME_COLORS,
+} from '../lib/db/journal';
+import type { JournalEntry, LearningTheme } from '../types';
+import { ThemeTag, themePalette } from './ThemeTag';
+
+interface NucleusJournalProps {
+  nucleusId: string;
+  // When true the viewer can read but not write. Curation tools
+  // (promote/archive new themes, write entries) require canCurate.
+  readOnly: boolean;
+  // CC/NC scope. AL / regional viewer get readOnly behaviour.
+  canCurate: boolean;
+}
+
+function formatDateLong(d: Date): string {
+  return d.toLocaleDateString(undefined, {
+    year: 'numeric', month: 'long', day: 'numeric',
+  });
+}
+function formatDayOfWeekEvening(d: Date): string {
+  const day = d.toLocaleDateString(undefined, { weekday: 'long' });
+  const hour = d.getHours();
+  const part = hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+  return `${day} ${part}`;
+}
+
+// Icons used on theme cards. Themes don't carry their own icon
+// column; we pick a stable one per color so the right page looks
+// like the mockup without us having to add yet another field.
+const THEME_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  amber: UsersIcon,
+  green: SproutIcon,
+  red: BusIcon,
+  blue: HomeIcon,
+  purple: FlameIcon,
+  pink: BookOpenIcon,
+};
+const ThemeIcon = (color: string) => THEME_ICON[color] ?? UsersIcon;
+
+export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJournalProps) {
+  const [themes, setThemes] = useState<LearningTheme[]>([]);
+  const [entries, setEntries] = useState<JournalEntry[]>([]);
+  const [selectedThemeId, setSelectedThemeId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [themeComposerOpen, setThemeComposerOpen] = useState(false);
+
+  const selectedTheme = useMemo(
+    () => themes.find(t => t.id === selectedThemeId) ?? null,
+    [themes, selectedThemeId],
+  );
+
+  const loadThemes = async () => {
+    const t = await listThemesForNucleus(nucleusId);
+    setThemes(t);
+  };
+
+  const loadEntries = async () => {
+    if (selectedThemeId) {
+      setEntries(await listEntriesByTheme(nucleusId, selectedThemeId));
+    } else {
+      setEntries(await listNucleusJournalEntries(nucleusId));
+    }
+  };
+
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([loadThemes(), loadEntries()]).finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nucleusId, selectedThemeId]);
+
+  return (
+    <div className="rounded-2xl overflow-hidden border border-amber-900/20 shadow-md bg-journal-paper">
+      <div className="grid grid-cols-1 lg:grid-cols-2">
+        {/* ─── LEFT PAGE: chronological entries ───────────────────── */}
+        <div className="journal-page journal-page-left p-6 sm:p-10 min-h-[640px]">
+          <div className="mb-6">
+            {selectedTheme ? (
+              <>
+                <button
+                  onClick={() => setSelectedThemeId(null)}
+                  className="inline-flex items-center gap-1 text-xs uppercase tracking-widest text-stone-500 hover:text-stone-800 mb-2"
+                >
+                  <ChevronLeftIcon className="w-3.5 h-3.5" /> Back to journal
+                </button>
+                <p className="text-xs uppercase tracking-widest text-stone-500 font-journal">
+                  Theme · {selectedTheme.status}
+                </p>
+                <h2 className="font-journal text-4xl text-stone-800 leading-tight">
+                  {selectedTheme.name}
+                </h2>
+                {selectedTheme.description && (
+                  <p className="font-journal italic text-stone-600 mt-2">
+                    {selectedTheme.description}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                <p className="text-xs uppercase tracking-widest text-stone-500 font-journal">
+                  Our Nucleus Journal
+                </p>
+                <div className="flex items-baseline justify-between gap-4">
+                  <h2 className="font-journal text-4xl text-stone-800 leading-tight">
+                    Recording our journey together
+                  </h2>
+                  {!readOnly && canCurate && !composerOpen && (
+                    <button
+                      onClick={() => setComposerOpen(true)}
+                      className="inline-flex items-center gap-1.5 text-sm font-medium text-stone-700 bg-white/70 hover:bg-white border border-amber-900/20 rounded-lg px-3 py-1.5 transition flex-shrink-0"
+                    >
+                      <PlusIcon className="w-4 h-4" /> New Entry
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="h-px bg-amber-900/15 mb-6" />
+
+          {composerOpen && !selectedTheme && (
+            <NucleusEntryComposer
+              themes={themes.filter(t => t.status !== 'archived')}
+              onCancel={() => setComposerOpen(false)}
+              onSubmit={async ({ body, themeIds }) => {
+                await createNucleusEntry(nucleusId, { body, themeIds });
+                setComposerOpen(false);
+                await loadEntries();
+                await loadThemes();
+              }}
+            />
+          )}
+
+          {loading && (
+            <p className="font-journal italic text-stone-500">Turning the page…</p>
+          )}
+          {!loading && entries.length === 0 && (
+            <p className="font-journal italic text-stone-500">
+              {selectedTheme
+                ? 'No entries connected to this theme yet.'
+                : 'No journal entries yet. The story begins with the first reflection.'}
+            </p>
+          )}
+
+          <div className="space-y-7">
+            {entries.map(entry => (
+              <JournalEntryView key={entry.id} entry={entry} />
+            ))}
+          </div>
+        </div>
+
+        {/* ─── RIGHT PAGE: persistent themes ──────────────────────── */}
+        <div className="journal-page journal-page-right p-6 sm:p-10 min-h-[640px]">
+          <div className="mb-6">
+            <p className="text-xs uppercase tracking-widest text-stone-500 font-journal">
+              Objects of Learning
+            </p>
+            <div className="flex items-baseline justify-between gap-4">
+              <h2 className="font-journal text-4xl text-stone-800 leading-tight">
+                Themes we are learning about
+              </h2>
+              {!readOnly && canCurate && !themeComposerOpen && (
+                <button
+                  onClick={() => setThemeComposerOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-stone-700 bg-white/70 hover:bg-white border border-amber-900/20 rounded-lg px-3 py-1.5 transition flex-shrink-0"
+                >
+                  <PlusIcon className="w-4 h-4" /> New Learning
+                </button>
+              )}
+            </div>
+            <p className="font-journal italic text-stone-600 mt-2">
+              Click a theme to see all related journal entries.
+            </p>
+          </div>
+
+          <div className="h-px bg-amber-900/15 mb-6" />
+
+          {themeComposerOpen && (
+            <ThemeComposer
+              onCancel={() => setThemeComposerOpen(false)}
+              onSubmit={async ({ name, color, description }) => {
+                await createEstablishedTheme(nucleusId, { name, color, description });
+                setThemeComposerOpen(false);
+                await loadThemes();
+              }}
+            />
+          )}
+
+          <div className="space-y-4">
+            {themes.length === 0 && !themeComposerOpen && (
+              <p className="font-journal italic text-stone-500">
+                No themes yet. They emerge as the nucleus reflects together.
+              </p>
+            )}
+            {themes.map(theme => (
+              <ThemeCard
+                key={theme.id}
+                theme={theme}
+                active={theme.id === selectedThemeId}
+                canCurate={canCurate}
+                onSelect={() => setSelectedThemeId(theme.id)}
+                onPromote={async () => { await promoteTheme(theme.id); await loadThemes(); }}
+                onArchive={async () => { await archiveTheme(theme.id); await loadThemes(); }}
+              />
+            ))}
+          </div>
+
+          {themes.length > 0 && (
+            <p className="mt-10 text-center font-journal italic text-stone-500">
+              Our learning grows as we walk this path together.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Entry view (mixes activity + nucleus entries) ──────────
+
+function JournalEntryView({ entry }: { entry: JournalEntry }) {
+  // Activity-style entries get the structured prompts; nucleus
+  // entries show the body as flowing prose. Older back-filled
+  // rows may carry only `body` for an activity row — render that
+  // as prose too.
+  const promptKeys = [
+    ['whatHappened', entry.whatHappened],
+    ['encouragingSigns', entry.encouragingSigns],
+    ['challenges', entry.challenges],
+    ['peopleEmerging', entry.peopleEmerging],
+    ['followUp', entry.followUp],
+  ] as const;
+  const hasPrompts = promptKeys.some(([, v]) => v);
+
+  return (
+    <article>
+      <div className="flex items-baseline gap-3 mb-1">
+        <ClockIcon className="w-4 h-4 text-stone-400" />
+        <span className="font-journal text-stone-700 text-sm">
+          {formatDateLong(entry.occurredAt)}
+        </span>
+        <span className="font-journal italic text-stone-500 text-sm">
+          {formatDayOfWeekEvening(entry.occurredAt)}
+        </span>
+        {entry.activityName && (
+          <span className="font-journal italic text-stone-500 text-xs">
+            · from {entry.activityName}
+          </span>
+        )}
+      </div>
+
+      <div className="font-journal text-stone-800 text-lg leading-relaxed pl-7">
+        {hasPrompts ? (
+          <div className="space-y-2">
+            {promptKeys.map(([k, v]) => v && (
+              <p key={k} className="whitespace-pre-wrap"><em className="text-stone-500 not-italic text-xs uppercase tracking-wider mr-2">{labelForPrompt(k)}:</em>{v}</p>
+            ))}
+          </div>
+        ) : (
+          <p className="whitespace-pre-wrap">{entry.body}</p>
+        )}
+      </div>
+
+      {entry.themes.length > 0 && (
+        <div className="pl-7 mt-3 flex flex-wrap gap-2">
+          {entry.themes.map(t => (
+            <ThemeTag key={t.id} theme={t} size="sm" showIcon />
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function labelForPrompt(key: string): string {
+  switch (key) {
+    case 'whatHappened': return 'What happened';
+    case 'encouragingSigns': return 'Encouraging signs';
+    case 'challenges': return 'Challenges';
+    case 'peopleEmerging': return 'People emerging';
+    case 'followUp': return 'Follow-up';
+    default: return key;
+  }
+}
+
+
+// ─── Theme card (right page) ────────────────────────────────
+
+interface ThemeCardProps {
+  theme: LearningTheme;
+  active: boolean;
+  canCurate: boolean;
+  onSelect: () => void;
+  onPromote: () => void | Promise<void>;
+  onArchive: () => void | Promise<void>;
+}
+
+function ThemeCard({ theme, active, canCurate, onSelect, onPromote, onArchive }: ThemeCardProps) {
+  const p = themePalette(theme.color);
+  const Icon = ThemeIcon(theme.color);
+  const emerging = theme.status === 'emerging';
+  return (
+    <div
+      className={`group flex items-start gap-4 rounded-2xl border ${p.border} ${active ? p.bgSoft : 'bg-white/40'} ${emerging ? 'border-dashed' : ''} px-4 py-4 cursor-pointer hover:bg-white/70 transition`}
+      onClick={onSelect}
+    >
+      <div className={`flex-shrink-0 w-10 h-10 rounded-full ${p.bgSoft} ${p.text} flex items-center justify-center`}>
+        <Icon className="w-5 h-5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-baseline justify-between gap-3">
+          <h3 className="font-journal text-stone-800 text-xl leading-tight truncate">
+            {theme.name}
+          </h3>
+          <span className="text-xs text-stone-500 font-journal italic flex-shrink-0">
+            {(theme.entryCount ?? 0)} {(theme.entryCount === 1) ? 'moment' : 'moments'}
+          </span>
+        </div>
+        {theme.description && (
+          <p className="font-journal text-stone-600 text-sm mt-1 leading-relaxed">
+            {theme.description}
+          </p>
+        )}
+        {emerging && (
+          <div className="mt-2 flex items-center gap-3">
+            <span className="text-[10px] uppercase tracking-wider text-stone-500">Proposed theme</span>
+            {canCurate && (
+              <>
+                <button
+                  onClick={e => { e.stopPropagation(); onPromote(); }}
+                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+                >Promote</button>
+                <button
+                  onClick={e => { e.stopPropagation(); onArchive(); }}
+                  className="text-xs text-stone-500 hover:text-rose-700"
+                >Archive</button>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Nucleus entry composer (left page) ─────────────────────
+
+function NucleusEntryComposer({
+  themes, onCancel, onSubmit,
+}: {
+  themes: LearningTheme[];
+  onCancel: () => void;
+  onSubmit: (args: { body: string; themeIds: string[] }) => Promise<void>;
+}) {
+  const [body, setBody] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+
+  const toggle = (id: string) => setSelected(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const handleSave = async () => {
+    if (!body.trim() || saving) return;
+    setSaving(true);
+    try {
+      await onSubmit({ body, themeIds: Array.from(selected) });
+      setBody('');
+      setSelected(new Set());
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="bg-white/70 border border-amber-900/15 rounded-xl p-4 mb-6">
+      <textarea
+        value={body}
+        onChange={e => setBody(e.target.value)}
+        rows={5}
+        placeholder="What is our learning together today?"
+        className="w-full bg-transparent font-journal text-lg text-stone-800 leading-relaxed focus:outline-none placeholder:italic placeholder:text-stone-400 resize-y"
+      />
+      {themes.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {themes.map(t => (
+            <ThemeTag key={t.id} theme={t} selected={selected.has(t.id)} onClick={() => toggle(t.id)} size="sm" />
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-3 mt-4">
+        <button
+          onClick={handleSave}
+          disabled={!body.trim() || saving}
+          className="px-4 py-2 bg-stone-800 text-amber-50 text-sm font-semibold rounded-lg hover:bg-stone-900 disabled:opacity-50 transition"
+        >
+          {saving ? 'Saving…' : 'Record entry'}
+        </button>
+        <button onClick={onCancel} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Theme composer (right page) ────────────────────────────
+
+function ThemeComposer({
+  onCancel, onSubmit,
+}: {
+  onCancel: () => void;
+  onSubmit: (args: { name: string; color: string; description?: string }) => Promise<void>;
+}) {
+  const [name, setName] = useState('');
+  const [color, setColor] = useState<string>('amber');
+  const [description, setDescription] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (!name.trim() || saving) return;
+    setSaving(true);
+    try { await onSubmit({ name, color, description: description || undefined }); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="bg-white/70 border border-amber-900/15 rounded-xl p-4 mb-6 space-y-3">
+      <input
+        value={name}
+        onChange={e => setName(e.target.value)}
+        placeholder="Theme name"
+        className="w-full bg-transparent font-journal text-2xl text-stone-800 focus:outline-none border-b border-stone-300 pb-1 placeholder:text-stone-400"
+      />
+      <textarea
+        value={description}
+        onChange={e => setDescription(e.target.value)}
+        rows={2}
+        placeholder="Why is this a learning theme for us?"
+        className="w-full bg-transparent font-journal italic text-stone-700 focus:outline-none placeholder:text-stone-400 resize-none"
+      />
+      <div className="flex items-center gap-3">
+        <span className="text-xs uppercase tracking-wider text-stone-500">Highlighter</span>
+        {THEME_COLORS.map(c => {
+          const p = themePalette(c);
+          return (
+            <button
+              key={c}
+              type="button"
+              onClick={() => setColor(c)}
+              aria-label={c}
+              className={`w-6 h-6 rounded-full ${p.dot} ring-2 ${color === c ? 'ring-stone-800' : 'ring-transparent'} transition`}
+            />
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          onClick={handleSave}
+          disabled={!name.trim() || saving}
+          className="px-4 py-2 bg-stone-800 text-amber-50 text-sm font-semibold rounded-lg hover:bg-stone-900 disabled:opacity-50 transition"
+        >
+          {saving ? 'Saving…' : 'Add theme'}
+        </button>
+        <button onClick={onCancel} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}

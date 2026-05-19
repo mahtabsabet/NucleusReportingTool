@@ -1,5 +1,5 @@
 /* @import url() FONT IMPORTS MUST ALWAYS BE AT THE VERY TOP OF THIS FILE, ABOVE THE TAILWIND IMPORTS — DO NOT DELETE THIS COMMENT */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cormorant+Garamond:wght@300;400;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cormorant+Garamond:wght@300;400;600&family=Caveat:wght@500;700&family=Kalam:wght@400;700&display=swap');
 
 /* CRITICAL: THE FOLLOWING TAILWIND IMPORTS MUST NEVER BE DELETED OR REORDERED — DO NOT DELETE THIS COMMENT */
 @import 'tailwindcss/base';
@@ -53,6 +53,71 @@ body {
 .network-view-root .react-flow__edges {
   z-index: 5;
 }
+
+/* ─── Reflective Learning System ───────────────────────────────
+   Activity Notebook: cream paper + spiral binding + handwritten
+   feel. Nucleus Journal: warm parchment, elegant serif spread. */
+
+.font-handwritten { font-family: 'Caveat', 'Kalam', cursive; }
+.font-journal { font-family: 'Cormorant Garamond', 'Lora', serif; }
+
+/* Cream / parchment paper backgrounds. The radial highlights keep
+   the page from feeling flat; the noise SVG adds barely-visible
+   fibre texture. */
+.bg-notebook-paper {
+  background-color: #f7f1e1;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(255, 248, 220, 0.55) 0px, transparent 60%),
+    radial-gradient(at 100% 100%, rgba(244, 233, 200, 0.5) 0px, transparent 60%);
+}
+.bg-journal-paper {
+  background-color: #f8efd9;
+  background-image:
+    radial-gradient(at 50% 0%, rgba(255, 250, 230, 0.6) 0px, transparent 70%),
+    radial-gradient(at 0% 100%, rgba(232, 213, 173, 0.35) 0px, transparent 60%);
+}
+
+/* Spiral notebook binding — a row of metallic rings drawn with
+   small radial gradients. Sits above the notebook header. */
+.notebook-spiral {
+  height: 22px;
+  background:
+    repeating-linear-gradient(
+      to right,
+      transparent 0,
+      transparent 14px,
+      rgba(60, 40, 20, 0.0) 14px,
+      rgba(60, 40, 20, 0.0) 18px
+    ),
+    radial-gradient(circle at 12px 11px, #8a6a3a 0 5px, #c9a36b 5px 7px, transparent 8px);
+  background-size: 32px 100%, 32px 22px;
+  background-repeat: repeat-x;
+  position: relative;
+}
+.notebook-spiral::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-radial-gradient(
+      circle at 12px 11px,
+      transparent 0 4px,
+      rgba(0,0,0,0.12) 4px 5px,
+      transparent 5px 8px
+    );
+  background-size: 32px 22px;
+  background-repeat: repeat-x;
+  pointer-events: none;
+}
+
+/* Subtle inner shadow that suggests a bound page edge. */
+.journal-page {
+  box-shadow:
+    inset 0 0 60px rgba(146, 100, 40, 0.06),
+    inset 0 0 0 1px rgba(146, 100, 40, 0.07);
+}
+.journal-page-left  { border-right: 1px solid rgba(146, 100, 40, 0.18); }
+.journal-page-right { border-left:  1px solid rgba(146, 100, 40, 0.18); }
 
 /* Subtle background pattern for Nucleus Dashboard */
 .bg-nucleus-pattern {

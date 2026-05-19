@@ -141,6 +141,52 @@ export interface TimelineEvent {
   createdAt?: Date;
 }
 
+// ─── Reflective Learning System ──────────────────────────────
+//
+// Two append-only layers — Activity Notebook and Nucleus Journal
+// — bound together by a shared set of learning themes ("Objects
+// of Learning") owned by each nucleus.
+
+export type LearningThemeStatus = 'emerging' | 'established' | 'archived';
+
+export interface LearningTheme {
+  id: string;
+  nucleusId: string;
+  name: string;
+  description?: string;
+  color: string;
+  status: LearningThemeStatus;
+  proposedBy?: string;
+  proposedAt: Date;
+  promotedAt?: Date;
+  mergedIntoId?: string;
+  // Populated by aggregating queries; absent on plain reads.
+  entryCount?: number;
+}
+
+export type JournalEntrySource = 'activity' | 'nucleus';
+
+export interface JournalEntry {
+  id: string;
+  nucleusId: string;
+  source: JournalEntrySource;
+  activityId?: string;
+  activityName?: string;
+  authorId?: string;
+  authorName?: string;
+  occurredAt: Date;
+  createdAt: Date;
+  // Activity-style prompts (all optional)
+  whatHappened?: string;
+  encouragingSigns?: string;
+  challenges?: string;
+  peopleEmerging?: string;
+  followUp?: string;
+  // Nucleus-style free narrative
+  body?: string;
+  themes: LearningTheme[];
+}
+
 // One attachment on a timeline item. Kind discriminates the body
 // shape — text vs. uploaded document vs. external link — without
 // forcing each attachment into a single blob column.
