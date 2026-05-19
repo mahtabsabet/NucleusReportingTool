@@ -73,6 +73,10 @@ end if;
 
 -- ─── Cluster themes ───────────────────────────────────────
 
+-- Upsert four cluster themes. RETURNING is omitted because a
+-- multi-row INSERT/UPDATE can't be captured into a scalar
+-- variable in PL/pgSQL ("query returned more than one row").
+-- The four ids are re-fetched by name below.
 insert into cluster_themes (cluster_id, name, color, description, consolidation_level)
 values
   (c_id, 'Sustaining Youth Participation', 'amber',
@@ -86,11 +90,8 @@ values
 on conflict (cluster_id, name) do update
   set description = excluded.description,
       color = excluded.color,
-      consolidation_level = excluded.consolidation_level
-returning id into ct_youth;
+      consolidation_level = excluded.consolidation_level;
 
--- Re-fetch the four cluster theme ids by name (the RETURNING above
--- only captures the last row when the values list has multiple rows).
 select id into ct_youth        from cluster_themes where cluster_id = c_id and name = 'Sustaining Youth Participation';
 select id into ct_parents      from cluster_themes where cluster_id = c_id and name = 'Building Parent Engagement';
 select id into ct_new_families from cluster_themes where cluster_id = c_id and name = 'Welcoming New Families';
