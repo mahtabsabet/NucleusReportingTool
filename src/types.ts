@@ -141,6 +141,90 @@ export interface TimelineEvent {
   createdAt?: Date;
 }
 
+// ─── Reflective Learning System ──────────────────────────────
+//
+// Two append-only layers — Activity Notebook and Nucleus Journal
+// — bound together by a shared set of learning themes ("Objects
+// of Learning") owned by each nucleus.
+
+export type LearningThemeStatus = 'emerging' | 'established' | 'archived';
+
+export interface LearningTheme {
+  id: string;
+  nucleusId: string;
+  clusterThemeId?: string;
+  name: string;
+  description?: string;
+  color: string;
+  status: LearningThemeStatus;
+  proposedBy?: string;
+  proposedAt: Date;
+  promotedAt?: Date;
+  mergedIntoId?: string;
+  // True when this theme was pushed down from the cluster Learning
+  // Hub. Such themes can't be archived at the nucleus level.
+  pushedFromCluster?: boolean;
+  // Populated by aggregating queries; absent on plain reads.
+  entryCount?: number;
+}
+
+// Cluster-level canonical theme. Every learning_theme links to one
+// of these (auto-linked by trigger on name match within the
+// cluster). The Cluster Learning Hub is organised by these.
+export interface ClusterTheme {
+  id: string;
+  clusterId: string;
+  name: string;
+  description?: string;
+  color: string;
+  // 0–100 slider value indicating how consolidated this learning
+  // is in the cluster coordinator's judgement.
+  consolidationLevel: number;
+  createdAt: Date;
+  archivedAt?: Date;
+  mergedIntoId?: string;
+  // Aggregates populated by Hub-specific queries.
+  nucleusCount?: number;
+  entryCount?: number;
+  lastEntryAt?: Date;
+}
+
+// One nucleus's contribution to a cluster theme.
+export interface NucleusContribution {
+  nucleusId: string;
+  nucleusName: string;
+  entryCount: number;
+  lastEntryAt?: Date;
+}
+
+export type JournalEntrySource = 'activity' | 'nucleus' | 'cluster';
+
+export interface JournalEntry {
+  id: string;
+  nucleusId?: string;
+  source: JournalEntrySource;
+  activityId?: string;
+  activityName?: string;
+  clusterId?: string;
+  clusterThemeId?: string;
+  nucleusName?: string;
+  authorId?: string;
+  authorName?: string;
+  occurredAt: Date;
+  createdAt: Date;
+  editedAt?: Date;
+  editedByName?: string;
+  // Activity-style prompts (all optional)
+  whatHappened?: string;
+  encouragingSigns?: string;
+  challenges?: string;
+  peopleEmerging?: string;
+  followUp?: string;
+  // Nucleus-style free narrative
+  body?: string;
+  themes: LearningTheme[];
+}
+
 // One attachment on a timeline item. Kind discriminates the body
 // shape — text vs. uploaded document vs. external link — without
 // forcing each attachment into a single blob column.

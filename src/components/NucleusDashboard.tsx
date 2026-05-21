@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeftIcon,
   PlusIcon,
@@ -9,7 +9,6 @@ import {
   UserIcon,
   BookOpenIcon,
   AwardIcon,
-  CheckCircleIcon,
   CircleIcon,
   ImageIcon,
   TrendingUpIcon,
@@ -21,7 +20,6 @@ import {
   NetworkIcon,
   ListIcon,
   BarChart3Icon,
-  FileTextIcon,
   InfoIcon,
 } from 'lucide-react';
 import { ConcentricCircles } from './ConcentricCircles';
@@ -36,7 +34,6 @@ import {
   fetchActivitiesForNucleus,
   fetchPersonsForNucleus,
   createActivity,
-  updateNucleusNotes,
   renameNucleus,
   canRenameNucleus,
   canDeleteNucleus,
@@ -51,8 +48,12 @@ import {
   actionPermission,
   collaboratorNucleusIds,
   isClusterCoordinator,
+  isNucleusCollaborator,
   viewsOrdinaryLayerReadOnly,
 } from '../lib/permissions';
+import { NucleusJournal } from './NucleusJournal';
+import { listThemesForNucleus, listNucleusJournalEntries } from '../lib/db/journal';
+import type { LearningTheme, JournalEntry } from '../types';
 
 const activityTypeLabels: Record<string, string> = {
   'children-class': "Children's Class",
@@ -62,26 +63,31 @@ const activityTypeLabels: Record<string, string> = {
   other: 'Other',
 };
 
-type FocusedModule = 'circles' | 'network' | 'activities' | 'capacities' | 'notes';
+type FocusedModule = 'circles' | 'network' | 'activities' | 'capacities' | 'journal';
 
 const MODULES: { id: FocusedModule; label: string; Icon: React.FC<{ className?: string }> }[] = [
   { id: 'circles', label: 'Circles', Icon: TargetIcon },
   { id: 'network', label: 'Network', Icon: NetworkIcon },
   { id: 'activities', label: 'Activities', Icon: ListIcon },
   { id: 'capacities', label: 'Capacities', Icon: BarChart3Icon },
-  { id: 'notes', label: 'Notes', Icon: FileTextIcon },
+  { id: 'journal', label: 'Journal', Icon: BookOpenIcon },
 ];
 
 export function NucleusDashboard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // Allow deep-linking straight into a module, e.g. the Cluster
+  // Learning Hub links to ?module=journal to open a nucleus's
+  // journal directly.
+  const [searchParams] = useSearchParams();
+  const initialModule = (searchParams.get('module') as FocusedModule | null) ?? null;
 
   const [nucleus, setNucleus] = useState<NucleusDetail | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [people, setPeople] = useState<PersonProfile[]>([]);
   const [courses, setCourses] = useState<CourseRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [focusedModule, setFocusedModule] = useState<FocusedModule | null>(null);
+  const [focusedModule, setFocusedModule] = useState<FocusedModule | null>(initialModule);
 
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [newActivityType, setNewActivityType] = useState<string>('children-class');
@@ -103,8 +109,12 @@ export function NucleusDashboard() {
   const [newEndDate, setNewEndDate] = useState('');
   const [addActivityError, setAddActivityError] = useState<string | null>(null);
   const [bannerImage, setBannerImageState] = useState<string | null>(null);
-  const [notes, setNotes] = useState('');
-  const [notesSaved, setNotesSaved] = useState(false);
+  // Dashboard-card preview of the Nucleus Journal: latest entry +
+  // theme count. The full read/write surface lives inside the
+  // focused 'journal' module.
+  const [journalPreviewEntry, setJournalPreviewEntry] = useState<JournalEntry | null>(null);
+  const [journalThemes, setJournalThemes] = useState<LearningTheme[]>([]);
+  const [canCurateJournal, setCanCurateJournal] = useState(false);
 
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
@@ -183,6 +193,10 @@ export function NucleusDashboard() {
       );
       setCanCreateActivity(ctx ? actionPermission(ctx, 'create_activity', target) === 'direct' : false);
       setCanEditCircles(ctx ? actionPermission(ctx, 'edit_concentric_circles', target) === 'direct' : false);
+      setCanCurateJournal(
+        !!ctx && (ctx.isSuperAdmin || ctx.isAdmin
+          || isClusterCoordinator(ctx) || isNucleusCollaborator(ctx)),
+      );
       setNucleus(n);
       setActivities(acts);
       setPeople(persons);
@@ -190,22 +204,25 @@ export function NucleusDashboard() {
       setCanRename(renameAllowed as boolean);
       setCanDelete(deleteAllowed as boolean);
       if (n) {
-        setNotes(n.notes);
         setBannerImageState(n.bannerImageUrl);
       }
       setLoading(false);
     });
   }, [id]);
 
-  const handleSaveNotes = async () => {
-    try {
-      await updateNucleusNotes(id!, notes);
-      setNotesSaved(true);
-      setTimeout(() => setNotesSaved(false), 2000);
-    } catch (err) {
-      console.error('Failed to save notes:', err);
-    }
-  };
+  // Light refresh of the journal preview each time the dashboard
+  // returns to the card grid, so the card stays in sync after a
+  // user adds an entry inside the focused module.
+  useEffect(() => {
+    if (!id) return;
+    Promise.all([
+      listNucleusJournalEntries(id).catch(() => []),
+      listThemesForNucleus(id).catch(() => []),
+    ]).then(([entries, themes]) => {
+      setJournalPreviewEntry(entries[0] ?? null);
+      setJournalThemes(themes);
+    });
+  }, [id, focusedModule]);
 
   const startRenamingNucleus = () => {
     setNameInput(nucleus!.name);
@@ -795,42 +812,14 @@ export function NucleusDashboard() {
                 </div>
               )}
 
-              {/* ── NOTES focused ── */}
-              {focusedModule === 'notes' && (
+              {/* ── JOURNAL focused ── */}
+              {focusedModule === 'journal' && (
                 <div className={panelBase}>
-                  <div className="mb-4">
-                    <h2 className="text-xl font-bold text-gray-900 mb-1.5 tracking-tight">Nucleus Notes</h2>
-                    <p className="text-sm text-gray-500">
-                      General notes, reflections, and observations about this nucleus.
-                    </p>
-                  </div>
-                  <textarea
-                    value={notes}
-                    onChange={e => setNotes(e.target.value)}
-                    placeholder={regionalOnly && !notes ? 'No notes for this nucleus.' : 'Write any notes about this nucleus here...'}
+                  <NucleusJournal
+                    nucleusId={id!}
                     readOnly={regionalOnly}
-                    className={`w-full min-h-[240px] px-4 py-3 border border-gray-200 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
-                      regionalOnly
-                        ? 'bg-gray-50 cursor-default focus:outline-none'
-                        : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-                    }`}
+                    canCurate={canCurateJournal && !regionalOnly}
                   />
-                  {!regionalOnly && (
-                    <div className="flex items-center gap-3 mt-3">
-                      <button
-                        onClick={handleSaveNotes}
-                        className="px-5 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm hover:shadow-md"
-                      >
-                        Save Notes
-                      </button>
-                      {notesSaved && (
-                        <span className="flex items-center gap-1.5 text-sm text-green-700 font-bold bg-green-50 px-3 py-1.5 rounded-lg">
-                          <CheckCircleIcon className="w-4 h-4" />
-                          Saved!
-                        </span>
-                      )}
-                    </div>
-                  )}
                   {backToDashboard}
                 </div>
               )}
@@ -953,16 +942,31 @@ export function NucleusDashboard() {
                 </div>
               </div>
 
-              {/* Notes card */}
-              <div className={cardBase} onClick={() => setFocusedModule('notes')}>
-                {cardHeader('Nucleus Notes', 'General notes and reflections.')}
-                <div className="flex-1">
-                  {notes ? (
-                    <p className="text-sm text-gray-600 leading-relaxed line-clamp-5">{notes}</p>
+              {/* Journal card */}
+              <div className={cardBase} onClick={() => setFocusedModule('journal')}>
+                {cardHeader('Nucleus Journal', 'Reflections and learning over time.')}
+                <div className="flex-1 flex flex-col gap-3">
+                  {journalPreviewEntry ? (
+                    <div className="bg-amber-50/60 border border-amber-200/50 rounded-xl px-3 py-2.5">
+                      <div className="text-[11px] uppercase tracking-wider text-amber-700 font-semibold mb-0.5">
+                        Latest entry
+                      </div>
+                      <p className="font-journal text-sm text-stone-700 italic line-clamp-3 leading-relaxed">
+                        {journalPreviewEntry.body
+                          ?? journalPreviewEntry.whatHappened
+                          ?? journalPreviewEntry.encouragingSigns
+                          ?? '…'}
+                      </p>
+                    </div>
                   ) : (
                     <p className="text-sm text-gray-400 italic">
-                      No notes yet. Click to add notes about this nucleus.
+                      No journal entries yet. Click to begin recording your learning together.
                     </p>
+                  )}
+                  {journalThemes.length > 0 && (
+                    <div className="text-xs text-gray-500">
+                      <span className="font-semibold text-gray-700">{journalThemes.length}</span> {journalThemes.length === 1 ? 'learning theme' : 'learning themes'}
+                    </div>
                   )}
                 </div>
               </div>

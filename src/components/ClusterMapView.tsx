@@ -28,13 +28,14 @@ import {
   UserPlusIcon,
   ArrowLeftIcon,
   LayersIcon,
+  CompassIcon,
   ChevronDownIcon } from
 'lucide-react';
 import { useIsMobile } from '../lib/useIsMobile';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
-import { canAccessLsaLayer, canCreateAnyNucleus, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
+import { canAccessLsaLayer, canCreateAnyNucleus, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
 import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
@@ -536,10 +537,38 @@ export function ClusterMapView() {
                 }
                 disabled={isPlacing}
                 className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 text-left hover:bg-emerald-50 text-gray-700 hover:text-emerald-900 ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                
+
                 <TrendingUpIcon className="w-5 h-5 text-emerald-500" />
                 <span className="font-semibold">Growth Report</span>
               </button>
+
+              {/* Learning Hub — a cluster-level reflective synthesis space.
+                  Only visible to roles that can see the cluster landing
+                  page: CC, LSA, regional viewer, admin/super-admin. AL and
+                  NC users (who are pinned elsewhere) never see this. The
+                  link only makes sense in the context of a selected
+                  cluster, so it stays hidden in the regional ("all
+                  clusters") view. */}
+              {!!callerCtx && (
+                callerCtx.isAdmin
+                || callerCtx.isSuperAdmin
+                || callerCtx.isRegionalViewer
+                || isClusterCoordinator(callerCtx)
+                || isLsaMember(callerCtx)
+              ) && (
+                <button
+                  onClick={() => selectedCluster && navigate(`/learning-hub?cluster=${selectedCluster}`)}
+                  disabled={isPlacing || !selectedCluster}
+                  title={selectedCluster ? undefined : 'Select a cluster to open its Learning Hub'}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 text-left ${
+                    !selectedCluster
+                      ? 'opacity-40 cursor-not-allowed text-gray-400'
+                      : `hover:bg-amber-50 text-gray-700 hover:text-amber-900 ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`
+                  }`}>
+                  <CompassIcon className={`w-5 h-5 ${selectedCluster ? 'text-amber-600' : 'text-gray-300'}`} />
+                  <span className="font-semibold">Learning Hub</span>
+                </button>
+              )}
 
               <button
                 onClick={() =>

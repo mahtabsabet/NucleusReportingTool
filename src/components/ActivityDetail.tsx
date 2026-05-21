@@ -6,7 +6,6 @@ import {
   CheckIcon,
   UserIcon,
   ClockIcon,
-  FileTextIcon,
   Trash2Icon,
   PlayCircleIcon,
   CheckCircleIcon,
@@ -37,6 +36,7 @@ import {
 } from '../types';
 import { PersonNameCombobox } from './PersonNameCombobox';
 import { GlobalSearch } from './GlobalSearch';
+import { ActivityNotebook } from './ActivityNotebook';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -134,7 +134,6 @@ export function ActivityDetail() {
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [schedule, setSchedule] = useState('');
-  const [notes, setNotes] = useState('');
   // Scheduling-mode editor state. All four fields are tracked
   // locally so the user can switch modes without losing a partial
   // entry; we only persist whatever fields are relevant to the
@@ -153,7 +152,6 @@ export function ActivityDetail() {
   // a long activity page the save button is easy to miss.
   const [initialForm, setInitialForm] = useState<{
     schedule: string;
-    notes: string;
     schedulingMode: ActivitySchedulingMode;
     daysOfWeek: number[];
     time: string;
@@ -200,7 +198,6 @@ export function ActivityDetail() {
         setNucleusName(nName);
         setPersonNames(pNames);
         const loadedSchedule = a.schedule ?? '';
-        const loadedNotes = a.notes ?? '';
         const loadedMode = a.schedulingMode ?? 'sporadic_ongoing';
         const loadedDays = [...(a.daysOfWeek ?? [])].sort();
         const loadedTime = a.time ?? '';
@@ -208,7 +205,6 @@ export function ActivityDetail() {
         const loadedStart = a.startDate ? formatDateForInput(a.startDate) : '';
         const loadedEnd = a.endDate ? formatDateForInput(a.endDate) : '';
         setSchedule(loadedSchedule);
-        setNotes(loadedNotes);
         setSchedulingMode(loadedMode);
         setDaysOfWeek(loadedDays);
         setTime(loadedTime);
@@ -217,7 +213,6 @@ export function ActivityDetail() {
         setEndDate(loadedEnd);
         setInitialForm({
           schedule: loadedSchedule,
-          notes: loadedNotes,
           schedulingMode: loadedMode,
           daysOfWeek: loadedDays,
           time: loadedTime,
@@ -260,7 +255,6 @@ export function ActivityDetail() {
   const isDirty = useMemo(() => {
     if (!initialForm) return false;
     if (initialForm.schedule !== schedule) return true;
-    if (initialForm.notes !== notes) return true;
     if (initialForm.schedulingMode !== schedulingMode) return true;
     if (initialForm.time !== time) return true;
     if (initialForm.intervalWeeks !== intervalWeeks) return true;
@@ -270,7 +264,7 @@ export function ActivityDetail() {
     const b = initialForm.daysOfWeek.join(',');
     if (a !== b) return true;
     return false;
-  }, [initialForm, schedule, notes, schedulingMode, daysOfWeek, time, intervalWeeks, startDate, endDate]);
+  }, [initialForm, schedule, schedulingMode, daysOfWeek, time, intervalWeeks, startDate, endDate]);
 
   if (loading) {
     return (
@@ -371,10 +365,12 @@ export function ActivityDetail() {
       }
     }
     try {
-      // When the schedule is locked, persist only notes — the user
-      // is editing the running record of a finished activity, not
-      // its calendar. updateActivityDetails skips undefined keys.
-      const params: Parameters<typeof updateActivityDetails>[1] = { notes };
+      // When the schedule is locked the user has no remaining
+      // editable fields on this surface (reflective entries live
+      // in the Activity Notebook, which writes its own rows), so
+      // bail out without hitting the DB. updateActivityDetails
+      // skips undefined keys.
+      const params: Parameters<typeof updateActivityDetails>[1] = {};
       if (!localScheduleLocked) {
         params.schedulingMode = schedulingMode;
         params.scheduleNotes = schedulingMode === 'sporadic_ongoing' ? schedule : '';
@@ -399,7 +395,6 @@ export function ActivityDetail() {
       // the "unsaved changes" banner stops nagging after a save.
       setInitialForm({
         schedule,
-        notes,
         schedulingMode,
         daysOfWeek: [...daysOfWeek].sort(),
         time,
@@ -466,7 +461,6 @@ export function ActivityDetail() {
   const handleDiscard = () => {
     if (!initialForm) return;
     setSchedule(initialForm.schedule);
-    setNotes(initialForm.notes);
     setSchedulingMode(initialForm.schedulingMode);
     setDaysOfWeek(initialForm.daysOfWeek);
     setTime(initialForm.time);
@@ -700,7 +694,7 @@ export function ActivityDetail() {
 
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* ─── Main column: participants + notes ─────────────────────────
+          {/* ─── Main column: participants + notebook ──────────────────────
               The "meat" of an activity is who's in it and what's being
               learned, so these get the full width on mobile and 2/3 on
               desktop. The schedule / lifecycle controls live in the
@@ -768,23 +762,11 @@ export function ActivityDetail() {
               )}
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
-              <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-3 flex items-center gap-2">
-                <FileTextIcon className="w-4 h-4 text-gray-400" />
-                Notes
-              </h3>
-              <textarea
-                value={notes}
-                onChange={e => setNotes(e.target.value)}
-                placeholder={regionalOnly && !notes ? 'No notes for this activity.' : 'Write any notes about this activity here...'}
-                readOnly={regionalOnly}
-                className={`w-full min-h-[200px] px-4 py-3 border border-gray-300 rounded-xl text-sm text-gray-800 resize-y shadow-sm ${
-                  regionalOnly
-                    ? 'bg-gray-50 cursor-default focus:outline-none'
-                    : 'focus:ring-2 focus:ring-blue-500 focus:border-transparent'
-                }`}
-              />
-            </div>
+            <ActivityNotebook
+              activityId={activity.id}
+              nucleusId={activity.nucleusId}
+              readOnly={regionalOnly}
+            />
 
             {!regionalOnly && (
               <div className="flex flex-wrap items-center gap-3">

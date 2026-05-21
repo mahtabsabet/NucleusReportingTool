@@ -609,21 +609,19 @@ test.describe('regional (view-only)', () => {
     await expect(page.getByPlaceholder('Add name...')).toHaveCount(0);
   });
 
-  test('Activity detail hides Cancel/Save Changes and renders Schedule + Notes read-only', async ({ page }) => {
+  test('Activity detail hides Cancel/Save Changes and Activity Notebook is read-only', async ({ page }) => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}/activity/${TEST_IDS.activityId}`);
     await expect(page.getByRole('heading', { name: "Test Children's Class" }))
       .toBeVisible({ timeout: 15000 });
     // Footer buttons must not appear for Regional users.
     await expect(page.getByRole('button', { name: /^cancel$/i })).not.toBeVisible();
     await expect(page.getByRole('button', { name: /save changes/i })).not.toBeVisible();
-    // Schedule + Notes fields must be present (so values are visible) but read-only.
-    // The seeded test activity has no schedulingMode set, so ActivityDetail
-    // defaults to 'sporadic_ongoing' which renders a single freeform text
-    // input with placeholder "When does this happen?".
+    // Schedule input still renders read-only.
     const scheduleInput = page.getByPlaceholder(/when does this happen/i);
     await expect(scheduleInput).toHaveAttribute('readonly', '');
-    const notesTextarea = page.locator('textarea').first();
-    await expect(notesTextarea).toHaveAttribute('readonly', '');
+    // Activity Notebook is visible, but composition affordances are hidden.
+    await expect(page.getByRole('heading', { name: /activity notebook/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /new entry/i })).not.toBeVisible();
   });
 
   test('Individual profile hides the "Edit Profile" button', async ({ page }) => {
@@ -643,17 +641,18 @@ test.describe('regional (view-only)', () => {
     await expect(page.getByRole('button', { name: /save notes/i })).not.toBeVisible();
   });
 
-  test('Nucleus dashboard notes card is read-only and Save Notes is hidden', async ({ page }) => {
+  test('Nucleus dashboard journal card is read-only and composition is hidden', async ({ page }) => {
     await page.goto(`/nucleus/${TEST_IDS.nucleusId}`);
     await expect(page.getByRole('heading', { name: 'Test Nucleus' }))
       .toBeVisible({ timeout: 15000 });
-    // Focus the Notes module via its dashboard card.
-    await page.getByRole('heading', { name: /^nucleus notes$/i }).first().click();
-    await expect(page.getByRole('heading', { name: /^nucleus notes$/i }))
+    // Focus the Journal module via its dashboard card.
+    await page.getByRole('heading', { name: /^nucleus journal$/i }).first().click();
+    await expect(page.getByRole('heading', { name: /our journey together/i }))
       .toBeVisible();
-    const notesTextarea = page.locator('textarea').first();
-    await expect(notesTextarea).toHaveAttribute('readonly', '');
-    await expect(page.getByRole('button', { name: /save notes/i })).not.toBeVisible();
+    // The composition affordances (New Entry / New Learning) must be
+    // hidden for read-only viewers.
+    await expect(page.getByRole('button', { name: /new entry/i })).not.toBeVisible();
+    await expect(page.getByRole('button', { name: /new learning/i })).not.toBeVisible();
   });
 
   test('Concentric circles hide the "Save Engagement Levels" button', async ({ page }) => {

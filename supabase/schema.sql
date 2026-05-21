@@ -306,6 +306,355 @@ create index on event_log (timestamp);
 
 
 -- ============================================================
+-- Reflective Learning System
+--   See migrations/20260519_reflective_learning_system.sql for
+--   the full rationale. Two-layer append-only journal with a
+--   shared "learning themes" vocabulary that ties activity-level
+--   field notes to nucleus-level institutional memory.
+-- ============================================================
+
+create table learning_themes (
+  id             uuid primary key default gen_random_uuid(),
+  nucleus_id     uuid not null references nuclei(id) on delete cascade,
+  name           text not null,
+  description    text,
+  color          text not null default 'amber',
+  status         text not null default 'emerging'
+                 check (status in ('emerging', 'established', 'archived')),
+  proposed_by    uuid references profiles(id) on delete set null,
+  proposed_at    timestamptz not null default now(),
+  promoted_at    timestamptz,
+  merged_into_id uuid references learning_themes(id) on delete set null,
+  unique (nucleus_id, name)
+);
+
+create table journal_entries (
+  id                uuid primary key default gen_random_uuid(),
+  nucleus_id        uuid references nuclei(id) on delete cascade,
+  source            text not null check (source in ('activity', 'nucleus', 'cluster')),
+  activity_id       uuid references activities(id) on delete set null,
+  cluster_id        uuid references clusters(id) on delete cascade,
+  cluster_theme_id  uuid,
+  author_id         uuid references profiles(id) on delete set null,
+  occurred_at       timestamptz not null default now(),
+  created_at        timestamptz not null default now(),
+  edited_at         timestamptz,
+  edited_by         uuid references profiles(id) on delete set null,
+  what_happened     text,
+  encouraging_signs text,
+  challenges        text,
+  people_emerging   text,
+  follow_up         text,
+  body              text,
+  constraint source_scope_invariant check (
+    (source = 'activity' and activity_id is not null and nucleus_id is not null and cluster_id is null)
+    or (source = 'nucleus' and nucleus_id is not null and activity_id is null and cluster_id is null)
+    or (source = 'cluster' and cluster_id is not null and nucleus_id is null and activity_id is null)
+  )
+);
+
+create table journal_entry_themes (
+  entry_id   uuid not null references journal_entries(id) on delete cascade,
+  theme_id   uuid not null references learning_themes(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (entry_id, theme_id)
+);
+
+create index on learning_themes (nucleus_id, status);
+create index on journal_entries (nucleus_id, occurred_at desc);
+create index on journal_entries (activity_id, occurred_at desc)
+  where activity_id is not null;
+create index on journal_entry_themes (theme_id);
+
+alter table learning_themes      enable row level security;
+alter table journal_entries      enable row level security;
+alter table journal_entry_themes enable row level security;
+
+create policy "Read themes in accessible nuclei" on learning_themes
+  for select using (is_admin() or user_has_nucleus_access(nucleus_id));
+
+create policy "Activity leads and above propose themes" on learning_themes
+  for insert with check (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and (
+          up.nucleus_id = learning_themes.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = learning_themes.nucleus_id)
+          or up.activity_id in (select id from activities where nucleus_id = learning_themes.nucleus_id)
+        )
+    )
+  );
+
+create policy "Nucleus collaborators curate themes" on learning_themes
+  for update using (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+        and (
+          up.nucleus_id = learning_themes.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = learning_themes.nucleus_id)
+        )
+    )
+  );
+
+-- A cluster-level merge re-points each nucleus's local copy of the
+-- source theme onto the survivor; where a nucleus already had both,
+-- the duplicate copy must be deleted.
+create policy "Nucleus collaborators delete themes" on learning_themes
+  for delete using (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+        and (
+          up.nucleus_id = learning_themes.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = learning_themes.nucleus_id)
+        )
+    )
+  );
+
+create policy "Read entries in accessible nuclei" on journal_entries
+  for select using (is_admin() or user_has_nucleus_access(nucleus_id));
+
+create policy "Write activity entries" on journal_entries
+  for insert with check (
+    source = 'activity'
+    and activity_id is not null
+    and (is_admin() or user_has_activity_access(activity_id))
+  );
+
+create policy "Write nucleus entries" on journal_entries
+  for insert with check (
+    source = 'nucleus'
+    and (
+      is_admin() or exists (
+        select 1 from user_permissions up
+        where up.user_id = auth.uid()
+          and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+          and (
+            up.nucleus_id = journal_entries.nucleus_id
+            or up.cluster_id = (select cluster_id from nuclei where id = journal_entries.nucleus_id)
+          )
+      )
+    )
+  );
+
+create policy "Read entry tags in accessible nuclei" on journal_entry_themes
+  for select using (
+    is_admin() or exists (
+      select 1 from journal_entries e
+      where e.id = journal_entry_themes.entry_id
+        and user_has_nucleus_access(e.nucleus_id)
+    )
+  );
+
+create policy "Tag own entries" on journal_entry_themes
+  for insert with check (
+    is_admin() or exists (
+      select 1 from journal_entries e
+      where e.id = journal_entry_themes.entry_id
+        and (
+          (e.source = 'activity' and e.activity_id is not null and user_has_activity_access(e.activity_id))
+          or (e.source = 'nucleus' and exists (
+            select 1 from user_permissions up
+            where up.user_id = auth.uid()
+              and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+              and (
+                up.nucleus_id = e.nucleus_id
+                or up.cluster_id = (select cluster_id from nuclei where id = e.nucleus_id)
+              )
+          ))
+        )
+    )
+  );
+
+create policy "Nucleus collaborators re-tag during merge" on journal_entry_themes
+  for update using (
+    is_admin() or exists (
+      select 1 from journal_entries e
+      join nuclei n on n.id = e.nucleus_id
+      where e.id = journal_entry_themes.entry_id
+        and exists (
+          select 1 from user_permissions up
+          where up.user_id = auth.uid()
+            and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+            and (up.nucleus_id = e.nucleus_id or up.cluster_id = n.cluster_id)
+        )
+    )
+  );
+
+create policy "Edit own entries or as curator" on journal_entries
+  for update using (
+    is_admin()
+    or author_id = auth.uid()
+    or (source = 'activity' and activity_id is not null and user_has_activity_access(activity_id))
+    or (source = 'nucleus' and nucleus_id is not null and exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+        and (
+          up.nucleus_id = journal_entries.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = journal_entries.nucleus_id)
+        )
+    ))
+    or (source = 'cluster' and cluster_id is not null and exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role = 'cluster_coordinator'
+        and up.cluster_id = journal_entries.cluster_id
+    ))
+  );
+
+-- Journal entries are otherwise append-only; this DELETE policy is
+-- deliberately narrow — it only permits removing the cluster's own
+-- archive-notice entries (so un-archiving a cluster theme withdraws
+-- the "no longer tracked" note), and only by a coordinator of that
+-- cluster.
+create policy "Cluster coordinators withdraw archive notices" on journal_entries
+  for delete using (
+    cluster_archive_notice_for is not null
+    and (
+      is_admin() or exists (
+        select 1 from user_permissions up
+        where up.user_id = auth.uid()
+          and up.role = 'cluster_coordinator'
+          and up.cluster_id = (select cluster_id from nuclei where id = journal_entries.nucleus_id)
+      )
+    )
+  );
+
+create policy "Untag own entries" on journal_entry_themes
+  for delete using (
+    is_admin() or exists (
+      select 1 from journal_entries e
+      where e.id = journal_entry_themes.entry_id
+        and (
+          (e.source = 'activity' and e.activity_id is not null and user_has_activity_access(e.activity_id))
+          or (e.source = 'nucleus' and exists (
+            select 1 from user_permissions up
+            where up.user_id = auth.uid()
+              and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+              and (
+                up.nucleus_id = e.nucleus_id
+                or up.cluster_id = (select cluster_id from nuclei where id = e.nucleus_id)
+              )
+          ))
+        )
+    )
+  );
+
+
+-- ============================================================
+-- Cluster Learning Hub
+--   See migrations/20260520_cluster_learning_hub.sql.
+-- ============================================================
+
+create table cluster_themes (
+  id                  uuid primary key default gen_random_uuid(),
+  cluster_id          uuid not null references clusters(id) on delete cascade,
+  name                text not null,
+  description         text,
+  color               text not null default 'amber',
+  consolidation_level int not null default 25
+                      check (consolidation_level between 0 and 100),
+  created_at          timestamptz not null default now(),
+  created_by          uuid references profiles(id) on delete set null,
+  archived_at         timestamptz,
+  merged_into_id      uuid references cluster_themes(id) on delete set null,
+  unique (cluster_id, name)
+);
+
+alter table learning_themes
+  add column cluster_theme_id uuid references cluster_themes(id) on delete set null;
+alter table learning_themes
+  add column pushed_from_cluster boolean not null default false;
+
+alter table journal_entries
+  add constraint journal_entries_cluster_theme_fk
+  foreign key (cluster_theme_id) references cluster_themes(id) on delete set null;
+
+-- Tags the system note posted to nuclei when a cluster theme is
+-- archived, so it can be withdrawn if the theme is un-archived.
+alter table journal_entries
+  add column cluster_archive_notice_for uuid references cluster_themes(id) on delete set null;
+
+create index on cluster_themes (cluster_id, archived_at);
+create index on learning_themes (cluster_theme_id) where cluster_theme_id is not null;
+create index on journal_entries (cluster_id, occurred_at desc) where cluster_id is not null;
+create index on journal_entries (cluster_theme_id) where cluster_theme_id is not null;
+
+create or replace function ensure_cluster_theme_link()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c_id  uuid;
+  ct_id uuid;
+begin
+  if new.cluster_theme_id is not null then return new; end if;
+  select cluster_id into c_id from nuclei where id = new.nucleus_id;
+  if c_id is null then return new; end if;
+  select id into ct_id
+    from cluster_themes
+    where cluster_id = c_id and lower(name) = lower(new.name)
+    limit 1;
+  if ct_id is null then
+    insert into cluster_themes (cluster_id, name, color, description, created_by)
+      values (c_id, new.name, coalesce(new.color, 'amber'), new.description, new.proposed_by)
+      returning id into ct_id;
+  end if;
+  new.cluster_theme_id := ct_id;
+  return new;
+end;
+$$;
+
+create trigger ensure_cluster_theme_link_trigger
+  before insert on learning_themes
+  for each row execute function ensure_cluster_theme_link();
+
+alter table cluster_themes enable row level security;
+
+create policy "Read cluster themes" on cluster_themes
+  for select using (is_admin() or user_has_cluster_access(cluster_id));
+
+create policy "Cluster coordinators manage cluster themes" on cluster_themes
+  for all using (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role = 'cluster_coordinator'
+        and up.cluster_id = cluster_themes.cluster_id
+    )
+  );
+
+create policy "Read cluster entries in accessible clusters" on journal_entries
+  for select using (
+    source = 'cluster'
+    and cluster_id is not null
+    and (is_admin() or user_has_cluster_access(cluster_id))
+  );
+
+create policy "Write cluster synthesis entries" on journal_entries
+  for insert with check (
+    source = 'cluster'
+    and cluster_id is not null
+    and (
+      is_admin() or exists (
+        select 1 from user_permissions up
+        where up.user_id = auth.uid()
+          and up.role = 'cluster_coordinator'
+          and up.cluster_id = journal_entries.cluster_id
+      )
+    )
+  );
+
+
+-- ============================================================
 -- Trigger: auto-create profile on signup
 -- ============================================================
 
