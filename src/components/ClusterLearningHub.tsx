@@ -5,6 +5,8 @@ import {
   PlusIcon,
   SendIcon,
   ArchiveIcon,
+  ArchiveRestoreIcon,
+  GitMergeIcon,
   ClockIcon,
   CompassIcon,
   HelpCircleIcon,
@@ -18,9 +20,13 @@ import {
   createClusterTheme,
   updateConsolidationLevel,
   archiveClusterTheme,
+  unarchiveClusterTheme,
+  mergeClusterThemes,
   createSynthesisEntry,
   pushThemeToNuclei,
+  sendNoteToNucleus,
   listNucleiInCluster,
+  listNucleiWithTheme,
   THEME_COLORS,
 } from '../lib/db/learningHub';
 import type {
@@ -58,6 +64,12 @@ export function ClusterLearningHub() {
   const [loadingTheme, setLoadingTheme] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [pushDialogOpen, setPushDialogOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [archiveDialogTheme, setArchiveDialogTheme] = useState<ClusterTheme | null>(null);
+  const [mergeDialogOpen, setMergeDialogOpen] = useState(false);
+  // A note (representative entry or synthesis reflection) the user
+  // is sending to a single nucleus, plus the eligible nuclei.
+  const [sendNote, setSendNote] = useState<{ body: string; attribution: string } | null>(null);
 
   const selectedTheme = useMemo(
     () => themes.find(t => t.id === selectedThemeId) ?? null,
@@ -83,7 +95,7 @@ export function ClusterLearningHub() {
     if (!clusterId) return;
     setLoadingThemes(true);
     try {
-      const list = await listClusterThemes(clusterId);
+      const list = await listClusterThemes(clusterId, { archived: showArchived });
       setThemes(list);
       // Auto-select the first theme on first load.
       if (!selectedThemeId && list.length > 0) setSelectedThemeId(list[0].id);
@@ -92,7 +104,7 @@ export function ClusterLearningHub() {
     }
   };
 
-  useEffect(() => { reloadThemes(); /* eslint-disable-next-line */ }, [clusterId]);
+  useEffect(() => { reloadThemes(); /* eslint-disable-next-line */ }, [clusterId, showArchived]);
 
   useEffect(() => {
     if (!selectedThemeId) {
@@ -155,6 +167,8 @@ export function ClusterLearningHub() {
             selectedThemeId={selectedThemeId}
             loading={loadingThemes}
             canEdit={canEdit}
+            showArchived={showArchived}
+            onToggleArchived={() => { setSelectedThemeId(null); setShowArchived(s => !s); }}
             onSelect={setSelectedThemeId}
             onConsolidationChange={async (id, level) => {
               setThemes(prev => prev.map(t => t.id === id ? { ...t, consolidationLevel: level } : t));
@@ -166,11 +180,9 @@ export function ClusterLearningHub() {
               await reloadThemes();
               setSelectedThemeId(t.id);
             }}
-            onArchive={async (id) => {
-              await archiveClusterTheme(id);
-              if (selectedThemeId === id) setSelectedThemeId(null);
-              await reloadThemes();
-            }}
+            onRequestArchive={(theme) => setArchiveDialogTheme(theme)}
+            onUnarchive={async (id) => { await unarchiveClusterTheme(id); await reloadThemes(); }}
+            onOpenMerge={() => setMergeDialogOpen(true)}
           />
 
           <NucleiColumn
@@ -180,7 +192,8 @@ export function ClusterLearningHub() {
             loading={loadingTheme}
             canEdit={canEdit}
             onOpenPushDialog={() => setPushDialogOpen(true)}
-            onNavigateNucleus={(id) => navigate(`/nucleus/${id}`)}
+            onNavigateNucleus={(id) => navigate(`/nucleus/${id}?module=journal`)}
+            onSendNote={(body, attribution) => setSendNote({ body, attribution })}
           />
 
           <SynthesisColumn
@@ -196,6 +209,7 @@ export function ClusterLearningHub() {
               setSynthesis(await listSynthesisEntries(selectedTheme.id));
             }}
             onCancel={() => setComposerOpen(false)}
+            onSendNote={(body, attribution) => setSendNote({ body, attribution })}
           />
         </div>
       </div>
@@ -205,19 +219,61 @@ export function ClusterLearningHub() {
           theme={selectedTheme}
           allNuclei={allNucleiInCluster}
           onOpen={async () => {
-            if (allNucleiInCluster.length === 0 && clusterId) {
-              setAllNucleiInCluster(await listNucleiInCluster(clusterId));
+            if (clusterId) {
+              const [all, having] = await Promise.all([
+                listNucleiInCluster(clusterId),
+                listNucleiWithTheme(selectedTheme.id),
+              ]);
+              setAllNucleiInCluster(all);
+              return having.map(n => n.id);
             }
+            return [];
           }}
           onClose={() => setPushDialogOpen(false)}
           onSubmit={async (nucleusIds, note) => {
             await pushThemeToNuclei(selectedTheme, nucleusIds, note);
             setPushDialogOpen(false);
-            // Refresh theme aggregates to reflect new contributing nuclei.
             await reloadThemes();
-            if (selectedTheme) {
-              setNuclei(await listNucleiForClusterTheme(selectedTheme.id));
-            }
+            if (selectedTheme) setNuclei(await listNucleiForClusterTheme(selectedTheme.id));
+          }}
+        />
+      )}
+
+      {archiveDialogTheme && (
+        <ArchiveThemeDialog
+          theme={archiveDialogTheme}
+          onClose={() => setArchiveDialogTheme(null)}
+          onConfirm={async (notifyNuclei) => {
+            const t = archiveDialogTheme;
+            setArchiveDialogTheme(null);
+            await archiveClusterTheme(t, { notifyNuclei });
+            if (selectedThemeId === t.id) setSelectedThemeId(null);
+            await reloadThemes();
+          }}
+        />
+      )}
+
+      {mergeDialogOpen && (
+        <MergeDialog
+          themes={themes.filter(t => !t.archivedAt)}
+          onClose={() => setMergeDialogOpen(false)}
+          onConfirm={async (sourceId, targetId, finalName) => {
+            await mergeClusterThemes(sourceId, targetId, finalName);
+            setMergeDialogOpen(false);
+            if (selectedThemeId === sourceId) setSelectedThemeId(targetId);
+            await reloadThemes();
+          }}
+        />
+      )}
+
+      {sendNote && selectedTheme && (
+        <SendNoteDialog
+          note={sendNote}
+          loadEligible={() => listNucleiWithTheme(selectedTheme.id)}
+          onClose={() => setSendNote(null)}
+          onSend={async (nucleusId) => {
+            await sendNoteToNucleus(selectedTheme.id, nucleusId, sendNote.body, sendNote.attribution);
+            setSendNote(null);
           }}
         />
       )}
@@ -229,17 +285,22 @@ export function ClusterLearningHub() {
 // ─── Column 1: themes list ──────────────────────────────────
 
 function ThemesColumn({
-  themes, selectedThemeId, loading, canEdit,
-  onSelect, onConsolidationChange, onAddTheme, onArchive,
+  themes, selectedThemeId, loading, canEdit, showArchived,
+  onToggleArchived, onSelect, onConsolidationChange, onAddTheme,
+  onRequestArchive, onUnarchive, onOpenMerge,
 }: {
   themes: ClusterTheme[];
   selectedThemeId: string | null;
   loading: boolean;
   canEdit: boolean;
+  showArchived: boolean;
+  onToggleArchived: () => void;
   onSelect: (id: string) => void;
   onConsolidationChange: (id: string, level: number) => Promise<void>;
   onAddTheme: (params: { name: string; color: string; description?: string }) => Promise<void>;
-  onArchive: (id: string) => Promise<void>;
+  onRequestArchive: (theme: ClusterTheme) => void;
+  onUnarchive: (id: string) => Promise<void>;
+  onOpenMerge: () => void;
 }) {
   const [adding, setAdding] = useState(false);
 
@@ -249,13 +310,24 @@ function ThemesColumn({
         <h2 className="text-[11px] uppercase tracking-[0.22em] text-amber-800/80 font-journal">
           Objects of Learning
         </h2>
-        {canEdit && !adding && (
-          <button
-            onClick={() => setAdding(true)}
-            className="inline-flex items-center gap-1 text-xs font-medium text-stone-700 hover:text-stone-900"
-          >
-            <PlusIcon className="w-3.5 h-3.5" /> Add
-          </button>
+        {canEdit && !adding && !showArchived && (
+          <div className="flex items-center gap-3">
+            {themes.length >= 2 && (
+              <button
+                onClick={onOpenMerge}
+                title="Merge two themes"
+                className="inline-flex items-center gap-1 text-xs font-medium text-stone-700 hover:text-stone-900"
+              >
+                <GitMergeIcon className="w-3.5 h-3.5" /> Merge
+              </button>
+            )}
+            <button
+              onClick={() => setAdding(true)}
+              className="inline-flex items-center gap-1 text-xs font-medium text-stone-700 hover:text-stone-900"
+            >
+              <PlusIcon className="w-3.5 h-3.5" /> Add
+            </button>
+          </div>
         )}
       </div>
 
@@ -269,7 +341,9 @@ function ThemesColumn({
       {loading && <p className="font-journal italic text-stone-500 text-sm">Gathering themes…</p>}
       {!loading && themes.length === 0 && !adding && (
         <p className="font-journal italic text-stone-500 text-sm">
-          No themes yet. They emerge as nuclei add learning to their journals.
+          {showArchived
+            ? 'No archived themes.'
+            : 'No themes yet. They emerge as nuclei add learning to their journals.'}
         </p>
       )}
 
@@ -280,32 +354,44 @@ function ThemesColumn({
             theme={theme}
             active={theme.id === selectedThemeId}
             canEdit={canEdit}
+            archivedView={showArchived}
             onSelect={() => onSelect(theme.id)}
             onConsolidationChange={(level) => onConsolidationChange(theme.id, level)}
-            onArchive={() => onArchive(theme.id)}
+            onRequestArchive={() => onRequestArchive(theme)}
+            onUnarchive={() => onUnarchive(theme.id)}
           />
         ))}
       </div>
+
+      <button
+        onClick={onToggleArchived}
+        className="mt-5 text-xs text-stone-500 hover:text-stone-800 underline underline-offset-2"
+      >
+        {showArchived ? '← Back to active themes' : 'Show archived themes'}
+      </button>
     </section>
   );
 }
 
 function ThemeCard({
-  theme, active, canEdit, onSelect, onConsolidationChange, onArchive,
+  theme, active, canEdit, archivedView, onSelect, onConsolidationChange,
+  onRequestArchive, onUnarchive,
 }: {
   theme: ClusterTheme;
   active: boolean;
   canEdit: boolean;
+  archivedView: boolean;
   onSelect: () => void;
   onConsolidationChange: (level: number) => Promise<void>;
-  onArchive: () => Promise<void>;
+  onRequestArchive: () => void;
+  onUnarchive: () => Promise<void>;
 }) {
   const p = themePalette(theme.color);
   const [localLevel, setLocalLevel] = useState(theme.consolidationLevel);
   useEffect(() => { setLocalLevel(theme.consolidationLevel); }, [theme.consolidationLevel]);
   return (
     <div
-      className={`relative rounded-xl border ${p.border} ${active ? p.bgSoft : 'bg-white/60'} px-3.5 py-3 cursor-pointer transition hover:bg-white/85 group`}
+      className={`relative rounded-xl border ${p.border} ${active ? p.bgSoft : 'bg-white/60'} ${archivedView ? 'opacity-70' : ''} px-3.5 py-3 cursor-pointer transition hover:bg-white/85 group`}
       onClick={onSelect}
     >
       <div className="flex items-baseline justify-between gap-2">
@@ -315,18 +401,22 @@ function ThemeCard({
             {theme.name}
           </h3>
         </div>
-        {canEdit && (
+        {canEdit && !archivedView && (
           <button
-            onClick={async (e) => {
-              e.stopPropagation();
-              if (window.confirm(`Archive "${theme.name}"? It will be hidden from the Hub.`)) {
-                await onArchive();
-              }
-            }}
+            onClick={(e) => { e.stopPropagation(); onRequestArchive(); }}
             title="Archive theme"
             className="opacity-0 group-hover:opacity-100 text-stone-400 hover:text-rose-600 transition-opacity"
           >
             <ArchiveIcon className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {canEdit && archivedView && (
+          <button
+            onClick={async (e) => { e.stopPropagation(); await onUnarchive(); }}
+            title="Restore theme"
+            className="text-stone-400 hover:text-emerald-700"
+          >
+            <ArchiveRestoreIcon className="w-3.5 h-3.5" />
           </button>
         )}
       </div>
@@ -335,24 +425,26 @@ function ThemeCard({
         {theme.entryCount ? ` · ${theme.entryCount} entries` : ''}
       </p>
 
-      <div className="mt-2.5">
-        <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-stone-500 mb-1">
-          <span>Emerging</span>
-          <span>Consolidated</span>
+      {!archivedView && (
+        <div className="mt-2.5">
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-stone-500 mb-1">
+            <span>Emerging</span>
+            <span>Consolidated</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={localLevel}
+            onChange={(e) => setLocalLevel(Number(e.target.value))}
+            onMouseUp={() => onConsolidationChange(localLevel)}
+            onTouchEnd={() => onConsolidationChange(localLevel)}
+            disabled={!canEdit}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full accent-amber-700 cursor-pointer disabled:cursor-default"
+          />
         </div>
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={localLevel}
-          onChange={(e) => setLocalLevel(Number(e.target.value))}
-          onMouseUp={() => onConsolidationChange(localLevel)}
-          onTouchEnd={() => onConsolidationChange(localLevel)}
-          disabled={!canEdit}
-          onClick={(e) => e.stopPropagation()}
-          className="w-full accent-amber-700 cursor-pointer disabled:cursor-default"
-        />
-      </div>
+      )}
     </div>
   );
 }
@@ -422,7 +514,7 @@ function AddThemeForm({
 
 function NucleiColumn({
   theme, nuclei, entries, loading, canEdit,
-  onOpenPushDialog, onNavigateNucleus,
+  onOpenPushDialog, onNavigateNucleus, onSendNote,
 }: {
   theme: ClusterTheme | null;
   nuclei: NucleusContribution[];
@@ -431,6 +523,7 @@ function NucleiColumn({
   canEdit: boolean;
   onOpenPushDialog: () => void;
   onNavigateNucleus: (nucleusId: string) => void;
+  onSendNote: (body: string, attribution: string) => void;
 }) {
   if (!theme) {
     return (
@@ -504,7 +597,15 @@ function NucleiColumn({
                 Tagged entries will surface here.
               </p>
             )}
-            {entries.map(e => <RepresentativeEntry key={e.id} entry={e} onOpenNucleus={onNavigateNucleus} />)}
+            {entries.map(e => (
+              <RepresentativeEntry
+                key={e.id}
+                entry={e}
+                canEdit={canEdit}
+                onOpenNucleus={onNavigateNucleus}
+                onSendNote={onSendNote}
+              />
+            ))}
           </div>
         </>
       )}
@@ -513,8 +614,13 @@ function NucleiColumn({
 }
 
 function RepresentativeEntry({
-  entry, onOpenNucleus,
-}: { entry: JournalEntry; onOpenNucleus: (id: string) => void }) {
+  entry, canEdit, onOpenNucleus, onSendNote,
+}: {
+  entry: JournalEntry;
+  canEdit: boolean;
+  onOpenNucleus: (id: string) => void;
+  onSendNote: (body: string, attribution: string) => void;
+}) {
   const snippet =
     entry.body
     ?? entry.whatHappened
@@ -524,8 +630,11 @@ function RepresentativeEntry({
     ?? entry.followUp
     ?? '';
   const truncated = snippet.length > 220 ? snippet.slice(0, 218).trimEnd() + '…' : snippet;
+  const attribution = entry.nucleusName
+    ? `${entry.nucleusName}${entry.activityName ? ` / ${entry.activityName}` : ''}`
+    : 'a nucleus entry';
   return (
-    <article className="border-l-2 border-amber-700/30 pl-4">
+    <article className="border-l-2 border-amber-700/30 pl-4 group">
       <div className="flex items-baseline gap-2 mb-1">
         <ClockIcon className="w-3.5 h-3.5 text-stone-400" />
         <span className="font-journal text-stone-700 text-sm">
@@ -538,6 +647,15 @@ function RepresentativeEntry({
           >
             · {entry.nucleusName}
             {entry.activityName && ` / ${entry.activityName}`}
+          </button>
+        )}
+        {canEdit && snippet && (
+          <button
+            onClick={() => onSendNote(snippet, attribution)}
+            title="Send this moment to a nucleus that carries this theme"
+            className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 text-xs text-stone-500 hover:text-stone-800"
+          >
+            <SendIcon className="w-3 h-3" /> Send to…
           </button>
         )}
       </div>
@@ -559,7 +677,7 @@ const SYNTHESIS_PROMPTS = [
 
 function SynthesisColumn({
   theme, entries, canEdit, composerOpen,
-  onOpenComposer, onSubmit, onCancel,
+  onOpenComposer, onSubmit, onCancel, onSendNote,
 }: {
   theme: ClusterTheme | null;
   entries: JournalEntry[];
@@ -568,6 +686,7 @@ function SynthesisColumn({
   onOpenComposer: () => void;
   onSubmit: (body: string) => Promise<void>;
   onCancel: () => void;
+  onSendNote: (body: string, attribution: string) => void;
 }) {
   const [body, setBody] = useState('');
   const [saving, setSaving] = useState(false);
@@ -647,10 +766,19 @@ function SynthesisColumn({
           </p>
         )}
         {entries.map(e => (
-          <article key={e.id}>
+          <article key={e.id} className="group">
             <div className="flex items-baseline gap-2 text-xs text-stone-500 font-journal italic mb-1">
               <span>{e.occurredAt.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</span>
               {e.authorName && <span>· {e.authorName}</span>}
+              {canEdit && e.body && (
+                <button
+                  onClick={() => onSendNote(e.body!, 'cluster synthesis')}
+                  title="Send this reflection to a nucleus that carries this theme"
+                  className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 not-italic text-stone-500 hover:text-stone-800"
+                >
+                  <SendIcon className="w-3 h-3" /> Send to…
+                </button>
+              )}
             </div>
             <p className="font-journal text-stone-700 text-base leading-relaxed whitespace-pre-wrap">{e.body}</p>
           </article>
@@ -668,21 +796,30 @@ function PushDialog({
 }: {
   theme: ClusterTheme;
   allNuclei: { id: string; name: string }[];
-  onOpen: () => Promise<void>;
+  // Resolves the ids of nuclei that already carry the theme, so we
+  // can grey them out.
+  onOpen: () => Promise<string[]>;
   onClose: () => void;
   onSubmit: (nucleusIds: string[], note: string | undefined) => Promise<void>;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [alreadyHave, setAlreadyHave] = useState<Set<string>>(new Set());
   const [note, setNote] = useState('');
   const [pushing, setPushing] = useState(false);
 
-  useEffect(() => { onOpen(); /* eslint-disable-next-line */ }, []);
+  useEffect(() => {
+    onOpen().then(ids => setAlreadyHave(new Set(ids)));
+    /* eslint-disable-next-line */
+  }, []);
 
-  const toggle = (id: string) => setSelected(prev => {
-    const next = new Set(prev);
-    next.has(id) ? next.delete(id) : next.add(id);
-    return next;
-  });
+  const toggle = (id: string) => {
+    if (alreadyHave.has(id)) return;
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 backdrop-blur-sm px-4">
@@ -692,7 +829,8 @@ function PushDialog({
             <h2 className="font-journal text-2xl text-stone-800">Share with nuclei</h2>
             <p className="text-sm text-stone-500 mt-1">
               Add "<span className="font-medium text-stone-700">{theme.name}</span>" to selected nucleus journals.
-              A short note (optional) will appear as a seed entry in each.
+              A short note (optional) will appear as a seed entry in each. Nuclei that already
+              carry it are shown checked and can't be selected.
             </p>
           </div>
           <button onClick={onClose} className="text-stone-400 hover:text-stone-700">
@@ -704,17 +842,26 @@ function PushDialog({
           {allNuclei.length === 0 && (
             <p className="text-sm text-stone-500 italic p-2">Loading nuclei…</p>
           )}
-          {allNuclei.map(n => (
-            <label key={n.id} className="flex items-center gap-2 px-2 py-1.5 hover:bg-stone-50 rounded cursor-pointer">
-              <input
-                type="checkbox"
-                checked={selected.has(n.id)}
-                onChange={() => toggle(n.id)}
-                className="accent-stone-800"
-              />
-              <span className="text-sm text-stone-800">{n.name}</span>
-            </label>
-          ))}
+          {allNuclei.map(n => {
+            const has = alreadyHave.has(n.id);
+            return (
+              <label
+                key={n.id}
+                className={`flex items-center gap-2 px-2 py-1.5 rounded ${has ? 'opacity-50 cursor-default' : 'hover:bg-stone-50 cursor-pointer'}`}
+                title={has ? 'This nucleus already carries this Object of Learning' : undefined}
+              >
+                <input
+                  type="checkbox"
+                  checked={has || selected.has(n.id)}
+                  disabled={has}
+                  onChange={() => toggle(n.id)}
+                  className="accent-stone-800"
+                />
+                <span className="text-sm text-stone-800">{n.name}</span>
+                {has && <span className="text-[11px] text-stone-400 ml-auto">already has it</span>}
+              </label>
+            );
+          })}
         </div>
 
         <textarea
@@ -739,6 +886,188 @@ function PushDialog({
             className="px-4 py-2 bg-stone-800 text-amber-50 text-sm font-semibold rounded-lg disabled:opacity-50"
           >
             {pushing ? 'Sharing…' : `Share with ${selected.size} ${selected.size === 1 ? 'nucleus' : 'nuclei'}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Archive-with-notify dialog ────────────────────────────
+
+function ArchiveThemeDialog({
+  theme, onClose, onConfirm,
+}: {
+  theme: ClusterTheme;
+  onClose: () => void;
+  onConfirm: (notifyNuclei: boolean) => Promise<void>;
+}) {
+  const [notify, setNotify] = useState(true);
+  const [busy, setBusy] = useState(false);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+        <h2 className="font-journal text-2xl text-stone-800 mb-2">Archive this Object of Learning?</h2>
+        <p className="text-sm text-stone-600 leading-relaxed">
+          "<span className="font-medium">{theme.name}</span>" will be hidden from the Hub (and findable
+          under "Show archived"). The nuclei keep their own copies of the theme and their entries —
+          archiving only changes what the cluster is actively tracking.
+        </p>
+        <label className="flex items-start gap-2 mt-4 cursor-pointer">
+          <input type="checkbox" checked={notify} onChange={e => setNotify(e.target.checked)} className="accent-stone-800 mt-0.5" />
+          <span className="text-sm text-stone-700">
+            Post a note in each participating nucleus's journal letting them know it's no longer
+            tracked at the cluster level (and to speak up if they disagree).
+          </span>
+        </label>
+        <div className="flex justify-end gap-2 mt-6">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-stone-600 hover:text-stone-900">Cancel</button>
+          <button
+            disabled={busy}
+            onClick={async () => { setBusy(true); try { await onConfirm(notify); } finally { setBusy(false); } }}
+            className="px-4 py-2 bg-stone-800 text-amber-50 text-sm font-semibold rounded-lg disabled:opacity-50"
+          >
+            {busy ? 'Archiving…' : 'Archive theme'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Merge dialog ──────────────────────────────────────────
+
+function MergeDialog({
+  themes, onClose, onConfirm,
+}: {
+  themes: ClusterTheme[];
+  onClose: () => void;
+  onConfirm: (sourceId: string, targetId: string, finalName: string) => Promise<void>;
+}) {
+  const [sourceId, setSourceId] = useState('');
+  const [targetId, setTargetId] = useState('');
+  const [finalName, setFinalName] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const source = themes.find(t => t.id === sourceId);
+  const target = themes.find(t => t.id === targetId);
+
+  // Default the unified name to the survivor's name when picked.
+  useEffect(() => { if (target && !finalName) setFinalName(target.name); }, [target]);
+
+  const valid = sourceId && targetId && sourceId !== targetId && finalName.trim();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6">
+        <div className="flex items-start justify-between mb-3">
+          <h2 className="font-journal text-2xl text-stone-800">Merge two Objects of Learning</h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-700"><XIcon className="w-5 h-5" /></button>
+        </div>
+        <p className="text-sm text-stone-600 mb-4">
+          Combine two themes that mean the same thing. All entries and contributing nuclei move
+          to the survivor, and every nucleus's copy is renamed to the unified name.
+        </p>
+
+        <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1">Merge this theme…</label>
+        <select value={sourceId} onChange={e => setSourceId(e.target.value)} className="w-full border border-stone-300 rounded-lg p-2 mb-3 text-sm">
+          <option value="">Select a theme</option>
+          {themes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+
+        <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1">…into this one (survivor)</label>
+        <select value={targetId} onChange={e => { setTargetId(e.target.value); const t = themes.find(x => x.id === e.target.value); if (t) setFinalName(t.name); }} className="w-full border border-stone-300 rounded-lg p-2 mb-3 text-sm">
+          <option value="">Select a theme</option>
+          {themes.filter(t => t.id !== sourceId).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+        </select>
+
+        <label className="block text-xs uppercase tracking-wider text-stone-500 mb-1">Unified name (seen by all nuclei)</label>
+        <input value={finalName} onChange={e => setFinalName(e.target.value)} className="w-full border border-stone-300 rounded-lg p-2 mb-4 text-sm" placeholder="Final name" />
+
+        {source && target && (
+          <p className="text-xs text-stone-500 italic mb-4">
+            "{source.name}" will be merged into "{target.name}" and both will be shown as
+            "{finalName.trim() || target.name}".
+          </p>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-stone-600 hover:text-stone-900">Cancel</button>
+          <button
+            disabled={!valid || busy}
+            onClick={async () => { setBusy(true); try { await onConfirm(sourceId, targetId, finalName.trim()); } finally { setBusy(false); } }}
+            className="px-4 py-2 bg-stone-800 text-amber-50 text-sm font-semibold rounded-lg disabled:opacity-50"
+          >
+            {busy ? 'Merging…' : 'Merge'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+// ─── Send-a-note-to-one-nucleus dialog ─────────────────────
+
+function SendNoteDialog({
+  note, loadEligible, onClose, onSend,
+}: {
+  note: { body: string; attribution: string };
+  loadEligible: () => Promise<{ id: string; name: string }[]>;
+  onClose: () => void;
+  onSend: (nucleusId: string) => Promise<void>;
+}) {
+  const [eligible, setEligible] = useState<{ id: string; name: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [chosen, setChosen] = useState<string>('');
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    loadEligible().then(setEligible).finally(() => setLoading(false));
+    /* eslint-disable-next-line */
+  }, []);
+
+  const preview = note.body.length > 180 ? note.body.slice(0, 178).trimEnd() + '…' : note.body;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/40 backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+        <div className="flex items-start justify-between mb-2">
+          <h2 className="font-journal text-2xl text-stone-800">Send to a nucleus</h2>
+          <button onClick={onClose} className="text-stone-400 hover:text-stone-700"><XIcon className="w-5 h-5" /></button>
+        </div>
+        <p className="text-xs text-stone-500 mb-2">
+          Only nuclei that already carry this Object of Learning can receive it. To reach others,
+          share the theme with them first.
+        </p>
+        <blockquote className="bg-amber-50/60 border-l-2 border-amber-700/40 pl-3 py-2 text-sm font-journal italic text-stone-600 mb-4">
+          {preview}
+          <div className="not-italic text-[11px] text-stone-400 mt-1">— {note.attribution}</div>
+        </blockquote>
+
+        {loading && <p className="text-sm text-stone-500 italic">Finding eligible nuclei…</p>}
+        {!loading && eligible.length === 0 && (
+          <p className="text-sm text-stone-500 italic">
+            No nucleus carries this theme yet. Share the theme first, then you can send notes.
+          </p>
+        )}
+        {!loading && eligible.length > 0 && (
+          <select value={chosen} onChange={e => setChosen(e.target.value)} className="w-full border border-stone-300 rounded-lg p-2 mb-4 text-sm">
+            <option value="">Select a nucleus</option>
+            {eligible.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+          </select>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm text-stone-600 hover:text-stone-900">Cancel</button>
+          <button
+            disabled={!chosen || busy}
+            onClick={async () => { setBusy(true); try { await onSend(chosen); } finally { setBusy(false); } }}
+            className="px-4 py-2 bg-stone-800 text-amber-50 text-sm font-semibold rounded-lg disabled:opacity-50"
+          >
+            {busy ? 'Sending…' : 'Send'}
           </button>
         </div>
       </div>
