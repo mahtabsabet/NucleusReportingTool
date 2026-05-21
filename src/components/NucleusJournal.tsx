@@ -11,6 +11,7 @@ import {
   BookOpenIcon,
   PencilIcon,
   LockIcon,
+  ArchiveRestoreIcon,
 } from 'lucide-react';
 import {
   listNucleusJournalEntries,
@@ -21,6 +22,7 @@ import {
   createEstablishedTheme,
   promoteTheme,
   archiveTheme,
+  unarchiveTheme,
   addThemesToEntry,
   removeThemeFromEntry,
   listSiblingClusterThemeSuggestions,
@@ -70,6 +72,8 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
   const [themeComposerOpen, setThemeComposerOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editConfirmFor, setEditConfirmFor] = useState<string | null>(null);
+  const [showArchivedThemes, setShowArchivedThemes] = useState(false);
+  const [archivedThemes, setArchivedThemes] = useState<LearningTheme[]>([]);
 
   const selectedTheme = useMemo(
     () => themes.find(t => t.id === selectedThemeId) ?? null,
@@ -88,6 +92,11 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
   );
 
   const loadThemes = async () => setThemes(await listThemesForNucleus(nucleusId));
+  const loadArchivedThemes = async () =>
+    setArchivedThemes(
+      (await listThemesForNucleus(nucleusId, { includeArchived: true }))
+        .filter(t => t.status === 'archived'),
+    );
   const loadEntries = async () => {
     if (selectedThemeId) setEntries(await listEntriesByTheme(nucleusId, selectedThemeId));
     else setEntries(await listNucleusJournalEntries(nucleusId));
@@ -257,10 +266,69 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
                 canCurate={canCurate}
                 onSelect={() => setSelectedThemeId(theme.id)}
                 onPromote={async () => { await promoteTheme(theme.id); await loadThemes(); }}
-                onArchive={async () => { await archiveTheme(theme.id); await loadThemes(); }}
+                onArchive={async () => {
+                  await archiveTheme(theme.id);
+                  await loadThemes();
+                  if (showArchivedThemes) await loadArchivedThemes();
+                }}
               />
             ))}
           </div>
+
+          {canCurate && (
+            <div className="mt-6">
+              <button
+                onClick={async () => {
+                  const next = !showArchivedThemes;
+                  setShowArchivedThemes(next);
+                  if (next) await loadArchivedThemes();
+                }}
+                className="text-xs text-stone-500 hover:text-stone-800 underline underline-offset-2"
+              >
+                {showArchivedThemes ? 'Hide archived themes' : 'Show archived themes'}
+              </button>
+
+              {showArchivedThemes && (
+                <div className="mt-3 space-y-2">
+                  {archivedThemes.length === 0 && (
+                    <p className="font-journal italic text-stone-400 text-sm">No archived themes.</p>
+                  )}
+                  {archivedThemes.map(t => {
+                    const p = themePalette(t.color);
+                    return (
+                      <div
+                        key={t.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-amber-900/10 bg-white/40 px-3 py-2 opacity-75"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`w-2 h-2 rounded-full ${p.dot} flex-shrink-0`} />
+                          <span className="font-journal text-stone-700 truncate">{t.name}</span>
+                          <span className="text-xs text-stone-400 flex-shrink-0">
+                            {t.entryCount ?? 0} {t.entryCount === 1 ? 'moment' : 'moments'}
+                          </span>
+                        </div>
+                        {t.pushedFromCluster ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-stone-400" title="Managed by the cluster Learning Hub.">
+                            <LockIcon className="w-3 h-3" /> from cluster
+                          </span>
+                        ) : (
+                          <button
+                            onClick={async () => {
+                              await unarchiveTheme(t.id);
+                              await Promise.all([loadThemes(), loadArchivedThemes()]);
+                            }}
+                            className="inline-flex items-center gap-1 text-xs text-stone-500 hover:text-emerald-700 flex-shrink-0"
+                          >
+                            <ArchiveRestoreIcon className="w-3.5 h-3.5" /> Restore
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {themes.length > 0 && (
             <p className="text-center font-journal italic text-stone-500 mt-10">

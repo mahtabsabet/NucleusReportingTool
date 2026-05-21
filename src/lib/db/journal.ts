@@ -212,6 +212,15 @@ export async function archiveTheme(themeId: string): Promise<void> {
   if (error) throw error;
 }
 
+// Restore an archived nucleus theme back to established.
+export async function unarchiveTheme(themeId: string): Promise<void> {
+  const { error } = await supabase
+    .from('learning_themes')
+    .update({ status: 'established' })
+    .eq('id', themeId);
+  if (error) throw error;
+}
+
 // Re-point every entry tagged with `sourceId` onto `targetId`, then
 // mark the source archived with merged_into_id set. Tag pairs that
 // would collide (entry already tagged with target) are dropped.

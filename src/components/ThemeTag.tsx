@@ -52,7 +52,7 @@ export function ThemeTag({ theme, selected, onClick, size = 'md', showIcon = fal
 
   const Inner = (
     <>
-      {showIcon && <span className={`w-1.5 h-1.5 rounded-full ${p.dot}`} aria-hidden />}
+      {(showIcon || selected) && <span className={`w-1.5 h-1.5 rounded-full ${p.dot}`} aria-hidden />}
       <span>{theme.name}</span>
       {emerging && (
         <span className="text-[10px] uppercase tracking-wider opacity-60 ml-1">emerging</span>

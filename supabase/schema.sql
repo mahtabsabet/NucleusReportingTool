@@ -400,6 +400,22 @@ create policy "Nucleus collaborators curate themes" on learning_themes
     )
   );
 
+-- A cluster-level merge re-points each nucleus's local copy of the
+-- source theme onto the survivor; where a nucleus already had both,
+-- the duplicate copy must be deleted.
+create policy "Nucleus collaborators delete themes" on learning_themes
+  for delete using (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+        and (
+          up.nucleus_id = learning_themes.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = learning_themes.nucleus_id)
+        )
+    )
+  );
+
 create policy "Read entries in accessible nuclei" on journal_entries
   for select using (is_admin() or user_has_nucleus_access(nucleus_id));
 
@@ -492,6 +508,24 @@ create policy "Edit own entries or as curator" on journal_entries
     ))
   );
 
+-- Journal entries are otherwise append-only; this DELETE policy is
+-- deliberately narrow — it only permits removing the cluster's own
+-- archive-notice entries (so un-archiving a cluster theme withdraws
+-- the "no longer tracked" note), and only by a coordinator of that
+-- cluster.
+create policy "Cluster coordinators withdraw archive notices" on journal_entries
+  for delete using (
+    cluster_archive_notice_for is not null
+    and (
+      is_admin() or exists (
+        select 1 from user_permissions up
+        where up.user_id = auth.uid()
+          and up.role = 'cluster_coordinator'
+          and up.cluster_id = (select cluster_id from nuclei where id = journal_entries.nucleus_id)
+      )
+    )
+  );
+
 create policy "Untag own entries" on journal_entry_themes
   for delete using (
     is_admin() or exists (
@@ -541,6 +575,11 @@ alter table learning_themes
 alter table journal_entries
   add constraint journal_entries_cluster_theme_fk
   foreign key (cluster_theme_id) references cluster_themes(id) on delete set null;
+
+-- Tags the system note posted to nuclei when a cluster theme is
+-- archived, so it can be withdrawn if the theme is un-archived.
+alter table journal_entries
+  add column cluster_archive_notice_for uuid references cluster_themes(id) on delete set null;
 
 create index on cluster_themes (cluster_id, archived_at);
 create index on learning_themes (cluster_theme_id) where cluster_theme_id is not null;

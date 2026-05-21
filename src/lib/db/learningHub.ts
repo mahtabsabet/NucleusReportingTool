@@ -307,6 +307,7 @@ export async function archiveClusterTheme(
     source: 'nucleus',
     author_id: user?.id ?? null,
     body,
+    cluster_archive_notice_for: theme.id,
   }));
   const { data: entries, error: entryErr } = await supabase
     .from('journal_entries')
@@ -331,6 +332,14 @@ export async function unarchiveClusterTheme(themeId: string): Promise<void> {
     .update({ archived_at: null })
     .eq('id', themeId);
   if (error) throw error;
+  // Withdraw any "no longer tracked at the cluster level" notes that
+  // were posted to nuclei when the theme was archived. Their tag rows
+  // cascade away with the entry.
+  const { error: delErr } = await supabase
+    .from('journal_entries')
+    .delete()
+    .eq('cluster_archive_notice_for', themeId);
+  if (delErr) throw delErr;
 }
 
 // Nucleus ids (and names) that currently carry a local copy of a
