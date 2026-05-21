@@ -35,6 +35,7 @@ function mapTheme(row: any): LearningTheme {
     proposedAt: new Date(row.proposed_at),
     promotedAt: row.promoted_at ? new Date(row.promoted_at) : undefined,
     mergedIntoId: row.merged_into_id ?? undefined,
+    pushedFromCluster: row.pushed_from_cluster ?? false,
   };
 }
 
@@ -80,7 +81,7 @@ const ENTRY_SELECT = `
   author:profiles!journal_entries_author_id_fkey ( name ),
   editor:profiles!journal_entries_edited_by_fkey ( name ),
   journal_entry_themes (
-    learning_themes ( id, nucleus_id, cluster_theme_id, name, description, color, status, proposed_by, proposed_at, promoted_at, merged_into_id )
+    learning_themes ( id, nucleus_id, cluster_theme_id, name, description, color, status, proposed_by, proposed_at, promoted_at, merged_into_id, pushed_from_cluster )
   )
 `;
 
@@ -108,6 +109,40 @@ export async function listThemesForNucleus(
     theme.entryCount = count;
     return theme;
   });
+}
+
+// Cluster themes that sibling nuclei in the same cluster are
+// already learning about, EXCLUDING the ones this nucleus already
+// carries. Used to nudge a nucleus toward an existing Object of
+// Learning before it invents a near-duplicate.
+export async function listSiblingClusterThemeSuggestions(
+  nucleusId: string,
+): Promise<{ id: string; name: string; description?: string; color: string }[]> {
+  const { data: nucleus } = await supabase
+    .from('nuclei')
+    .select('cluster_id')
+    .eq('id', nucleusId)
+    .single();
+  const clusterId = (nucleus as any)?.cluster_id;
+  if (!clusterId) return [];
+
+  const { data: themes } = await supabase
+    .from('cluster_themes')
+    .select('id, name, description, color')
+    .eq('cluster_id', clusterId)
+    .is('archived_at', null)
+    .order('name');
+
+  // Drop any cluster theme this nucleus already has a local copy of.
+  const { data: mine } = await supabase
+    .from('learning_themes')
+    .select('cluster_theme_id')
+    .eq('nucleus_id', nucleusId);
+  const have = new Set((mine ?? []).map((r: any) => r.cluster_theme_id).filter(Boolean));
+
+  return (themes ?? [])
+    .filter((t: any) => !have.has(t.id))
+    .map((t: any) => ({ id: t.id, name: t.name, description: t.description ?? undefined, color: t.color }));
 }
 
 export async function proposeTheme(

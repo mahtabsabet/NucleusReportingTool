@@ -161,6 +161,9 @@ export interface LearningTheme {
   proposedAt: Date;
   promotedAt?: Date;
   mergedIntoId?: string;
+  // True when this theme was pushed down from the cluster Learning
+  // Hub. Such themes can't be archived at the nucleus level.
+  pushedFromCluster?: boolean;
   // Populated by aggregating queries; absent on plain reads.
   entryCount?: number;
 }
@@ -179,6 +182,7 @@ export interface ClusterTheme {
   consolidationLevel: number;
   createdAt: Date;
   archivedAt?: Date;
+  mergedIntoId?: string;
   // Aggregates populated by Hub-specific queries.
   nucleusCount?: number;
   entryCount?: number;

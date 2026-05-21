@@ -529,11 +529,14 @@ create table cluster_themes (
   created_at          timestamptz not null default now(),
   created_by          uuid references profiles(id) on delete set null,
   archived_at         timestamptz,
+  merged_into_id      uuid references cluster_themes(id) on delete set null,
   unique (cluster_id, name)
 );
 
 alter table learning_themes
   add column cluster_theme_id uuid references cluster_themes(id) on delete set null;
+alter table learning_themes
+  add column pushed_from_cluster boolean not null default false;
 
 alter table journal_entries
   add constraint journal_entries_cluster_theme_fk
