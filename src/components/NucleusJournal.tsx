@@ -10,8 +10,7 @@ import {
   BusIcon,
   BookOpenIcon,
   PencilIcon,
-  TagIcon,
-  XIcon,
+  LockIcon,
 } from 'lucide-react';
 import {
   listNucleusJournalEntries,
@@ -24,11 +23,14 @@ import {
   archiveTheme,
   addThemesToEntry,
   removeThemeFromEntry,
+  listSiblingClusterThemeSuggestions,
   THEME_COLORS,
 } from '../lib/db/journal';
 import type { JournalEntry, LearningTheme } from '../types';
 import { ThemeTag, themePalette } from './ThemeTag';
+import { ThemeTagEditor } from './ThemeTagEditor';
 import { ConfirmDialog } from './ConfirmDialog';
+import { EntryTabs } from './EntryTabs';
 import { HeadingFlourish, HeaderDivider } from './JournalDecorations';
 
 interface NucleusJournalProps {
@@ -67,12 +69,22 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
   const [composerOpen, setComposerOpen] = useState(false);
   const [themeComposerOpen, setThemeComposerOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
-  const [taggingEntryId, setTaggingEntryId] = useState<string | null>(null);
   const [editConfirmFor, setEditConfirmFor] = useState<string | null>(null);
 
   const selectedTheme = useMemo(
     () => themes.find(t => t.id === selectedThemeId) ?? null,
     [themes, selectedThemeId],
+  );
+
+  // When viewing a theme's entries, label each individual-entry tab
+  // with the activity it came from (if any), so the tab conveys
+  // provenance, not just a date.
+  const tabbedEntries = useMemo(
+    () => entries.map(e => ({
+      ...e,
+      tabSuffix: selectedThemeId && e.activityName ? e.activityName : undefined,
+    })),
+    [entries, selectedThemeId],
   );
 
   const loadThemes = async () => setThemes(await listThemesForNucleus(nucleusId));
@@ -119,9 +131,6 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
               </>
             ) : (
               <>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-amber-800/80 font-journal">
-                  Our Nucleus Journal
-                </p>
                 <div className="flex items-baseline justify-between gap-4">
                   <h2 className="font-journal font-normal text-[2.4rem] sm:text-[2.7rem] text-stone-800 leading-[1.1] flex items-baseline gap-2">
                     <HeadingFlourish className="w-12 h-7 text-amber-800/60 self-end -mb-1" />
@@ -159,54 +168,46 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
           {loading && (
             <p className="font-journal italic text-stone-500">Turning the page…</p>
           )}
-          {!loading && entries.length === 0 && !editingEntryId && (
-            <p className="font-journal italic text-stone-500">
-              {selectedTheme
+          {!loading && (
+            <EntryTabs
+              entries={tabbedEntries}
+              emptyLabel={selectedTheme
                 ? 'No entries connected to this theme yet.'
                 : 'No journal entries yet. The story begins with the first reflection.'}
-            </p>
+              activeClass="bg-amber-800 text-amber-50"
+              inactiveClass="bg-white/50 text-stone-600 hover:bg-white"
+              renderEntry={(entry) =>
+                editingEntryId === entry.id ? (
+                  <NucleusEntryComposer
+                    mode="edit"
+                    initial={entry}
+                    themes={themes.filter(t => t.status !== 'archived')}
+                    onCancel={() => setEditingEntryId(null)}
+                    onSubmit={async ({ body }) => {
+                      await updateNucleusEntry(entry.id, body);
+                      setEditingEntryId(null);
+                      await loadEntries();
+                    }}
+                  />
+                ) : (
+                  <JournalEntryView
+                    entry={entry}
+                    allThemes={themes}
+                    readOnly={readOnly}
+                    canEdit={!readOnly && (canCurate || entry.source === 'activity')}
+                    onStartEdit={() => setEditConfirmFor(entry.id)}
+                    onTagsChanged={loadEntries}
+                  />
+                )
+              }
+            />
           )}
-
-          <div className="space-y-7">
-            {entries.map(entry => (
-              editingEntryId === entry.id ? (
-                <NucleusEntryComposer
-                  key={entry.id}
-                  mode="edit"
-                  initial={entry}
-                  themes={themes.filter(t => t.status !== 'archived')}
-                  onCancel={() => setEditingEntryId(null)}
-                  onSubmit={async ({ body }) => {
-                    await updateNucleusEntry(entry.id, body);
-                    setEditingEntryId(null);
-                    await loadEntries();
-                  }}
-                />
-              ) : (
-                <JournalEntryView
-                  key={entry.id}
-                  entry={entry}
-                  allThemes={themes}
-                  readOnly={readOnly}
-                  canEdit={!readOnly && (canCurate || entry.source === 'activity')}
-                  tagging={taggingEntryId === entry.id}
-                  onStartEdit={() => setEditConfirmFor(entry.id)}
-                  onStartTag={() => setTaggingEntryId(entry.id)}
-                  onStopTag={() => setTaggingEntryId(null)}
-                  onTagsChanged={loadEntries}
-                />
-              )
-            ))}
-          </div>
 
         </div>
 
         {/* ─── RIGHT PAGE ─────────────────────────────────────────── */}
         <div className="journal-page p-7 sm:p-12 min-h-[640px] relative">
           <div className="mb-5">
-            <p className="text-[11px] uppercase tracking-[0.22em] text-amber-800/80 font-journal">
-              Objects of Learning
-            </p>
             <div className="flex items-baseline justify-between gap-4">
               <h2 className="font-journal font-normal text-[2.4rem] sm:text-[2.7rem] text-stone-800 leading-[1.1] flex items-baseline gap-2">
                 Our Objects of Learning
@@ -232,6 +233,7 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
 
           {themeComposerOpen && (
             <ThemeComposer
+              nucleusId={nucleusId}
               onCancel={() => setThemeComposerOpen(false)}
               onSubmit={async ({ name, color, description }) => {
                 await createEstablishedTheme(nucleusId, { name, color, description });
@@ -297,16 +299,12 @@ interface JournalEntryViewProps {
   allThemes: LearningTheme[];
   readOnly: boolean;
   canEdit: boolean;
-  tagging: boolean;
   onStartEdit: () => void;
-  onStartTag: () => void;
-  onStopTag: () => void;
   onTagsChanged: () => Promise<void> | void;
 }
 
 function JournalEntryView({
-  entry, allThemes, readOnly, canEdit, tagging,
-  onStartEdit, onStartTag, onStopTag, onTagsChanged,
+  entry, allThemes, readOnly, canEdit, onStartEdit, onTagsChanged,
 }: JournalEntryViewProps) {
   const promptKeys = [
     ['whatHappened', entry.whatHappened],
@@ -324,38 +322,27 @@ function JournalEntryView({
 
   return (
     <article>
-      <div className="flex items-baseline gap-3 mb-1 group">
-        <ClockIcon className="w-4 h-4 text-stone-400" />
-        <span className="font-journal text-stone-700 text-sm">
+      <div className="flex items-baseline gap-3 mb-1 group flex-wrap">
+        <ClockIcon className="w-4 h-4 text-stone-500" />
+        <span className="font-journal text-stone-800 text-base">
           {formatDateLong(entry.occurredAt)}
         </span>
-        <span className="font-journal italic text-stone-500 text-sm">
+        <span className="font-journal italic text-stone-600 text-base">
           {formatDayOfWeekEvening(entry.occurredAt)}
         </span>
         {entry.activityName && (
-          <span className="font-journal italic text-stone-500 text-xs">
-            · from {entry.activityName}
+          <span className="inline-flex items-center gap-1 text-sm font-medium text-amber-800 bg-amber-100/60 border border-amber-200 rounded-full px-2.5 py-0.5">
+            from {entry.activityName}
           </span>
         )}
-        {!readOnly && (
-          <span className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-            <button
-              onClick={onStartTag}
-              title="Adjust tags"
-              className="p-1 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded"
-            >
-              <TagIcon className="w-3.5 h-3.5" />
-            </button>
-            {canEdit && entry.source === 'nucleus' && (
-              <button
-                onClick={onStartEdit}
-                title="Edit entry"
-                className="p-1 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded"
-              >
-                <PencilIcon className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </span>
+        {!readOnly && canEdit && entry.source === 'nucleus' && (
+          <button
+            onClick={onStartEdit}
+            title="Edit entry"
+            className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity p-1 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded"
+          >
+            <PencilIcon className="w-3.5 h-3.5" />
+          </button>
         )}
       </div>
 
@@ -376,34 +363,14 @@ function JournalEntryView({
         )}
       </div>
 
-      <div className="pl-7 mt-3 flex flex-wrap items-center gap-2">
-        {entry.themes.map(t => (
-          <span key={t.id} className="inline-flex items-center gap-1">
-            <ThemeTag theme={t} size="sm" showIcon />
-            {tagging && (
-              <button
-                onClick={async () => { await removeThemeFromEntry(entry.id, t.id); await onTagsChanged(); }}
-                title="Remove tag"
-                className="text-stone-400 hover:text-rose-600"
-              >
-                <XIcon className="w-3 h-3" />
-              </button>
-            )}
-          </span>
-        ))}
-        {tagging && (
-          <span className="inline-flex flex-wrap items-center gap-2 bg-amber-50/60 border border-amber-900/15 rounded-md px-2 py-1.5">
-            {availableThemes.map(t => (
-              <ThemeTag
-                key={t.id}
-                theme={t}
-                size="sm"
-                onClick={async () => { await addThemesToEntry(entry.id, [t.id]); await onTagsChanged(); }}
-              />
-            ))}
-            <button onClick={onStopTag} className="text-xs text-stone-500 hover:text-stone-900 ml-1">Done</button>
-          </span>
-        )}
+      <div className="pl-7 mt-3">
+        <ThemeTagEditor
+          applied={entry.themes}
+          available={availableThemes}
+          canEdit={!readOnly}
+          onAdd={async (themeId) => { await addThemesToEntry(entry.id, [themeId]); await onTagsChanged(); }}
+          onRemove={async (themeId) => { await removeThemeFromEntry(entry.id, themeId); await onTagsChanged(); }}
+        />
       </div>
 
       {entry.editedAt && (
@@ -468,20 +435,29 @@ function ThemeCard({ theme, active, canCurate, onSelect, onPromote, onArchive }:
             {theme.description}
           </p>
         )}
-        {emerging && (
+        {canCurate && (
           <div className="mt-2 flex items-center gap-3">
-            <span className="text-[10px] uppercase tracking-wider text-stone-500">Proposed theme</span>
-            {canCurate && (
+            {emerging && (
               <>
+                <span className="text-[10px] uppercase tracking-wider text-stone-500">Proposed theme</span>
                 <button
                   onClick={e => { e.stopPropagation(); onPromote(); }}
                   className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
                 >Promote</button>
-                <button
-                  onClick={e => { e.stopPropagation(); onArchive(); }}
-                  className="text-xs text-stone-500 hover:text-rose-700"
-                >Archive</button>
               </>
+            )}
+            {theme.pushedFromCluster ? (
+              <span
+                className="inline-flex items-center gap-1 text-[11px] text-stone-400"
+                title="This theme was sent down from the cluster Learning Hub and is managed there. It can't be archived here."
+              >
+                <LockIcon className="w-3 h-3" /> from cluster
+              </span>
+            ) : (
+              <button
+                onClick={e => { e.stopPropagation(); onArchive(); }}
+                className="text-xs text-stone-500 hover:text-rose-700"
+              >Archive</button>
             )}
           </div>
         )}
@@ -568,8 +544,9 @@ function NucleusEntryComposer({
 // ─── Theme composer (right page) ────────────────────────────
 
 function ThemeComposer({
-  onCancel, onSubmit,
+  nucleusId, onCancel, onSubmit,
 }: {
+  nucleusId: string;
   onCancel: () => void;
   onSubmit: (args: { name: string; color: string; description?: string }) => Promise<void>;
 }) {
@@ -577,6 +554,13 @@ function ThemeComposer({
   const [color, setColor] = useState<string>('amber');
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
+  const [suggestions, setSuggestions] = useState<
+    { id: string; name: string; description?: string; color: string }[]
+  >([]);
+
+  useEffect(() => {
+    listSiblingClusterThemeSuggestions(nucleusId).then(setSuggestions).catch(() => setSuggestions([]));
+  }, [nucleusId]);
 
   const handleSave = async () => {
     if (!name.trim() || saving) return;
@@ -587,10 +571,36 @@ function ThemeComposer({
 
   return (
     <div className="bg-white/75 border border-amber-900/20 rounded-xl p-4 mb-6 space-y-3 shadow-sm">
+      {suggestions.length > 0 && (
+        <div className="bg-amber-50/60 border border-amber-200/70 rounded-lg p-3">
+          <p className="font-journal italic text-stone-600 text-sm mb-2">
+            Other nuclei in the cluster are already learning about these. If one
+            fits, choose it instead of making a new Object of Learning:
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map(s => (
+              <button
+                key={s.id}
+                type="button"
+                disabled={saving}
+                title={s.description}
+                onClick={async () => {
+                  setSaving(true);
+                  try { await onSubmit({ name: s.name, color: s.color, description: s.description }); }
+                  finally { setSaving(false); }
+                }}
+                className="text-xs font-medium rounded-md border border-amber-900/20 bg-white/70 hover:bg-white px-2.5 py-1 disabled:opacity-50"
+              >
+                {s.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <input
         value={name}
         onChange={e => setName(e.target.value)}
-        placeholder="Theme name"
+        placeholder="Or name a new theme"
         className="w-full bg-transparent font-journal text-2xl text-stone-800 focus:outline-none border-b border-stone-300 pb-1 placeholder:text-stone-400"
       />
       <textarea

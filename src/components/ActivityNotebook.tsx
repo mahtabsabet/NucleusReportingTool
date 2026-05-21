@@ -9,8 +9,6 @@ import {
   PlusIcon,
   HelpCircleIcon,
   PencilIcon,
-  TagIcon,
-  XIcon,
 } from 'lucide-react';
 import {
   listEntriesForActivity,
@@ -25,8 +23,10 @@ import {
 } from '../lib/db/journal';
 import type { JournalEntry, LearningTheme } from '../types';
 import { ThemeTag, themePalette } from './ThemeTag';
+import { ThemeTagEditor } from './ThemeTagEditor';
 import { ConfirmDialog } from './ConfirmDialog';
 import { NotebookSpiral } from './NotebookSpiral';
+import { EntryTabs } from './EntryTabs';
 
 interface ActivityNotebookProps {
   activityId: string;
@@ -55,14 +55,10 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
   const [themes, setThemes] = useState<LearningTheme[]>([]);
   const [loading, setLoading] = useState(true);
   const [composerOpen, setComposerOpen] = useState(false);
-  // ID of the entry currently being edited (mutually exclusive with composerOpen).
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
-  // ID of the entry whose tags are being adjusted inline.
-  const [taggingEntryId, setTaggingEntryId] = useState<string | null>(null);
-  // The user has acknowledged that they're about to overwrite an
-  // existing entry — gates the actual edit composer until they say
-  // yes. Reset every time editing ends.
   const [editConfirmFor, setEditConfirmFor] = useState<string | null>(null);
+
+  const visibleThemes = useMemo(() => themes.filter(t => t.status !== 'archived'), [themes]);
 
   const load = async () => {
     setLoading(true);
@@ -83,9 +79,6 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
   return (
     <div className="relative">
       <NotebookSpiral />
-      {/* Page surface starts flush against the perforation strip;
-          rounded only on the bottom so the page top stays straight
-          where the binding meets it. */}
       <div className="bg-notebook-paper rounded-b-2xl shadow-xl px-5 sm:px-9 pt-5 pb-7 relative">
         <div className="flex items-baseline justify-between gap-4 mb-1">
           <h3 className="font-handwritten text-4xl text-stone-800 leading-none tracking-wide">
@@ -107,7 +100,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
         {composerOpen && (
           <EntryComposer
             mode="create"
-            themes={themes}
+            themes={visibleThemes}
             onCancel={() => setComposerOpen(false)}
             onSubmit={async (entry, newThemes) => {
               const created: LearningTheme[] = [];
@@ -122,49 +115,47 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
           />
         )}
 
-        <div className="mt-4 space-y-5">
+        <div className="mt-4">
           {loading && (
             <p className="text-sm text-stone-500 italic font-journal">Opening the notebook…</p>
           )}
-          {!loading && entries.length === 0 && !composerOpen && (
-            <p className="text-sm text-stone-500 italic font-journal">
-              No entries yet. {readOnly ? '' : 'Write the first reflection from this activity.'}
-            </p>
+          {!loading && (
+            <EntryTabs
+              entries={entries}
+              emptyLabel={readOnly ? 'No entries yet.' : 'No entries yet. Write the first reflection from this activity.'}
+              activeClass="bg-stone-800 text-amber-50"
+              inactiveClass="bg-white/50 text-stone-600 hover:bg-white"
+              renderEntry={(entry) =>
+                editingEntryId === entry.id ? (
+                  <EntryComposer
+                    mode="edit"
+                    initial={entry}
+                    themes={visibleThemes}
+                    onCancel={() => setEditingEntryId(null)}
+                    onSubmit={async (patch) => {
+                      await updateActivityEntry(entry.id, patch);
+                      setEditingEntryId(null);
+                      await load();
+                    }}
+                  />
+                ) : (
+                  <EntryView
+                    entry={entry}
+                    availableThemes={visibleThemes}
+                    readOnly={readOnly}
+                    onStartEdit={() => setEditConfirmFor(entry.id)}
+                    onAddTheme={async (themeId) => { await addThemesToEntry(entry.id, [themeId]); await load(); }}
+                    onRemoveTheme={async (themeId) => { await removeThemeFromEntry(entry.id, themeId); await load(); }}
+                    onProposeTheme={async ({ name, color }) => {
+                      const t = await proposeTheme(nucleusId, { name, color });
+                      await addThemesToEntry(entry.id, [t.id]);
+                      await load();
+                    }}
+                  />
+                )
+              }
+            />
           )}
-          {entries.map(entry => (
-            editingEntryId === entry.id ? (
-              <EntryComposer
-                key={entry.id}
-                mode="edit"
-                initial={entry}
-                themes={themes}
-                onCancel={() => setEditingEntryId(null)}
-                onSubmit={async (patch) => {
-                  await updateActivityEntry(entry.id, patch);
-                  setEditingEntryId(null);
-                  await load();
-                }}
-              />
-            ) : (
-              <EntryView
-                key={entry.id}
-                entry={entry}
-                themes={themes}
-                readOnly={readOnly}
-                tagging={taggingEntryId === entry.id}
-                onStartEdit={() => setEditConfirmFor(entry.id)}
-                onStartTag={() => setTaggingEntryId(entry.id)}
-                onStopTag={() => setTaggingEntryId(null)}
-                onTagAdded={load}
-                onTagRemoved={load}
-                onProposeTheme={async ({ name, color }) => {
-                  const t = await proposeTheme(nucleusId, { name, color });
-                  await addThemesToEntry(entry.id, [t.id]);
-                  await load();
-                }}
-              />
-            )
-          ))}
         </div>
       </div>
 
@@ -190,30 +181,26 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
 }
 
 
-// ─── Read view of an entry, with edit + retag affordances ────
+// ─── Read view of an entry ──────────────────────────────────
 
 interface EntryViewProps {
   entry: JournalEntry;
-  themes: LearningTheme[];
+  availableThemes: LearningTheme[];
   readOnly: boolean;
-  tagging: boolean;
   onStartEdit: () => void;
-  onStartTag: () => void;
-  onStopTag: () => void;
-  onTagAdded: () => Promise<void> | void;
-  onTagRemoved: () => Promise<void> | void;
+  onAddTheme: (themeId: string) => Promise<void> | void;
+  onRemoveTheme: (themeId: string) => Promise<void> | void;
   onProposeTheme: (args: { name: string; color: string }) => Promise<void>;
 }
 
 function EntryView({
-  entry, themes, readOnly, tagging,
-  onStartEdit, onStartTag, onStopTag,
-  onTagAdded, onTagRemoved, onProposeTheme,
+  entry, availableThemes, readOnly,
+  onStartEdit, onAddTheme, onRemoveTheme, onProposeTheme,
 }: EntryViewProps) {
   const taggedIds = useMemo(() => new Set(entry.themes.map(t => t.id)), [entry.themes]);
-  const visibleThemes = useMemo(
-    () => themes.filter(t => t.status !== 'archived'),
-    [themes],
+  const addable = useMemo(
+    () => availableThemes.filter(t => !taggedIds.has(t.id)),
+    [availableThemes, taggedIds],
   );
   return (
     <article className="bg-white/60 border border-amber-900/15 rounded-xl px-4 sm:px-5 py-4 shadow-sm">
@@ -229,22 +216,13 @@ function EntryView({
             <span className="font-journal italic text-xs text-stone-500">— {entry.authorName}</span>
           )}
           {!readOnly && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={onStartTag}
-                title="Adjust tags"
-                className="p-1 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded transition"
-              >
-                <TagIcon className="w-3.5 h-3.5" />
-              </button>
-              <button
-                onClick={onStartEdit}
-                title="Edit entry"
-                className="p-1 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded transition"
-              >
-                <PencilIcon className="w-3.5 h-3.5" />
-              </button>
-            </div>
+            <button
+              onClick={onStartEdit}
+              title="Edit entry"
+              className="p-1 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded transition"
+            >
+              <PencilIcon className="w-3.5 h-3.5" />
+            </button>
           )}
         </div>
       </header>
@@ -268,33 +246,15 @@ function EntryView({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-amber-900/10">
-        {entry.themes.map(t => (
-          <span key={t.id} className="inline-flex items-center gap-1">
-            <ThemeTag theme={t} size="sm" />
-            {tagging && (
-              <button
-                onClick={async () => { await removeThemeFromEntry(entry.id, t.id); await onTagRemoved(); }}
-                title="Remove tag"
-                className="text-stone-400 hover:text-rose-600"
-              >
-                <XIcon className="w-3 h-3" />
-              </button>
-            )}
-          </span>
-        ))}
-        {tagging && (
-          <InlineTagAdder
-            allThemes={visibleThemes}
-            taggedIds={taggedIds}
-            onAdd={async (ids) => { await addThemesToEntry(entry.id, ids); await onTagAdded(); }}
-            onPropose={onProposeTheme}
-            onDone={onStopTag}
-          />
-        )}
-        {!tagging && entry.themes.length === 0 && (
-          <span className="text-xs italic text-stone-400 font-journal">No themes yet</span>
-        )}
+      <div className="mt-4 pt-3 border-t border-amber-900/10">
+        <ThemeTagEditor
+          applied={entry.themes}
+          available={addable}
+          canEdit={!readOnly}
+          onAdd={onAddTheme}
+          onRemove={onRemoveTheme}
+          onPropose={onProposeTheme}
+        />
       </div>
 
       {entry.editedAt && (
@@ -304,68 +264,6 @@ function EntryView({
         </p>
       )}
     </article>
-  );
-}
-
-
-// ─── Inline theme adder used by both the composer and edit flow ─
-
-interface InlineTagAdderProps {
-  allThemes: LearningTheme[];
-  taggedIds: Set<string>;
-  onAdd: (themeIds: string[]) => Promise<void> | void;
-  onPropose: (args: { name: string; color: string }) => Promise<void> | void;
-  onDone: () => void;
-}
-
-function InlineTagAdder({ allThemes, taggedIds, onAdd, onPropose, onDone }: InlineTagAdderProps) {
-  const [proposing, setProposing] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newColor, setNewColor] = useState('amber');
-  const available = allThemes.filter(t => !taggedIds.has(t.id));
-  return (
-    <div className="inline-flex flex-wrap items-center gap-2 bg-amber-50/50 border border-amber-900/15 rounded-md px-2 py-1.5">
-      {available.map(t => (
-        <ThemeTag
-          key={t.id}
-          theme={t}
-          size="sm"
-          onClick={() => onAdd([t.id])}
-        />
-      ))}
-      {!proposing ? (
-        <button
-          onClick={() => setProposing(true)}
-          className="text-xs font-medium text-stone-600 hover:text-stone-900 px-1.5"
-        >+ Propose</button>
-      ) : (
-        <span className="inline-flex items-center gap-1.5 bg-white border border-stone-300 rounded-md px-2 py-0.5">
-          <input
-            autoFocus
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            placeholder="Theme name"
-            className="text-xs bg-transparent focus:outline-none w-28"
-          />
-          <select value={newColor} onChange={e => setNewColor(e.target.value)} className="text-xs bg-transparent">
-            {THEME_COLORS.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-          <span className={`w-3 h-3 rounded-sm ${themePalette(newColor).dot}`} />
-          <button
-            onClick={async () => {
-              if (!newName.trim()) return;
-              await onPropose({ name: newName.trim(), color: newColor });
-              setNewName(''); setProposing(false);
-            }}
-            className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
-          >Add</button>
-        </span>
-      )}
-      <button
-        onClick={onDone}
-        className="text-xs text-stone-500 hover:text-stone-900 ml-1"
-      >Done</button>
-    </div>
   );
 }
 
@@ -400,11 +298,6 @@ function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerPr
   const [newColor, setNewColor] = useState<string>('amber');
   const [saving, setSaving] = useState(false);
 
-  const visibleThemes = useMemo(
-    () => themes.filter(t => t.status !== 'archived'),
-    [themes],
-  );
-
   const hasContent = Object.values(values).some(v => v.trim().length > 0);
 
   const toggleTheme = (id: string) => {
@@ -418,7 +311,7 @@ function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerPr
   const addDraftTheme = () => {
     const name = newName.trim();
     if (!name) return;
-    if (visibleThemes.some(t => t.name.toLowerCase() === name.toLowerCase())) return;
+    if (themes.some(t => t.name.toLowerCase() === name.toLowerCase())) return;
     if (draftThemes.some(t => t.name.toLowerCase() === name.toLowerCase())) return;
     setDraftThemes(prev => [...prev, { name, color: newColor }]);
     setNewName('');
@@ -439,7 +332,7 @@ function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerPr
   };
 
   return (
-    <div className="bg-white/85 border border-amber-900/25 rounded-xl px-4 sm:px-5 py-4 mb-2 shadow-sm">
+    <div className="bg-white/85 border border-amber-900/25 rounded-xl px-4 sm:px-5 py-4 mb-4 shadow-sm">
       {mode === 'edit' && (
         <div className="text-xs uppercase tracking-wider text-amber-700 font-semibold mb-3">
           Editing entry
@@ -472,7 +365,7 @@ function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerPr
             <HelpCircleIcon className="w-3.5 h-3.5 text-stone-400" />
           </div>
           <div className="flex flex-wrap gap-2 items-center">
-            {visibleThemes.map(t => (
+            {themes.map(t => (
               <ThemeTag
                 key={t.id}
                 theme={t}
@@ -539,11 +432,6 @@ function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerPr
         >
           Cancel
         </button>
-        {mode === 'create' && (
-          <span className="text-xs text-stone-500 italic font-journal ml-auto">
-            Entries are timestamped and kept as part of the notebook.
-          </span>
-        )}
         {mode === 'edit' && (
           <span className="text-xs text-amber-700 italic font-journal ml-auto">
             Editing will overwrite the previous text.

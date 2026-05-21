@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeftIcon,
   PlusIcon,
@@ -76,13 +76,18 @@ const MODULES: { id: FocusedModule; label: string; Icon: React.FC<{ className?: 
 export function NucleusDashboard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // Allow deep-linking straight into a module, e.g. the Cluster
+  // Learning Hub links to ?module=journal to open a nucleus's
+  // journal directly.
+  const [searchParams] = useSearchParams();
+  const initialModule = (searchParams.get('module') as FocusedModule | null) ?? null;
 
   const [nucleus, setNucleus] = useState<NucleusDetail | null>(null);
   const [activities, setActivities] = useState<Activity[]>([]);
   const [people, setPeople] = useState<PersonProfile[]>([]);
   const [courses, setCourses] = useState<CourseRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [focusedModule, setFocusedModule] = useState<FocusedModule | null>(null);
+  const [focusedModule, setFocusedModule] = useState<FocusedModule | null>(initialModule);
 
   const [showAddActivity, setShowAddActivity] = useState(false);
   const [newActivityType, setNewActivityType] = useState<string>('children-class');
