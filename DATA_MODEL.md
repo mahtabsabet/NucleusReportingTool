@@ -93,6 +93,16 @@ Anyone tracked in the system — a participant, teacher, parent, child, etc. Not
 
 > **Privacy — Children's Data:** For anyone flagged `is_minor = true` (child / junior_youth / minor youth), the app collects **first name only**. No age, no contact information — email and phone are forced to `null` at the data-access layer whenever the resulting state is `is_minor = true`, regardless of what the caller submits. The parent/guardian relationship is captured via the `ActivityParticipant` role (role = `parent`), so the child's record itself stays minimal. This aligns with Alberta's PIPA obligations around collecting only what is necessary. A privacy policy should be in place before real user data is onboarded.
 
+### Capacity (cluster-scoped catalog)
+A capacity is a skill/service a person can offer (e.g. "teaches children's classes"). To stop spelling drift and rephrasings from fragmenting the stats, capacities are a **relational catalog scoped per cluster** rather than free text — each cluster maintains its own independent list.
+
+- `cluster_capacities` — one canonical entry per `(cluster_id, lower(name))`. A unique index enforces case-insensitive uniqueness within the cluster.
+- `person_capacities` — join table `(person_id, capacity_id)` recording which person holds which catalog entry. Because the entry carries the cluster, a person enrolled in nuclei across multiple clusters holds a separate entry per cluster.
+
+On a profile, capacities are chosen from the relevant cluster's catalog via a dropdown; a "new capacity" option creates a catalog entry. **Renaming and merging** entries is a cluster-stewardship action: admins / super admins on any cluster, and a cluster's own coordinators on theirs — never across clusters (every row is pinned to a single `cluster_id`). See `src/lib/db/capacities.ts`, the `CapacityManagement` panel on the Cluster Profile, and migration `20260529_cluster_capacity_catalog.sql`.
+
+> The legacy `persons.capacities` (`text[]`) column is retained but no longer read by the app — the migration backfills the catalog from it (deduping case-insensitively per cluster) without dropping it, so no data is lost for people who had capacities but no cluster to attach them to.
+
 ### NucleusEnrollment
 Links a Person to a Nucleus, capturing their engagement level **within that specific nucleus**. A person can be enrolled in multiple nuclei with different engagement levels in each.
 
@@ -317,6 +327,8 @@ Mostly cumulative within a scope hierarchy — a Cluster Coordinator can do ever
 | Manage nucleus enrollments | own activity's nucleus ¹ | within nucleus | within cluster | | ✓ | ✓ |
 | Create persons (via activity flow) | own activity | within nucleus | within cluster | | ✓ | ✓ |
 | Edit person profiles | own activity's people | within nucleus | within cluster | | ✓ | ✓ |
+| Add a capacity to a profile (incl. new catalog entry) | own activity's people | within nucleus | within cluster | | ✓ | ✓ |
+| Rename / merge capacities | | | within cluster | | any cluster ⁶ | any cluster ⁶ |
 | Hard-delete persons | request only | request only | within cluster | | ✓ | ✓ |
 | Create / edit / delete activities | | within nucleus | within cluster | | ✓ | ✓ |
 | Create / delete nuclei | | | within cluster | | ✓ | ✓ |
@@ -333,6 +345,7 @@ Mostly cumulative within a scope hierarchy — a Cluster Coordinator can do ever
 ³ Admin cannot touch other Admins or Super Admins; only a Super Admin can.
 ⁴ CC and NC change roles **directly** (no admin-review request step) within their scope. `ROLE_ASSIGNERS` narrows which roles each can hand out: CC may assign cluster_coordinator / nucleus_collaborator / activity_lead; NC may assign activity_lead.
 ⁵ Admin cannot reset another Admin's password — only a Super Admin can.
+⁶ Capacity catalogs are independent per cluster, so rename/merge always acts within a single cluster — admins and super admins can steward any cluster's list, but cannot merge entries across clusters.
 
 ### Safeguards (apply regardless of role)
 

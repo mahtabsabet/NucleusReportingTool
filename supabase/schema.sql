@@ -1164,6 +1164,93 @@ create policy "Coordinators see managed user permissions" on user_permissions
 
 
 -- ============================================================
+-- Cluster-scoped capacity catalog
+--   cluster_capacities  — the canonical capacity list for one cluster
+--   person_capacities   — which person holds which catalog entry
+-- Each cluster maintains its own independent list; a person in
+-- multiple clusters can hold a capacity in each (separate rows).
+-- See migration 20260529_cluster_capacity_catalog.sql.
+-- ============================================================
+
+create table cluster_capacities (
+  id          uuid primary key default gen_random_uuid(),
+  cluster_id  uuid not null references clusters(id) on delete cascade,
+  name        text not null,
+  created_at  timestamptz not null default now()
+);
+
+-- One canonical entry per (cluster, name), case-insensitively.
+create unique index cluster_capacities_cluster_lower_name_key
+  on cluster_capacities (cluster_id, lower(name));
+
+create table person_capacities (
+  person_id   uuid not null references persons(id) on delete cascade,
+  capacity_id uuid not null references cluster_capacities(id) on delete cascade,
+  created_at  timestamptz not null default now(),
+  primary key (person_id, capacity_id)
+);
+
+create index person_capacities_capacity_id_idx on person_capacities (capacity_id);
+
+alter table cluster_capacities enable row level security;
+alter table person_capacities  enable row level security;
+
+-- Read: anyone who can see the cluster.
+create policy "Read capacities in accessible clusters" on cluster_capacities
+  for select using (
+    is_admin() or is_regional_viewer() or user_has_cluster_access(cluster_id)
+  );
+
+-- Create a new catalog entry: anyone who can edit within the cluster.
+create policy "Add capacities in accessible clusters" on cluster_capacities
+  for insert with check (
+    is_admin() or user_has_cluster_access(cluster_id)
+  );
+
+-- Rename / merge: only admins and the cluster's own coordinators.
+-- Pinned to cluster_id, so neither can act across clusters.
+create policy "Rename capacities in own cluster" on cluster_capacities
+  for update using (
+    is_admin() or cluster_id = any(select coordinator_cluster_ids())
+  ) with check (
+    is_admin() or cluster_id = any(select coordinator_cluster_ids())
+  );
+
+create policy "Delete capacities in own cluster" on cluster_capacities
+  for delete using (
+    is_admin() or cluster_id = any(select coordinator_cluster_ids())
+  );
+
+-- person_capacities: read/write follows access to the capacity's cluster.
+create policy "Read person capacities in accessible clusters" on person_capacities
+  for select using (
+    is_admin() or is_regional_viewer() or exists (
+      select 1 from cluster_capacities cc
+      where cc.id = person_capacities.capacity_id
+        and user_has_cluster_access(cc.cluster_id)
+    )
+  );
+
+create policy "Attach person capacities in accessible clusters" on person_capacities
+  for insert with check (
+    is_admin() or exists (
+      select 1 from cluster_capacities cc
+      where cc.id = person_capacities.capacity_id
+        and user_has_cluster_access(cc.cluster_id)
+    )
+  );
+
+create policy "Detach person capacities in accessible clusters" on person_capacities
+  for delete using (
+    is_admin() or exists (
+      select 1 from cluster_capacities cc
+      where cc.id = person_capacities.capacity_id
+        and user_has_cluster_access(cc.cluster_id)
+    )
+  );
+
+
+-- ============================================================
 -- Seed: Curriculum catalog
 --   Ruhi main sequence (Books 1-14) + their units,
 --   branch courses nested under Book 3 / Book 5,

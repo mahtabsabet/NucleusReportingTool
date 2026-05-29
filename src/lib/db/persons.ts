@@ -1,6 +1,7 @@
 import { supabase } from '../supabase';
 import { actionPermission, activityLeadActivityIds } from '../permissions';
 import { getCallerContext } from './users';
+import { fetchPersonCapacities, type PersonCapacity } from './capacities';
 import type { AgeGroup, ProfileStatus, CompletionStatus } from '../database.types';
 import {
   isMinorForAgeGroup,
@@ -16,7 +17,9 @@ export interface PersonDetail {
   profileStatus: ProfileStatus;
   email: string | null;
   phone: string | null;
-  capacities: string[];
+  // Cluster-scoped capacities the person currently holds (one entry per
+  // catalog row across all their clusters).
+  capacities: PersonCapacity[];
   notes: string;
   photoUrl: string | null;
   nuclei: Array<{ id: string; name: string }>;
@@ -56,10 +59,10 @@ export interface PersonSearchMatch {
 }
 
 export async function fetchPersonDetail(personId: string): Promise<PersonDetail | null> {
-  const [personRes, nucleiRes, coursesRes, unitsRes, activitiesRes] = await Promise.all([
+  const [personRes, nucleiRes, coursesRes, unitsRes, activitiesRes, capacities] = await Promise.all([
     supabase
       .from('persons')
-      .select('id, name, age_group, is_minor, profile_status, email, phone, capacities, notes, profile_image_url')
+      .select('id, name, age_group, is_minor, profile_status, email, phone, notes, profile_image_url')
       .eq('id', personId)
       .is('deleted_at', null)
       .single(),
@@ -81,6 +84,7 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
       .select('activity_id, role, activities(id, name, nucleus_id)')
       .eq('person_id', personId)
       .is('deleted_at', null),
+    fetchPersonCapacities(personId),
   ]);
 
   if (personRes.error || !personRes.data) return null;
@@ -94,7 +98,7 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
     profileStatus: (p.profile_status ?? 'provisional') as ProfileStatus,
     email: p.email ?? null,
     phone: p.phone ?? null,
-    capacities: p.capacities ?? [],
+    capacities,
     notes: p.notes ?? '',
     photoUrl: p.profile_image_url ?? null,
     nuclei: ((nucleiRes.data ?? []) as any[]).map((e: any) => ({
@@ -125,7 +129,6 @@ export async function updatePersonBasic(
   personId: string,
   params: {
     name?: string;
-    capacities?: string[];
     ageGroup?: AgeGroup;
     minorOverride?: boolean;
     profileStatus?: ProfileStatus;
@@ -135,7 +138,6 @@ export async function updatePersonBasic(
 ): Promise<void> {
   const update: Record<string, any> = {};
   if (params.name !== undefined) update.name = params.name;
-  if (params.capacities !== undefined) update.capacities = params.capacities;
   if (params.profileStatus !== undefined) update.profile_status = params.profileStatus;
 
   if (params.ageGroup !== undefined) {

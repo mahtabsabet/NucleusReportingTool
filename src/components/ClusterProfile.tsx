@@ -5,12 +5,15 @@ import {
   BookOpenIcon,
   AwardIcon,
   GlobeIcon,
+  SettingsIcon,
 } from 'lucide-react';
 import { fetchCourses, fetchPersonsForCluster } from '../lib/db/clusterProfile';
 import type { CourseRow, PersonProfile } from '../lib/db/clusterProfile';
 import { fetchClusters } from '../lib/db/clusters';
+import { canManageClusterCapacities } from '../lib/db/capacities';
 import { GlobalSearch } from './GlobalSearch';
 import { CurriculumProgressSummary } from './CurriculumProgressSummary';
+import { CapacityManagement } from './CapacityManagement';
 import { useIsMobile } from '../lib/useIsMobile';
 
 export function ClusterProfile() {
@@ -23,6 +26,9 @@ export function ClusterProfile() {
   const [courses, setCourses] = useState<CourseRow[]>([]);
   const [persons, setPersons] = useState<PersonProfile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [canManage, setCanManage] = useState(false);
+  const [showManage, setShowManage] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     async function load() {
@@ -40,6 +46,13 @@ export function ClusterProfile() {
       setLoading(false);
     }
     load();
+  }, [clusterId, refreshKey]);
+
+  // Renaming/merging is cluster-scoped, so it's only offered on a specific
+  // cluster profile (not the regional, all-clusters view).
+  useEffect(() => {
+    if (!clusterId) { setCanManage(false); return; }
+    canManageClusterCapacities(clusterId).then(setCanManage);
   }, [clusterId]);
 
   const title = clusterName ? `${clusterName} Cluster Profile` : 'Regional Profile';
@@ -104,10 +117,21 @@ export function ClusterProfile() {
 
             {/* Capacities */}
             <div>
-              <h3 className="text-sm font-bold text-gray-500 mb-6 flex items-center gap-2 uppercase tracking-widest border-b border-gray-100 pb-3">
-                <AwardIcon className="w-5 h-5 text-amber-500" />
-                Capacities
-              </h3>
+              <div className="flex items-center justify-between gap-2 mb-6 border-b border-gray-100 pb-3">
+                <h3 className="text-sm font-bold text-gray-500 flex items-center gap-2 uppercase tracking-widest">
+                  <AwardIcon className="w-5 h-5 text-amber-500" />
+                  Capacities
+                </h3>
+                {canManage && clusterId && (
+                  <button
+                    onClick={() => setShowManage(true)}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors"
+                  >
+                    <SettingsIcon className="w-3.5 h-3.5" />
+                    Manage
+                  </button>
+                )}
+              </div>
               <div className="space-y-4">
                 {uniqueCapacities.map(capacity => {
                   const capablePeople = persons.filter(p => p.capacities.includes(capacity));
@@ -143,6 +167,15 @@ export function ClusterProfile() {
           </div>
         </div>
       </div>
+
+      {showManage && clusterId && (
+        <CapacityManagement
+          clusterId={clusterId}
+          clusterName={clusterName ?? 'this cluster'}
+          onClose={() => setShowManage(false)}
+          onChanged={() => setRefreshKey(k => k + 1)}
+        />
+      )}
     </div>
   );
 }

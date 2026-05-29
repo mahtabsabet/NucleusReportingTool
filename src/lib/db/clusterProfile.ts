@@ -1,4 +1,5 @@
 import { supabase } from '../supabase';
+import { fetchCapacityNamesByPerson } from './capacities';
 import type {
   Course,
   CourseUnit,
@@ -113,7 +114,7 @@ export async function fetchPersonsForCluster(clusterId: string | null): Promise<
 
   let query = supabase
     .from('persons')
-    .select('id, name, capacities, course_enrollments(status, courses(id, name))')
+    .select('id, name, course_enrollments(status, courses(id, name))')
     .is('deleted_at', null)
     .order('name');
 
@@ -122,10 +123,18 @@ export async function fetchPersonsForCluster(clusterId: string | null): Promise<
   const { data, error } = await query;
   if (error) throw error;
 
+  // Capacities are scoped per cluster. For a cluster profile we count
+  // that cluster's catalog; for the regional (all-clusters) view we
+  // gather every cluster's entries and group by name.
+  const capacitiesByPerson = await fetchCapacityNamesByPerson(
+    (data as any[]).map(p => p.id),
+    clusterId,
+  );
+
   return (data as any[]).map(p => ({
     id: p.id,
     name: p.name,
-    capacities: p.capacities ?? [],
+    capacities: capacitiesByPerson.get(p.id) ?? [],
     courseEnrollments: (p.course_enrollments ?? []).map((ce: any) => ({
       courseId: ce.courses?.id ?? '',
       courseName: ce.courses?.name ?? '',
