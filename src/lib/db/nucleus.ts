@@ -7,6 +7,7 @@ import type {
 import type { PersonProfile, CourseRow, CompletionStatus } from './clusterProfile';
 import { actionPermission, canDirectly } from '../permissions';
 import { getCallerContext } from './users';
+import { fetchCapacityNamesByPerson } from './capacities';
 import { isMinorForAgeGroup } from '../persons/disambiguators';
 import type { AgeGroup } from '../database.types';
 
@@ -916,18 +917,30 @@ export async function fetchPersonsForNucleus(nucleusId: string): Promise<PersonP
   const personIds = enrollments.map(e => e.person_id);
   if (personIds.length === 0) return [];
 
-  const { data, error } = await supabase
-    .from('persons')
-    .select('id, name, capacities, course_enrollments(status, courses(id, name))')
-    .in('id', personIds)
-    .is('deleted_at', null)
-    .order('name');
+  // Capacities are scoped per cluster, so the dashboard counts only the
+  // entries from this nucleus's own cluster catalog.
+  const { data: nucleusRow } = await supabase
+    .from('nuclei')
+    .select('cluster_id')
+    .eq('id', nucleusId)
+    .single();
+  const clusterId = (nucleusRow as any)?.cluster_id ?? null;
+
+  const [{ data, error }, capacitiesByPerson] = await Promise.all([
+    supabase
+      .from('persons')
+      .select('id, name, course_enrollments(status, courses(id, name))')
+      .in('id', personIds)
+      .is('deleted_at', null)
+      .order('name'),
+    fetchCapacityNamesByPerson(personIds, clusterId),
+  ]);
   if (error) throw error;
 
   return (data as any[]).map(p => ({
     id: p.id,
     name: p.name,
-    capacities: p.capacities ?? [],
+    capacities: capacitiesByPerson.get(p.id) ?? [],
     courseEnrollments: (p.course_enrollments ?? []).map((ce: any) => ({
       courseId: ce.courses?.id ?? '',
       courseName: ce.courses?.name ?? '',

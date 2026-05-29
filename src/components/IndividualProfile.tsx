@@ -37,8 +37,27 @@ import {
 } from '../lib/curriculum';
 import { getCallerContext } from '../lib/db/users';
 import { viewsOrdinaryLayerReadOnly } from '../lib/permissions';
+import {
+  fetchPersonClusters,
+  fetchClusterCapacities,
+  fetchPersonCapacities,
+  savePersonCapacities,
+  type ClusterCapacity,
+} from '../lib/db/capacities';
 import { GlobalSearch } from './GlobalSearch';
 import { CurriculumProgress } from './CurriculumProgress';
+
+// A capacity being edited on the profile. `capacityId` is set for entries
+// already in a cluster's catalog; absent for a brand-new one being typed,
+// which is created in `clusterId`'s catalog on save.
+type EditableCapacity = {
+  capacityId?: string;
+  clusterId: string;
+  clusterName: string;
+  name: string;
+};
+
+const NEW_CAPACITY = '__new__';
 
 const ROLE_DISPLAY: Record<string, string> = {
   teacher: 'Teacher',
@@ -63,7 +82,13 @@ export function IndividualProfile() {
 
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState('');
-  const [editCapacities, setEditCapacities] = useState<string[]>([]);
+  const [editCapacities, setEditCapacities] = useState<EditableCapacity[]>([]);
+  // Per-cluster capacity picker state (populated when editing starts).
+  const [personClusters, setPersonClusters] = useState<Array<{ id: string; name: string }>>([]);
+  const [clusterCatalogs, setClusterCatalogs] = useState<Record<string, ClusterCapacity[]>>({});
+  const [addClusterId, setAddClusterId] = useState('');
+  const [addValue, setAddValue] = useState(''); // a catalog capacity id, NEW_CAPACITY, or ''
+  const [addNewName, setAddNewName] = useState('');
   // Explicit course-level marks (whole Ruhi book / JY text / branch
   // course) and unit-level marks, keyed by id. The book rollup written
   // to course_enrollments is derived from these at save time.
@@ -74,7 +99,6 @@ export function IndividualProfile() {
   const [editProfileStatus, setEditProfileStatus] = useState<ProfileStatus>('provisional');
   const [editEmail, setEditEmail] = useState('');
   const [editPhone, setEditPhone] = useState('');
-  const [newCapacity, setNewCapacity] = useState('');
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -160,9 +184,16 @@ export function IndividualProfile() {
     );
   }
 
-  const startEditing = () => {
+  const startEditing = async () => {
     setEditName(person.name);
-    setEditCapacities([...person.capacities]);
+    setEditCapacities(
+      person.capacities.map(c => ({
+        capacityId: c.capacityId,
+        clusterId: c.clusterId,
+        clusterName: c.clusterName,
+        name: c.name,
+      })),
+    );
     // Ruhi books are driven by their units; only standalone courses
     // (JY texts, branch courses) carry an explicit course-level mark.
     const standaloneCourseIds = new Set(
@@ -183,7 +214,22 @@ export function IndividualProfile() {
     setEditPhone(person.phone ?? '');
     setEditPhotoFile(null);
     setEditPhotoPreview(null);
+    setAddValue('');
+    setAddNewName('');
     setEditing(true);
+
+    // Load the clusters this person belongs to and each one's capacity
+    // catalog, so the picker can offer the right per-cluster list.
+    const clusters = await fetchPersonClusters(id!);
+    setPersonClusters(clusters);
+    setAddClusterId(clusters.length === 1 ? clusters[0].id : '');
+    const catalogs: Record<string, ClusterCapacity[]> = {};
+    await Promise.all(
+      clusters.map(async c => {
+        catalogs[c.id] = await fetchClusterCapacities(c.id);
+      }),
+    );
+    setClusterCatalogs(catalogs);
   };
 
   const handleSave = async () => {
@@ -192,7 +238,6 @@ export function IndividualProfile() {
       const willBeMinor = isMinorForAgeGroup(editAgeGroup, editMinorOverride);
       await updatePersonBasic(id!, {
         name: editName,
-        capacities: editCapacities,
         ageGroup: editAgeGroup,
         minorOverride: ageGroupAllowsMinorToggle(editAgeGroup) ? editMinorOverride : undefined,
         profileStatus: editProfileStatus,
@@ -214,6 +259,14 @@ export function IndividualProfile() {
       }
       await syncCurriculumProgress(id!, { courses: desiredCourses, units: desiredUnits });
 
+      // Reconcile capacities against the per-cluster catalog (creating any
+      // newly-typed entries), then read back the canonical list with ids.
+      await savePersonCapacities(
+        id!,
+        editCapacities.map(c => ({ capacityId: c.capacityId, clusterId: c.clusterId, name: c.name })),
+      );
+      const savedCapacities = await fetchPersonCapacities(id!);
+
       let savedPhotoUrl = photoUrl;
       if (editPhotoFile) {
         savedPhotoUrl = await uploadProfilePhoto(id!, editPhotoFile);
@@ -227,7 +280,7 @@ export function IndividualProfile() {
       setPerson(prev => prev ? {
         ...prev,
         name: editName,
-        capacities: editCapacities,
+        capacities: savedCapacities,
         ageGroup: editAgeGroup,
         isMinor: willBeMinor,
         profileStatus: editProfileStatus,
@@ -267,10 +320,35 @@ export function IndividualProfile() {
     }
   };
 
-  const addCapacity = () => {
-    if (newCapacity.trim()) {
-      setEditCapacities(prev => [...prev, newCapacity.trim()]);
-      setNewCapacity('');
+  // `value` lets the dropdown's onChange add the just-selected entry
+  // without waiting for the addValue state update to flush.
+  const addCapacity = (value: string = addValue) => {
+    const cluster = personClusters.find(c => c.id === addClusterId);
+    if (!cluster) return;
+
+    if (value === NEW_CAPACITY) {
+      const name = addNewName.trim();
+      if (!name) return;
+      const dupe = editCapacities.some(
+        c => c.clusterId === cluster.id && c.name.toLowerCase() === name.toLowerCase(),
+      );
+      if (!dupe) {
+        setEditCapacities(prev => [...prev, { clusterId: cluster.id, clusterName: cluster.name, name }]);
+      }
+      setAddNewName('');
+      setAddValue('');
+      return;
+    }
+
+    if (value) {
+      const cap = (clusterCatalogs[cluster.id] ?? []).find(c => c.id === value);
+      if (cap && !editCapacities.some(c => c.capacityId === cap.id)) {
+        setEditCapacities(prev => [
+          ...prev,
+          { capacityId: cap.id, clusterId: cluster.id, clusterName: cluster.name, name: cap.name },
+        ]);
+      }
+      setAddValue('');
     }
   };
 
@@ -298,7 +376,15 @@ export function IndividualProfile() {
 
   const displayName = editing ? editName : person.name;
   const initials = displayName.split(' ').map(n => n[0]).join('').toUpperCase();
-  const capacities = editing ? editCapacities : person.capacities;
+  const capacities: Array<{ name: string; clusterName: string }> = editing
+    ? editCapacities
+    : person.capacities;
+  // Show the owning cluster alongside each capacity only when the person
+  // spans more than one cluster — otherwise it's just noise.
+  const showCapacityClusters = new Set(capacities.map(c => c.clusterName)).size > 1;
+  const addCatalog = (clusterCatalogs[addClusterId] ?? []).filter(
+    c => !editCapacities.some(ec => ec.capacityId === c.id),
+  );
 
   const curriculum = buildCurriculum(allCourses);
   const courseStatuses = editing
@@ -715,7 +801,14 @@ export function IndividualProfile() {
                       className="flex items-start gap-3 text-gray-700 bg-gray-50/80 border border-gray-100 px-4 py-3 rounded-xl"
                     >
                       <span className="text-amber-500 mt-0.5">●</span>
-                      <span className="flex-1 font-medium">{capacity}</span>
+                      <span className="flex-1 font-medium">
+                        {capacity.name}
+                        {showCapacityClusters && (
+                          <span className="ml-2 text-xs font-semibold text-gray-400">
+                            {capacity.clusterName}
+                          </span>
+                        )}
+                      </span>
                       {editing && (
                         <button
                           onClick={() => removeCapacity(idx)}
@@ -728,22 +821,77 @@ export function IndividualProfile() {
                   ))}
                 </ul>
                 {editing && (
-                  <div className="flex gap-2 mt-4">
-                    <input
-                      type="text"
-                      value={newCapacity}
-                      onChange={e => setNewCapacity(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && addCapacity()}
-                      placeholder="Add a new capacity..."
-                      className="flex-1 px-4 py-2.5 text-sm font-medium border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
-                    />
-                    <button
-                      onClick={addCapacity}
-                      className="px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-sm transition-colors"
-                    >
-                      <PlusIcon className="w-4 h-4" />
-                    </button>
-                  </div>
+                  personClusters.length === 0 ? (
+                    <p className="text-sm text-gray-400 italic bg-gray-50 border border-gray-100 px-4 py-3 rounded-xl mt-4">
+                      Add this person to a nucleus before recording capacities — each
+                      capacity belongs to a cluster's shared list.
+                    </p>
+                  ) : (
+                    <div className="mt-4 space-y-2">
+                      {personClusters.length > 1 && (
+                        <select
+                          value={addClusterId}
+                          onChange={e => {
+                            setAddClusterId(e.target.value);
+                            setAddValue('');
+                            setAddNewName('');
+                          }}
+                          className="w-full px-4 py-2.5 text-sm font-medium border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
+                        >
+                          <option value="">Select a cluster…</option>
+                          {personClusters.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      )}
+                      <div className="flex gap-2">
+                        <select
+                          value={addValue}
+                          disabled={!addClusterId}
+                          onChange={e => {
+                            const v = e.target.value;
+                            if (v === NEW_CAPACITY) {
+                              setAddValue(NEW_CAPACITY);
+                              setAddNewName('');
+                            } else {
+                              if (v) addCapacity(v);
+                              setAddValue('');
+                            }
+                          }}
+                          className="flex-1 px-4 py-2.5 text-sm font-medium border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm disabled:bg-gray-100 disabled:text-gray-400"
+                        >
+                          <option value="">
+                            {addCatalog.length === 0
+                              ? 'No existing capacities — add a new one'
+                              : 'Select an existing capacity…'}
+                          </option>
+                          {addCatalog.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                          <option value={NEW_CAPACITY}>+ New capacity…</option>
+                        </select>
+                      </div>
+                      {addValue === NEW_CAPACITY && (
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            autoFocus
+                            value={addNewName}
+                            onChange={e => setAddNewName(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && addCapacity()}
+                            placeholder="Name the new capacity…"
+                            className="flex-1 px-4 py-2.5 text-sm font-medium border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm"
+                          />
+                          <button
+                            onClick={addCapacity}
+                            className="px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 shadow-sm transition-colors"
+                          >
+                            <PlusIcon className="w-4 h-4" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
                 )}
                 {capacities.length === 0 && !editing && (
                   <p className="text-sm text-gray-400 italic bg-gray-50 border border-gray-100 px-4 py-3 rounded-xl">

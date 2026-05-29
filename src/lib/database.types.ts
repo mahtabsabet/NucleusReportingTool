@@ -78,6 +78,30 @@ export interface Database {
         Insert: Omit<Database['public']['Tables']['persons']['Row'], 'id' | 'created_at'> & { id?: string; created_at?: string };
         Update: Partial<Database['public']['Tables']['persons']['Insert']>;
       };
+      cluster_capacities: {
+        Row: {
+          id: string;
+          cluster_id: string;
+          name: string;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['cluster_capacities']['Row'], 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['cluster_capacities']['Insert']>;
+      };
+      person_capacities: {
+        Row: {
+          person_id: string;
+          capacity_id: string;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['person_capacities']['Row'], 'created_at'> & {
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['person_capacities']['Insert']>;
+      };
       nucleus_enrollments: {
         Row: {
           id: string;
