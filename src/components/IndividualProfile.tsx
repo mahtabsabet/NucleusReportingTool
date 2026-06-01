@@ -860,11 +860,7 @@ export function IndividualProfile() {
                           }}
                           className="flex-1 px-4 py-2.5 text-sm font-medium border border-gray-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent shadow-sm disabled:bg-gray-100 disabled:text-gray-400"
                         >
-                          <option value="">
-                            {addCatalog.length === 0
-                              ? 'No existing capacities — add a new one'
-                              : 'Select an existing capacity…'}
-                          </option>
+                          <option value="">Add a capacity…</option>
                           {addCatalog.map(c => (
                             <option key={c.id} value={c.id}>{c.name}</option>
                           ))}
