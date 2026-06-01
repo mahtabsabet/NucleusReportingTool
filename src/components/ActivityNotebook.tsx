@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ClockIcon,
+  CalendarIcon,
   LightbulbIcon,
   SproutIcon,
   FlagTriangleRightIcon,
@@ -9,12 +9,14 @@ import {
   PlusIcon,
   HelpCircleIcon,
   PencilIcon,
+  Trash2Icon,
 } from 'lucide-react';
 import {
   listEntriesForActivity,
   listThemesForNucleus,
   createActivityEntry,
   updateActivityEntry,
+  deleteActivityEntry,
   addThemesToEntry,
   removeThemeFromEntry,
   proposeTheme,
@@ -80,8 +82,18 @@ type ReadKey = typeof READ_FIELDS[number]['key'];
 function formatEntryDate(d: Date): string {
   return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
 }
-function formatEntryTime(d: Date): string {
-  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+// <input type="date"> works in local time; format/parse around
+// local noon so the chosen calendar day survives the UTC round-trip
+// to occurred_at regardless of the viewer's timezone.
+function toDateInputValue(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+function fromDateInputValue(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d, 12, 0, 0, 0);
 }
 
 export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: ActivityNotebookProps) {
@@ -91,6 +103,8 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
   const [composerOpen, setComposerOpen] = useState(false);
   const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
   const [editConfirmFor, setEditConfirmFor] = useState<string | null>(null);
+  const [deleteConfirmFor, setDeleteConfirmFor] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const visibleThemes = useMemo(() => themes.filter(t => t.status !== 'archived'), [themes]);
 
@@ -180,6 +194,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
                     availableThemes={visibleThemes}
                     readOnly={readOnly}
                     onStartEdit={() => setEditConfirmFor(entry.id)}
+                    onStartDelete={() => setDeleteConfirmFor(entry.id)}
                     onAddTheme={async (themeId) => { await addThemesToEntry(entry.id, [themeId]); await load(); }}
                     onRemoveTheme={async (themeId) => { await removeThemeFromEntry(entry.id, themeId); await load(); }}
                     onProposeTheme={async ({ name, color }) => {
@@ -212,6 +227,30 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
           setEditConfirmFor(null);
         }}
       />
+
+      <ConfirmDialog
+        open={!!deleteConfirmFor}
+        title="Delete this entry?"
+        message={
+          <>
+            This permanently removes the entry — its text, attendance, and
+            theme tags — for everyone. This cannot be undone. Continue?
+          </>
+        }
+        confirmLabel={deleting ? 'Deleting…' : 'Yes, delete'}
+        onCancel={() => { if (!deleting) setDeleteConfirmFor(null); }}
+        onConfirm={async () => {
+          if (!deleteConfirmFor || deleting) return;
+          setDeleting(true);
+          try {
+            await deleteActivityEntry(deleteConfirmFor);
+            setDeleteConfirmFor(null);
+            await load();
+          } finally {
+            setDeleting(false);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -224,6 +263,7 @@ interface EntryViewProps {
   availableThemes: LearningTheme[];
   readOnly: boolean;
   onStartEdit: () => void;
+  onStartDelete: () => void;
   onAddTheme: (themeId: string) => Promise<void> | void;
   onRemoveTheme: (themeId: string) => Promise<void> | void;
   onProposeTheme: (args: { name: string; color: string }) => Promise<void>;
@@ -231,7 +271,7 @@ interface EntryViewProps {
 
 function EntryView({
   entry, availableThemes, readOnly,
-  onStartEdit, onAddTheme, onRemoveTheme, onProposeTheme,
+  onStartEdit, onStartDelete, onAddTheme, onRemoveTheme, onProposeTheme,
 }: EntryViewProps) {
   const taggedIds = useMemo(() => new Set(entry.themes.map(t => t.id)), [entry.themes]);
   const addable = useMemo(
@@ -242,23 +282,30 @@ function EntryView({
     <article className="bg-white/60 border border-amber-900/15 rounded-xl px-4 sm:px-5 py-4 shadow-sm">
       <header className="flex items-baseline justify-between mb-3">
         <div className="flex items-center gap-2 text-stone-600">
-          <ClockIcon className="w-4 h-4 text-stone-400" />
-          <span className="font-medium text-sm">{formatEntryTime(entry.occurredAt)}</span>
-          <span className="text-stone-400">·</span>
-          <span className="font-journal italic text-sm">{formatEntryDate(entry.occurredAt)}</span>
+          <CalendarIcon className="w-4 h-4 text-stone-400" />
+          <span className="font-medium text-sm">{formatEntryDate(entry.occurredAt)}</span>
         </div>
         <div className="flex items-center gap-3">
           {entry.authorName && (
             <span className="font-journal italic text-xs text-stone-500">— {entry.authorName}</span>
           )}
           {!readOnly && (
-            <button
-              onClick={onStartEdit}
-              title="Edit entry"
-              className="p-1 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded transition"
-            >
-              <PencilIcon className="w-3.5 h-3.5" />
-            </button>
+            <>
+              <button
+                onClick={onStartEdit}
+                title="Edit entry"
+                className="p-1 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded transition"
+              >
+                <PencilIcon className="w-3.5 h-3.5" />
+              </button>
+              <button
+                onClick={onStartDelete}
+                title="Delete entry"
+                className="p-1 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded transition"
+              >
+                <Trash2Icon className="w-3.5 h-3.5" />
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -354,6 +401,11 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
   const [attendeeIds, setAttendeeIds] = useState<Set<string>>(
     new Set(initial?.attendees.map(a => a.id) ?? []),
   );
+  // Activity date. Create defaults to today; edit seeds from the
+  // entry's occurred_at.
+  const [activityDate, setActivityDate] = useState<string>(
+    toDateInputValue(initial?.occurredAt ?? new Date()),
+  );
   const [draftThemes, setDraftThemes] = useState<{ name: string; color: string }[]>([]);
   const [proposing, setProposing] = useState(false);
   const [newName, setNewName] = useState('');
@@ -409,6 +461,7 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
           ...values,
           themeIds: Array.from(selectedThemeIds),
           attendeeIds: Array.from(attendeeIds),
+          occurredAt: activityDate ? fromDateInputValue(activityDate) : undefined,
         },
         draftThemes,
       );
@@ -424,6 +477,33 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
           Editing entry
         </div>
       )}
+
+      {/* ─── Activity date ────────────────────────────────────── */}
+      <div className="flex gap-3 mb-4">
+        <CalendarIcon className="w-5 h-5 mt-1.5 flex-shrink-0 text-stone-600" />
+        <div className="flex-1">
+          <label className="font-handwritten text-lg leading-none text-stone-700">
+            Activity date
+          </label>
+          <div className="flex items-center gap-2 mt-1.5">
+            <input
+              type="date"
+              value={activityDate}
+              max={toDateInputValue(new Date())}
+              onChange={e => setActivityDate(e.target.value)}
+              className="font-journal text-stone-800 bg-transparent border-b border-dashed border-stone-300 focus:outline-none focus:border-stone-500 py-0.5"
+            />
+            <button
+              type="button"
+              onClick={() => setActivityDate(toDateInputValue(new Date()))}
+              className="text-xs font-medium text-stone-600 bg-white/60 border border-stone-300 rounded-md px-2.5 py-1 hover:bg-white"
+            >
+              Today
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div className="space-y-4">
         {COMPOSER_FIELDS.map(p => (
           <div key={p.key} className="flex gap-3">

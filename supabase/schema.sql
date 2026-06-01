@@ -542,6 +542,25 @@ create policy "Cluster coordinators withdraw archive notices" on journal_entries
     )
   );
 
+-- Delete a whole activity / nucleus entry. Mirrors the edit scope:
+-- author, activity-scope access, or CC/NC on the parent nucleus.
+-- Combines (OR) with the cluster archive-notice policy above.
+create policy "Delete own entries or as curator" on journal_entries
+  for delete using (
+    is_admin()
+    or author_id = auth.uid()
+    or (source = 'activity' and activity_id is not null and user_has_activity_access(activity_id))
+    or (source = 'nucleus' and nucleus_id is not null and exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+        and (
+          up.nucleus_id = journal_entries.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = journal_entries.nucleus_id)
+        )
+    ))
+  );
+
 create policy "Untag own entries" on journal_entry_themes
   for delete using (
     is_admin() or exists (

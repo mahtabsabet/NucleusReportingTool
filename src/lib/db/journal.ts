@@ -287,6 +287,9 @@ export interface NewActivityEntry {
   themeIds: string[];
   // Person IDs checked as attending this occurrence.
   attendeeIds: string[];
+  // The date the activity took place (the "Activity date"). Maps to
+  // occurred_at. Omitted on create defaults to now().
+  occurredAt?: Date;
 }
 
 export interface NewNucleusEntry {
@@ -353,6 +356,7 @@ export async function createActivityEntry(
       author_id: user?.id ?? null,
       what_happened: entry.whatHappened?.trim() || null,
       learning: entry.learning?.trim() || null,
+      ...(entry.occurredAt ? { occurred_at: entry.occurredAt.toISOString() } : {}),
     })
     .select(ENTRY_SELECT)
     .single();
@@ -399,6 +403,7 @@ export async function updateActivityEntry(
   };
   if (patch.whatHappened !== undefined) update.what_happened = patch.whatHappened?.trim() || null;
   if (patch.learning !== undefined)     update.learning      = patch.learning?.trim() || null;
+  if (patch.occurredAt !== undefined)   update.occurred_at   = patch.occurredAt.toISOString();
 
   const { data, error } = await supabase
     .from('journal_entries')
@@ -432,6 +437,17 @@ export async function updateActivityEntry(
   }
 
   return mapEntry(data);
+}
+
+// Delete an entry outright. Tagged themes and recorded attendance
+// cascade away via their FKs. Gated by the "Delete own entries or
+// as curator" RLS policy.
+export async function deleteActivityEntry(entryId: string): Promise<void> {
+  const { error } = await supabase
+    .from('journal_entries')
+    .delete()
+    .eq('id', entryId);
+  if (error) throw error;
 }
 
 export async function updateNucleusEntry(
