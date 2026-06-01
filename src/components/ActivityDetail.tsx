@@ -474,6 +474,23 @@ export function ActivityDetail() {
   const extraRoles = Object.keys(participants).filter(r => !expectedRoles.includes(r));
   const roles = [...expectedRoles.filter(r => r in participants), ...extraRoles];
 
+  // Flat, deduped roster of everyone on this activity (across all
+  // roles) for the notebook's attendance checkboxes. Built from the
+  // same `participants` state the roster UI edits, so adding a person
+  // above immediately adds their checkbox in the notebook.
+  const notebookRoster = (() => {
+    const seen = new Set<string>();
+    const out: { id: string; name: string }[] = [];
+    for (const ids of Object.values(participants)) {
+      for (const pid of ids) {
+        if (seen.has(pid)) continue;
+        seen.add(pid);
+        out.push({ id: pid, name: personNames[pid] ?? pid });
+      }
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  })();
+
   // Schedule editing is locked while the activity is in a terminal
   // state — the user has to flip it back to active/planned (via the
   // reactivation confirm) before mode chips, day pickers, or date
@@ -766,6 +783,7 @@ export function ActivityDetail() {
               activityId={activity.id}
               nucleusId={activity.nucleusId}
               readOnly={regionalOnly}
+              roster={notebookRoster}
             />
 
             {!regionalOnly && (

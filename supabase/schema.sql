@@ -341,6 +341,10 @@ create table journal_entries (
   edited_at         timestamptz,
   edited_by         uuid references profiles(id) on delete set null,
   what_happened     text,
+  -- Single free-text reflection that replaced the four detailed
+  -- prompts below in the Activity Notebook composer. The legacy
+  -- columns are retained so historical entries still render.
+  learning          text,
   encouraging_signs text,
   challenges        text,
   people_emerging   text,
@@ -360,14 +364,26 @@ create table journal_entry_themes (
   primary key (entry_id, theme_id)
 );
 
+-- Who attended the occurrence captured by an Activity Notebook
+-- entry. Drawn from the activity's standing roster at write time;
+-- queried by the data-freshness prompts.
+create table journal_entry_attendance (
+  entry_id   uuid not null references journal_entries(id) on delete cascade,
+  person_id  uuid not null references persons(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (entry_id, person_id)
+);
+
 create index on learning_themes (nucleus_id, status);
 create index on journal_entries (nucleus_id, occurred_at desc);
 create index on journal_entries (activity_id, occurred_at desc)
   where activity_id is not null;
 create index on journal_entry_themes (theme_id);
+create index on journal_entry_attendance (person_id);
 
-alter table learning_themes      enable row level security;
-alter table journal_entries      enable row level security;
+alter table learning_themes          enable row level security;
+alter table journal_entries          enable row level security;
+alter table journal_entry_attendance enable row level security;
 alter table journal_entry_themes enable row level security;
 
 create policy "Read themes in accessible nuclei" on learning_themes
@@ -543,6 +559,39 @@ create policy "Untag own entries" on journal_entry_themes
               )
           ))
         )
+    )
+  );
+
+-- journal_entry_attendance ------------------------------------
+
+create policy "Read attendance in accessible entries" on journal_entry_attendance
+  for select using (
+    is_admin() or exists (
+      select 1 from journal_entries e
+      where e.id = journal_entry_attendance.entry_id
+        and user_has_nucleus_access(e.nucleus_id)
+    )
+  );
+
+create policy "Record attendance on own entries" on journal_entry_attendance
+  for insert with check (
+    is_admin() or exists (
+      select 1 from journal_entries e
+      where e.id = journal_entry_attendance.entry_id
+        and e.source = 'activity'
+        and e.activity_id is not null
+        and user_has_activity_access(e.activity_id)
+    )
+  );
+
+create policy "Amend attendance on own entries" on journal_entry_attendance
+  for delete using (
+    is_admin() or exists (
+      select 1 from journal_entries e
+      where e.id = journal_entry_attendance.entry_id
+        and e.source = 'activity'
+        and e.activity_id is not null
+        and user_has_activity_access(e.activity_id)
     )
   );
 

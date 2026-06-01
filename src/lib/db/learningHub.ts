@@ -180,7 +180,7 @@ export async function listRepresentativeEntries(
     .from('journal_entries')
     .select(`
       id, nucleus_id, source, activity_id, cluster_id, author_id, occurred_at, created_at,
-      what_happened, encouraging_signs, challenges, people_emerging, follow_up, body,
+      what_happened, learning, encouraging_signs, challenges, people_emerging, follow_up, body,
       activities ( name ),
       nuclei ( name )
     `)
@@ -201,12 +201,14 @@ export async function listRepresentativeEntries(
     occurredAt: new Date(row.occurred_at),
     createdAt: new Date(row.created_at),
     whatHappened: row.what_happened ?? undefined,
+    learning: row.learning ?? undefined,
     encouragingSigns: row.encouraging_signs ?? undefined,
     challenges: row.challenges ?? undefined,
     peopleEmerging: row.people_emerging ?? undefined,
     followUp: row.follow_up ?? undefined,
     body: row.body ?? undefined,
     themes: [],
+    attendees: [],
   }));
 }
 
@@ -240,6 +242,7 @@ export async function listSynthesisEntries(
     editedByName: row.editor?.name ?? undefined,
     body: row.body ?? undefined,
     themes: [],
+    attendees: [],
   }));
 }
 
