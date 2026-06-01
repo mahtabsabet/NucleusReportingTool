@@ -402,6 +402,41 @@ export async function getActivityAttendance(
   return computeActivityAttendance(sessions, window);
 }
 
+// Attendance for several activities at once, keyed by activity id.
+// Used by the individual profile, which shows a person's attendance
+// for each activity they're part of, in a single query.
+export async function getActivitiesAttendance(
+  activityIds: string[],
+  window = 8,
+): Promise<Record<string, ActivityAttendance>> {
+  if (activityIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .select('id, activity_id, occurred_at, journal_entry_attendance ( person_id )')
+    .in('activity_id', activityIds)
+    .eq('source', 'activity')
+    .order('occurred_at', { ascending: true });
+  if (error) throw error;
+
+  const byActivity: Record<string, { date: Date; presentIds: string[] }[]> = {};
+  for (const row of (data ?? []) as any[]) {
+    const presentIds = [...new Set<string>(
+      (row.journal_entry_attendance ?? []).map((a: any) => a.person_id),
+    )];
+    if (presentIds.length === 0) continue;
+    (byActivity[row.activity_id] ??= []).push({
+      date: new Date(row.occurred_at),
+      presentIds,
+    });
+  }
+
+  const out: Record<string, ActivityAttendance> = {};
+  for (const aid of activityIds) {
+    out[aid] = computeActivityAttendance(byActivity[aid] ?? [], window);
+  }
+  return out;
+}
+
 // Default Nucleus Journal feed: nucleus-level entries only,
 // chronological. The two-page layout shows activity entries only
 // when filtered by a theme via listEntriesByTheme.

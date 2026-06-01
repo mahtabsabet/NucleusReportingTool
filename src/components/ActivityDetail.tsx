@@ -36,7 +36,7 @@ import {
 import { PersonNameCombobox } from './PersonNameCombobox';
 import { GlobalSearch } from './GlobalSearch';
 import { ActivityNotebook } from './ActivityNotebook';
-import { RecencyDot, AttendanceStrip } from './AttendanceIndicator';
+import { RecencyDot, AttendanceStrip, AttendanceLegend } from './AttendanceIndicator';
 import { getActivityAttendance, type ActivityAttendance } from '../lib/db/journal';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -736,25 +736,13 @@ export function ActivityDetail() {
               sidebar at right, deliberately quiet. */}
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
-              <div className="flex items-center justify-between gap-4 mb-6 flex-wrap">
+              <div className="mb-6">
                 <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider">
                   Participants by Role
                 </h3>
                 {recentCount > 0 && (
-                  <div className="flex items-center gap-3 text-xs text-gray-500">
-                    <span className="inline-flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" /> recent
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-amber-400" /> lapsing
-                    </span>
-                    <span className="inline-flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-gray-300" /> away
-                    </span>
-                    <span className="text-gray-300">·</span>
-                    <span title="Each dot is one of the last recorded sessions; filled = attended.">
-                      last {recentCount} session{recentCount === 1 ? '' : 's'}
-                    </span>
+                  <div className="mt-2">
+                    <AttendanceLegend recentCount={recentCount} />
                   </div>
                 )}
               </div>
