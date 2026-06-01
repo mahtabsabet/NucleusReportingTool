@@ -105,6 +105,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
   const [editConfirmFor, setEditConfirmFor] = useState<string | null>(null);
   const [deleteConfirmFor, setDeleteConfirmFor] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const visibleThemes = useMemo(() => themes.filter(t => t.status !== 'archived'), [themes]);
 
@@ -235,17 +236,25 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
           <>
             This permanently removes the entry — its text, attendance, and
             theme tags — for everyone. This cannot be undone. Continue?
+            {deleteError && (
+              <span className="block mt-3 text-rose-600 font-medium">{deleteError}</span>
+            )}
           </>
         }
         confirmLabel={deleting ? 'Deleting…' : 'Yes, delete'}
-        onCancel={() => { if (!deleting) setDeleteConfirmFor(null); }}
+        onCancel={() => { if (!deleting) { setDeleteConfirmFor(null); setDeleteError(null); } }}
         onConfirm={async () => {
           if (!deleteConfirmFor || deleting) return;
           setDeleting(true);
+          setDeleteError(null);
           try {
             await deleteActivityEntry(deleteConfirmFor);
             setDeleteConfirmFor(null);
             await load();
+          } catch (err) {
+            setDeleteError(
+              err instanceof Error ? err.message : 'Could not delete the entry. Please try again.',
+            );
           } finally {
             setDeleting(false);
           }

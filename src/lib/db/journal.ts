@@ -442,12 +442,24 @@ export async function updateActivityEntry(
 // Delete an entry outright. Tagged themes and recorded attendance
 // cascade away via their FKs. Gated by the "Delete own entries or
 // as curator" RLS policy.
+//
+// `.select()` makes the call return the deleted rows: under RLS a
+// blocked delete affects zero rows but raises NO error, which would
+// otherwise look like a success and let the entry quietly reappear
+// on the next reload. Treat an empty result as a hard failure.
 export async function deleteActivityEntry(entryId: string): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('journal_entries')
     .delete()
-    .eq('id', entryId);
+    .eq('id', entryId)
+    .select('id');
   if (error) throw error;
+  if (!data || data.length === 0) {
+    throw new Error(
+      'The entry could not be deleted. You may not have permission, ' +
+      'or the delete-policy migration has not been applied to this database.',
+    );
+  }
 }
 
 export async function updateNucleusEntry(
