@@ -307,6 +307,101 @@ export async function listEntriesForActivity(activityId: string): Promise<Journa
   return (data ?? []).map(mapEntry);
 }
 
+// ─── Attendance trends ───────────────────────────────────────
+
+export interface PersonAttendance {
+  attendedCount: number;        // total recorded sessions attended
+  lastAttended: Date | null;    // most recent session attended
+  // Presence over the most recent N recorded sessions, oldest →
+  // newest. Length ≤ window; aligns with `recentSessionDates`.
+  recent: boolean[];
+}
+
+export interface ActivityAttendance {
+  // Count of "sessions" = notebook entries that recorded at least
+  // one attendee. Entries with no attendance recorded are ignored
+  // so unlogged sessions don't read as everyone being absent.
+  sessionCount: number;
+  // Dates of the most recent N sessions, oldest → newest.
+  recentSessionDates: Date[];
+  byPerson: Record<string, PersonAttendance>;
+}
+
+// Recency tone for one person's recent strip. Session-based so it
+// doesn't assume a fixed cadence:
+//   green — present at the most recent recorded session
+//   amber — missed the last but present within the last 3
+//   grey  — absent from the last 3 (or no history)
+export type RecencyTone = 'green' | 'amber' | 'grey';
+
+export function recencyTone(recent: boolean[]): RecencyTone {
+  if (recent.length > 0 && recent[recent.length - 1]) return 'green';
+  if (recent.slice(-3).some(Boolean)) return 'amber';
+  return 'grey';
+}
+
+// Pure aggregation, split out so it can be unit-tested without a DB.
+// `sessions` must be ALL sessions oldest → newest (each = a notebook
+// entry that recorded ≥1 attendee).
+export function computeActivityAttendance(
+  sessions: { date: Date; presentIds: string[] }[],
+  window = 8,
+): ActivityAttendance {
+  const recentSessions = sessions.slice(-window);
+  const byPerson: Record<string, PersonAttendance> = {};
+
+  for (const s of sessions) {
+    for (const pid of s.presentIds) {
+      const p = byPerson[pid] ?? (byPerson[pid] = {
+        attendedCount: 0,
+        lastAttended: null,
+        recent: [],
+      });
+      p.attendedCount += 1;
+      if (!p.lastAttended || s.date > p.lastAttended) p.lastAttended = s.date;
+    }
+  }
+  // Fill the recent strip for everyone who has any history.
+  for (const pid of Object.keys(byPerson)) {
+    byPerson[pid].recent = recentSessions.map(s => s.presentIds.includes(pid));
+  }
+
+  return {
+    sessionCount: sessions.length,
+    recentSessionDates: recentSessions.map(s => s.date),
+    byPerson,
+  };
+}
+
+// Per-person attendance signal for one activity, derived from its
+// notebook entries. Used by the participant roster to show a
+// recency dot + a strip of recent sessions next to each name.
+export async function getActivityAttendance(
+  activityId: string,
+  window = 8,
+): Promise<ActivityAttendance> {
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .select('id, occurred_at, journal_entry_attendance ( person_id )')
+    .eq('activity_id', activityId)
+    .eq('source', 'activity')
+    .order('occurred_at', { ascending: true });
+  if (error) throw error;
+
+  // Keep only entries that actually recorded attendance, oldest →
+  // newest. Each becomes one "session".
+  const sessions = (data ?? [])
+    .map((row: any) => ({
+      date: new Date(row.occurred_at),
+      presentIds: [...new Set<string>(
+        (row.journal_entry_attendance ?? []).map((a: any) => a.person_id),
+      )],
+    }))
+    .filter(s => s.presentIds.length > 0);
+
+  return computeActivityAttendance(sessions, window);
+}
+
 // Default Nucleus Journal feed: nucleus-level entries only,
 // chronological. The two-page layout shows activity entries only
 // when filtered by a theme via listEntriesByTheme.

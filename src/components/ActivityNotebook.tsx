@@ -42,6 +42,10 @@ interface ActivityNotebookProps {
   // The activity's standing participant roster (deduped across
   // roles). Drives the attendance checkboxes in the composer.
   roster: RosterPerson[];
+  // Fired after an entry is created, edited, or deleted, so the
+  // parent can refresh anything derived from entries (e.g. the
+  // attendance trends shown on the roster).
+  onEntriesChanged?: () => void;
 }
 
 // The two fields the composer captures today. `learning` replaced
@@ -96,7 +100,7 @@ function fromDateInputValue(s: string): Date {
   return new Date(y, m - 1, d, 12, 0, 0, 0);
 }
 
-export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: ActivityNotebookProps) {
+export function ActivityNotebook({ activityId, nucleusId, readOnly, roster, onEntriesChanged }: ActivityNotebookProps) {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [themes, setThemes] = useState<LearningTheme[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,6 +125,10 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
       setLoading(false);
     }
   };
+
+  // Reload after a create/edit/delete and notify the parent so
+  // entry-derived UI (attendance trends) refreshes too.
+  const reload = async () => { await load(); onEntriesChanged?.(); };
 
   useEffect(() => { load(); }, [activityId, nucleusId]);
 
@@ -159,7 +167,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
               const allThemeIds = [...entry.themeIds, ...created.map(t => t.id)];
               await createActivityEntry(nucleusId, activityId, { ...entry, themeIds: allThemeIds });
               setComposerOpen(false);
-              await load();
+              await reload();
             }}
           />
         )}
@@ -185,7 +193,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
                     onSubmit={async (patch) => {
                       await updateActivityEntry(entry.id, patch);
                       setEditingEntryId(null);
-                      await load();
+                      await reload();
                     }}
                   />
                 ) : (
@@ -245,7 +253,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: Ac
           try {
             await deleteActivityEntry(deleteConfirmFor);
             setDeleteConfirmFor(null);
-            await load();
+            await reload();
           } finally {
             setDeleting(false);
           }
