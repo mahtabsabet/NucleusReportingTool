@@ -46,6 +46,8 @@ import {
 } from '../lib/db/capacities';
 import { GlobalSearch } from './GlobalSearch';
 import { CurriculumProgress } from './CurriculumProgress';
+import { AttendanceBadge } from './AttendanceIndicator';
+import { getActivitiesAttendance, type ActivityAttendance } from '../lib/db/journal';
 
 // A capacity being edited on the profile. `capacityId` is set for entries
 // already in a cluster's catalog; absent for a brand-new one being typed,
@@ -78,6 +80,8 @@ export function IndividualProfile() {
 
   const [person, setPerson] = useState<PersonDetail | null>(null);
   const [allCourses, setAllCourses] = useState<Course[]>([]);
+  // This person's attendance per activity, keyed by activity id.
+  const [attendance, setAttendance] = useState<Record<string, ActivityAttendance>>({});
   const [loading, setLoading] = useState(true);
 
   const [editing, setEditing] = useState(false);
@@ -135,6 +139,15 @@ export function IndividualProfile() {
         setPhotoUrl(p.photoUrl);
       }
       setLoading(false);
+      // Attendance trends for this person across their activities,
+      // in a single query. Non-blocking — the cards render first.
+      if (p && p.activities.length > 0) {
+        getActivitiesAttendance(p.activities.map(a => a.activityId))
+          .then(setAttendance)
+          .catch(() => setAttendance({}));
+      } else {
+        setAttendance({});
+      }
     });
   }, [id]);
 
@@ -925,30 +938,36 @@ export function IndividualProfile() {
                 person.activities.map(activity => (
                   <div
                     key={activity.activityId}
-                    className="flex items-center justify-between bg-white border border-gray-200/80 px-5 py-4 rounded-xl shadow-sm hover:border-blue-200 hover:shadow-md transition-all duration-200"
+                    className="bg-white border border-gray-200/80 px-5 py-4 rounded-xl shadow-sm hover:border-blue-200 hover:shadow-md transition-all duration-200"
                   >
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center">
-                        <span className="text-blue-600 text-lg">📚</span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center">
+                          <span className="text-blue-600 text-lg">📚</span>
+                        </div>
+                        <div>
+                          <p className="font-bold text-gray-900 tracking-tight">{activity.activityName}</p>
+                          <p className="text-sm font-medium text-gray-500 mt-0.5">
+                            Role:{' '}
+                            <span className="text-gray-700">
+                              {ROLE_DISPLAY[activity.role] ?? activity.role}
+                            </span>
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-bold text-gray-900 tracking-tight">{activity.activityName}</p>
-                        <p className="text-sm font-medium text-gray-500 mt-0.5">
-                          Role:{' '}
-                          <span className="text-gray-700">
-                            {ROLE_DISPLAY[activity.role] ?? activity.role}
-                          </span>
-                        </p>
-                      </div>
+                      <button
+                        onClick={() =>
+                          navigate(`/nucleus/${activity.nucleusId}/activity/${activity.activityId}`)
+                        }
+                        className="text-blue-600 hover:text-blue-800 font-semibold text-sm bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+                      >
+                        View
+                      </button>
                     </div>
-                    <button
-                      onClick={() =>
-                        navigate(`/nucleus/${activity.nucleusId}/activity/${activity.activityId}`)
-                      }
-                      className="text-blue-600 hover:text-blue-800 font-semibold text-sm bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                      View
-                    </button>
+                    <AttendanceBadge
+                      data={attendance[activity.activityId]?.byPerson[id ?? '']}
+                      recentSessionDates={attendance[activity.activityId]?.recentSessionDates ?? []}
+                    />
                   </div>
                 ))
               ) : (

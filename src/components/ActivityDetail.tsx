@@ -4,7 +4,6 @@ import {
   ChevronLeftIcon,
   XIcon,
   CheckIcon,
-  UserIcon,
   ClockIcon,
   Trash2Icon,
   PlayCircleIcon,
@@ -37,6 +36,8 @@ import {
 import { PersonNameCombobox } from './PersonNameCombobox';
 import { GlobalSearch } from './GlobalSearch';
 import { ActivityNotebook } from './ActivityNotebook';
+import { RecencyDot, AttendanceStrip, AttendanceLegend } from './AttendanceIndicator';
+import { getActivityAttendance, type ActivityAttendance } from '../lib/db/journal';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -131,6 +132,7 @@ export function ActivityDetail() {
   const [nucleusName, setNucleusName] = useState('');
   const [personNames, setPersonNames] = useState<Record<string, string>>({});
   const [participants, setParticipants] = useState<Record<string, string[]>>({});
+  const [attendance, setAttendance] = useState<ActivityAttendance | null>(null);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [schedule, setSchedule] = useState('');
@@ -188,6 +190,18 @@ export function ActivityDetail() {
       );
     });
   }, []);
+
+  // Attendance trends, derived from this activity's notebook
+  // entries. Loaded independently so the roster renders immediately
+  // and the indicators fill in when ready. Refreshed whenever the
+  // roster changes (a removal/add may shift who's shown).
+  const loadAttendance = () => {
+    if (!activityId) return;
+    getActivityAttendance(activityId)
+      .then(setAttendance)
+      .catch(() => setAttendance(null));
+  };
+  useEffect(() => { loadAttendance(); }, [activityId]);
 
   useEffect(() => {
     if (!activityId) return;
@@ -491,6 +505,10 @@ export function ActivityDetail() {
     return out.sort((a, b) => a.name.localeCompare(b.name));
   })();
 
+  // Number of recorded sessions in the attendance window; 0 hides
+  // every indicator (activity has no attendance logged yet).
+  const recentCount = attendance?.recentSessionDates.length ?? 0;
+
   // Schedule editing is locked while the activity is in a terminal
   // state — the user has to flip it back to active/planned (via the
   // reactivation confirm) before mode chips, day pickers, or date
@@ -718,36 +736,52 @@ export function ActivityDetail() {
               sidebar at right, deliberately quiet. */}
           <div className="lg:col-span-2 space-y-6">
             <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-5 sm:p-8">
-              <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider mb-6">
-                Participants by Role
-              </h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="mb-6">
+                <h3 className="font-bold text-gray-900 text-sm uppercase tracking-wider">
+                  Participants by Role
+                </h3>
+                {recentCount > 0 && (
+                  <div className="mt-2">
+                    <AttendanceLegend recentCount={recentCount} />
+                  </div>
+                )}
+              </div>
+              <div className="space-y-7">
                 {roles.map(role => (
-                  <div key={role} className="space-y-4">
-                    <h3 className="font-bold text-gray-900 capitalize border-b border-gray-100 pb-3 tracking-tight">
+                  <div key={role}>
+                    <h4 className="font-bold text-gray-900 capitalize border-b border-gray-100 pb-2 mb-3 tracking-tight flex items-baseline gap-2">
                       {ROLE_DISPLAY[role] ?? role}
-                    </h3>
-                    <div className="space-y-2.5">
+                      <span className="text-xs font-medium text-gray-400 tabular-nums">
+                        {(participants[role] ?? []).length}
+                      </span>
+                    </h4>
+                    <div className="flex flex-wrap gap-2">
                       {(participants[role] ?? []).map(pid => {
                         const name = personNames[pid] ?? pid;
                         return (
                           <div
                             key={pid}
-                            className="flex items-center justify-between bg-gray-50/80 border border-gray-100 px-3.5 py-2.5 rounded-xl group hover:border-blue-200 transition-colors duration-200"
+                            className="flex items-center gap-2.5 bg-gray-50/80 border border-gray-100 pl-3 pr-2 py-1.5 rounded-xl group hover:border-blue-200 transition-colors duration-200"
                           >
+                            <RecencyDot
+                              data={attendance?.byPerson[pid]}
+                              recentCount={recentCount}
+                            />
                             <button
                               onClick={() => navigate(`/individual/${pid}`)}
-                              className="text-sm font-semibold flex items-center gap-2 text-blue-700 hover:text-blue-900"
+                              className="text-sm font-semibold text-blue-700 hover:text-blue-900"
                             >
-                              <div className="p-1 rounded-full bg-blue-100">
-                                <UserIcon className="w-3 h-3" />
-                              </div>
                               {name}
                             </button>
+                            <AttendanceStrip
+                              data={attendance?.byPerson[pid]}
+                              recentCount={recentCount}
+                            />
                             {!regionalOnly && (
                               <button
                                 onClick={() => removeParticipant(role, pid)}
                                 className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all duration-200"
+                                title={`Remove ${name}`}
                               >
                                 <XIcon className="w-4 h-4" />
                               </button>
@@ -757,10 +791,12 @@ export function ActivityDetail() {
                       })}
                     </div>
                     {!regionalOnly && (
-                      <PersonNameCombobox
-                        placeholder="Add name..."
-                        onAdd={params => addParticipantToRole(role, params)}
-                      />
+                      <div className="mt-2.5 max-w-xs">
+                        <PersonNameCombobox
+                          placeholder="Add name..."
+                          onAdd={params => addParticipantToRole(role, params)}
+                        />
+                      </div>
                     )}
                   </div>
                 ))}
@@ -784,6 +820,7 @@ export function ActivityDetail() {
               nucleusId={activity.nucleusId}
               readOnly={regionalOnly}
               roster={notebookRoster}
+              onEntriesChanged={loadAttendance}
             />
 
             {!regionalOnly && (
