@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ClockIcon,
-  UsersIcon,
+  LightbulbIcon,
   SproutIcon,
   FlagTriangleRightIcon,
   UserPlusIcon,
@@ -28,20 +28,54 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { NotebookSpiral } from './NotebookSpiral';
 import { EntryTabs } from './EntryTabs';
 
+interface RosterPerson {
+  id: string;
+  name: string;
+}
+
 interface ActivityNotebookProps {
   activityId: string;
   nucleusId: string;
   readOnly: boolean;
+  // The activity's standing participant roster (deduped across
+  // roles). Drives the attendance checkboxes in the composer.
+  roster: RosterPerson[];
 }
 
-const PROMPTS = [
-  { key: 'whatHappened',      label: 'What happened?',     Icon: UsersIcon,             color: 'text-violet-700' },
-  { key: 'encouragingSigns',  label: 'Encouraging signs',  Icon: SproutIcon,            color: 'text-emerald-700' },
-  { key: 'challenges',        label: 'Challenges',         Icon: FlagTriangleRightIcon, color: 'text-rose-700' },
-  { key: 'peopleEmerging',    label: 'People emerging',    Icon: UserPlusIcon,          color: 'text-sky-700' },
-  { key: 'followUp',          label: 'Follow-up needed',   Icon: CornerUpRightIcon,     color: 'text-amber-700' },
+// The two fields the composer captures today. `learning` replaced
+// the four detailed prompts below.
+const COMPOSER_FIELDS = [
+  {
+    key: 'whatHappened',
+    label: 'What happened?',
+    Icon: PencilIcon,
+    color: 'text-violet-700',
+    placeholder: 'Describe what happened during the activity…',
+  },
+  {
+    key: 'learning',
+    label: 'Learning',
+    hint: '(insights, questions, etc.)',
+    Icon: LightbulbIcon,
+    color: 'text-emerald-700',
+    placeholder: 'What are we learning? Any insights, questions, or next steps?',
+  },
 ] as const;
-type PromptKey = typeof PROMPTS[number]['key'];
+type ComposerKey = typeof COMPOSER_FIELDS[number]['key'];
+
+// Every field rendered in the read view, in display order. The
+// trailing four are legacy prompts that the composer no longer
+// offers; they stay here so historical entries keep showing their
+// original text.
+const READ_FIELDS = [
+  { key: 'whatHappened',     label: 'What happened?',    Icon: PencilIcon,            color: 'text-violet-700' },
+  { key: 'learning',         label: 'Learning',          Icon: LightbulbIcon,         color: 'text-emerald-700' },
+  { key: 'encouragingSigns', label: 'Encouraging signs', Icon: SproutIcon,            color: 'text-emerald-700' },
+  { key: 'challenges',       label: 'Challenges',        Icon: FlagTriangleRightIcon, color: 'text-rose-700' },
+  { key: 'peopleEmerging',   label: 'People emerging',   Icon: UserPlusIcon,          color: 'text-sky-700' },
+  { key: 'followUp',         label: 'Follow-up needed',  Icon: CornerUpRightIcon,     color: 'text-amber-700' },
+] as const;
+type ReadKey = typeof READ_FIELDS[number]['key'];
 
 function formatEntryDate(d: Date): string {
   return d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
@@ -50,7 +84,7 @@ function formatEntryTime(d: Date): string {
   return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNotebookProps) {
+export function ActivityNotebook({ activityId, nucleusId, readOnly, roster }: ActivityNotebookProps) {
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [themes, setThemes] = useState<LearningTheme[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,6 +135,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
           <EntryComposer
             mode="create"
             themes={visibleThemes}
+            roster={roster}
             onCancel={() => setComposerOpen(false)}
             onSubmit={async (entry, newThemes) => {
               const created: LearningTheme[] = [];
@@ -131,6 +166,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly }: ActivityNo
                     mode="edit"
                     initial={entry}
                     themes={visibleThemes}
+                    roster={roster}
                     onCancel={() => setEditingEntryId(null)}
                     onSubmit={async (patch) => {
                       await updateActivityEntry(entry.id, patch);
@@ -228,8 +264,8 @@ function EntryView({
       </header>
 
       <div className="space-y-3">
-        {PROMPTS.map(p => {
-          const value = entry[p.key as PromptKey];
+        {READ_FIELDS.map(p => {
+          const value = entry[p.key as ReadKey];
           if (!value) return null;
           return (
             <div key={p.key} className="flex gap-3">
@@ -241,8 +277,31 @@ function EntryView({
             </div>
           );
         })}
-        {entry.body && !PROMPTS.some(p => entry[p.key as PromptKey]) && (
+        {entry.body && !READ_FIELDS.some(p => entry[p.key as ReadKey]) && (
           <p className="font-journal text-stone-700 whitespace-pre-wrap">{entry.body}</p>
+        )}
+        {entry.attendees.length > 0 && (
+          <div className="flex gap-3">
+            <UserPlusIcon className="w-5 h-5 mt-0.5 flex-shrink-0 text-sky-700" />
+            <div>
+              <div className="font-handwritten text-lg leading-none text-sky-700">
+                Attendance
+                <span className="font-journal text-sm text-stone-500 ml-2">
+                  {entry.attendees.length} {entry.attendees.length === 1 ? 'person' : 'people'}
+                </span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-1.5">
+                {entry.attendees.map(a => (
+                  <span
+                    key={a.id}
+                    className="inline-flex items-center text-sm font-journal text-stone-700 bg-white/70 border border-amber-900/15 rounded-full px-2.5 py-0.5"
+                  >
+                    {a.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
         )}
       </div>
 
@@ -274,6 +333,7 @@ interface ComposerProps {
   mode: 'create' | 'edit';
   initial?: JournalEntry;
   themes: LearningTheme[];
+  roster: RosterPerson[];
   onCancel: () => void;
   onSubmit: (
     entry: NewActivityEntry,
@@ -281,16 +341,18 @@ interface ComposerProps {
   ) => Promise<void>;
 }
 
-function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerProps) {
-  const [values, setValues] = useState<Record<PromptKey, string>>({
+function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: ComposerProps) {
+  const [values, setValues] = useState<Record<ComposerKey, string>>({
     whatHappened: initial?.whatHappened ?? '',
-    encouragingSigns: initial?.encouragingSigns ?? '',
-    challenges: initial?.challenges ?? '',
-    peopleEmerging: initial?.peopleEmerging ?? '',
-    followUp: initial?.followUp ?? '',
+    learning: initial?.learning ?? '',
   });
   const [selectedThemeIds, setSelectedThemeIds] = useState<Set<string>>(
     new Set(initial?.themes.map(t => t.id) ?? []),
+  );
+  // Attendance. Create starts empty (all unchecked); edit seeds
+  // from whoever was recorded on the entry.
+  const [attendeeIds, setAttendeeIds] = useState<Set<string>>(
+    new Set(initial?.attendees.map(a => a.id) ?? []),
   );
   const [draftThemes, setDraftThemes] = useState<{ name: string; color: string }[]>([]);
   const [proposing, setProposing] = useState(false);
@@ -299,6 +361,26 @@ function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerPr
   const [saving, setSaving] = useState(false);
 
   const hasContent = Object.values(values).some(v => v.trim().length > 0);
+
+  const toggleAttendee = (id: string) => {
+    setAttendeeIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  // People shown as checkboxes: the live roster, plus anyone the
+  // entry already recorded who has since left the roster (edit
+  // mode) so we never silently drop a recorded attendee.
+  const attendanceChoices = useMemo<RosterPerson[]>(() => {
+    const byId = new Map<string, RosterPerson>();
+    for (const p of roster) byId.set(p.id, p);
+    for (const a of initial?.attendees ?? []) {
+      if (!byId.has(a.id)) byId.set(a.id, { id: a.id, name: a.name });
+    }
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [roster, initial]);
 
   const toggleTheme = (id: string) => {
     setSelectedThemeIds(prev => {
@@ -323,7 +405,11 @@ function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerPr
     setSaving(true);
     try {
       await onSubmit(
-        { ...values, themeIds: Array.from(selectedThemeIds) },
+        {
+          ...values,
+          themeIds: Array.from(selectedThemeIds),
+          attendeeIds: Array.from(attendeeIds),
+        },
         draftThemes,
       );
     } finally {
@@ -338,22 +424,67 @@ function EntryComposer({ mode, initial, themes, onCancel, onSubmit }: ComposerPr
           Editing entry
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {PROMPTS.map(p => (
+      <div className="space-y-4">
+        {COMPOSER_FIELDS.map(p => (
           <div key={p.key} className="flex gap-3">
             <p.Icon className={`w-5 h-5 mt-1.5 flex-shrink-0 ${p.color}`} />
             <div className="flex-1">
-              <label className={`font-handwritten text-lg leading-none ${p.color}`}>{p.label}</label>
+              <label className={`font-handwritten text-lg leading-none ${p.color}`}>
+                {p.label}
+                {'hint' in p && p.hint && (
+                  <span className="font-journal text-sm text-stone-500 ml-2">{p.hint}</span>
+                )}
+              </label>
               <textarea
-                value={values[p.key as PromptKey]}
+                value={values[p.key as ComposerKey]}
                 onChange={e => setValues(v => ({ ...v, [p.key]: e.target.value }))}
-                rows={2}
+                rows={3}
                 className="mt-1 w-full font-journal text-stone-800 bg-transparent border-b border-dashed border-stone-300 focus:outline-none focus:border-stone-500 resize-none placeholder:text-stone-400 placeholder:italic"
-                placeholder="…"
+                placeholder={p.placeholder}
               />
             </div>
           </div>
         ))}
+      </div>
+
+      {/* ─── Attendance ───────────────────────────────────────── */}
+      <div className="mt-5 pt-4 border-t border-amber-900/10">
+        <div className="flex items-baseline gap-2 mb-1">
+          <div className="flex items-center gap-2">
+            <UserPlusIcon className="w-5 h-5 text-sky-700" />
+            <span className="font-handwritten text-lg leading-none text-sky-700">Attendance</span>
+          </div>
+          <span className="font-journal text-sm text-stone-500">Check who attended this activity.</span>
+        </div>
+        {attendanceChoices.length === 0 ? (
+          <p className="font-journal italic text-sm text-stone-500 mt-2">
+            No one is on this activity's participant list yet. Add participants under
+            “Participants by Role” above and they'll appear here to check off.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-4 gap-y-2 mt-2">
+              {attendanceChoices.map(p => (
+                <label
+                  key={p.id}
+                  className="flex items-center gap-2 text-sm font-journal text-stone-700 cursor-pointer select-none"
+                >
+                  <input
+                    type="checkbox"
+                    checked={attendeeIds.has(p.id)}
+                    onChange={() => toggleAttendee(p.id)}
+                    className="w-4 h-4 rounded border-stone-400 text-sky-700 focus:ring-sky-500"
+                  />
+                  {p.name}
+                </label>
+              ))}
+            </div>
+            <p className="font-journal italic text-xs text-stone-500 mt-3">
+              If anyone not listed here attended, please add them to the activity
+              participants list above — they'll then appear as a checkbox.
+            </p>
+          </>
+        )}
       </div>
 
       {mode === 'create' && (

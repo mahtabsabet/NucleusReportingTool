@@ -45,6 +45,14 @@ function mapEntry(row: any): JournalEntry {
         .map((j: any) => (j.learning_themes ? mapTheme(j.learning_themes) : null))
         .filter((t: LearningTheme | null): t is LearningTheme => t !== null)
     : [];
+  const attendees: { id: string; name: string }[] = Array.isArray(row.journal_entry_attendance)
+    ? row.journal_entry_attendance
+        .map((a: any) =>
+          a.persons ? { id: a.persons.id, name: a.persons.name } : null,
+        )
+        .filter((p: { id: string; name: string } | null): p is { id: string; name: string } => p !== null)
+        .sort((a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name))
+    : [];
   return {
     id: row.id,
     nucleusId: row.nucleus_id ?? undefined,
@@ -61,12 +69,14 @@ function mapEntry(row: any): JournalEntry {
     editedAt: row.edited_at ? new Date(row.edited_at) : undefined,
     editedByName: row.editor?.name ?? undefined,
     whatHappened: row.what_happened ?? undefined,
+    learning: row.learning ?? undefined,
     encouragingSigns: row.encouraging_signs ?? undefined,
     challenges: row.challenges ?? undefined,
     peopleEmerging: row.people_emerging ?? undefined,
     followUp: row.follow_up ?? undefined,
     body: row.body ?? undefined,
     themes,
+    attendees,
   };
 }
 
@@ -75,13 +85,16 @@ function mapEntry(row: any): JournalEntry {
 const ENTRY_SELECT = `
   id, nucleus_id, source, activity_id, cluster_id, cluster_theme_id,
   author_id, occurred_at, created_at, edited_at, edited_by,
-  what_happened, encouraging_signs, challenges, people_emerging, follow_up, body,
+  what_happened, learning, encouraging_signs, challenges, people_emerging, follow_up, body,
   activities ( name ),
   nuclei ( name ),
   author:profiles!journal_entries_author_id_fkey ( name ),
   editor:profiles!journal_entries_edited_by_fkey ( name ),
   journal_entry_themes (
     learning_themes ( id, nucleus_id, cluster_theme_id, name, description, color, status, proposed_by, proposed_at, promoted_at, merged_into_id, pushed_from_cluster )
+  ),
+  journal_entry_attendance (
+    persons ( id, name )
   )
 `;
 
@@ -270,11 +283,10 @@ export async function mergeThemes(sourceId: string, targetId: string): Promise<v
 
 export interface NewActivityEntry {
   whatHappened?: string;
-  encouragingSigns?: string;
-  challenges?: string;
-  peopleEmerging?: string;
-  followUp?: string;
+  learning?: string;
   themeIds: string[];
+  // Person IDs checked as attending this occurrence.
+  attendeeIds: string[];
 }
 
 export interface NewNucleusEntry {
@@ -340,10 +352,7 @@ export async function createActivityEntry(
       activity_id: activityId,
       author_id: user?.id ?? null,
       what_happened: entry.whatHappened?.trim() || null,
-      encouraging_signs: entry.encouragingSigns?.trim() || null,
-      challenges: entry.challenges?.trim() || null,
-      people_emerging: entry.peopleEmerging?.trim() || null,
-      follow_up: entry.followUp?.trim() || null,
+      learning: entry.learning?.trim() || null,
     })
     .select(ENTRY_SELECT)
     .single();
@@ -354,6 +363,24 @@ export async function createActivityEntry(
       .from('journal_entry_themes')
       .insert(entry.themeIds.map(theme_id => ({ entry_id: (data as any).id, theme_id })));
     if (tagErr) throw tagErr;
+  }
+
+  if (entry.attendeeIds.length > 0) {
+    const { error: attErr } = await supabase
+      .from('journal_entry_attendance')
+      .insert(entry.attendeeIds.map(person_id => ({ entry_id: (data as any).id, person_id })));
+    if (attErr) throw attErr;
+  }
+
+  // Re-fetch so the returned entry carries the attendance join we
+  // just wrote (the insert above happens after the select).
+  if (entry.attendeeIds.length > 0) {
+    const { data: refetched } = await supabase
+      .from('journal_entries')
+      .select(ENTRY_SELECT)
+      .eq('id', (data as any).id)
+      .single();
+    if (refetched) return mapEntry(refetched);
   }
 
   return mapEntry(data);
@@ -370,11 +397,8 @@ export async function updateActivityEntry(
     edited_at: new Date().toISOString(),
     edited_by: user?.id ?? null,
   };
-  if (patch.whatHappened !== undefined)     update.what_happened     = patch.whatHappened?.trim() || null;
-  if (patch.encouragingSigns !== undefined) update.encouraging_signs = patch.encouragingSigns?.trim() || null;
-  if (patch.challenges !== undefined)       update.challenges        = patch.challenges?.trim() || null;
-  if (patch.peopleEmerging !== undefined)   update.people_emerging   = patch.peopleEmerging?.trim() || null;
-  if (patch.followUp !== undefined)         update.follow_up         = patch.followUp?.trim() || null;
+  if (patch.whatHappened !== undefined) update.what_happened = patch.whatHappened?.trim() || null;
+  if (patch.learning !== undefined)     update.learning      = patch.learning?.trim() || null;
 
   const { data, error } = await supabase
     .from('journal_entries')
@@ -383,6 +407,30 @@ export async function updateActivityEntry(
     .select(ENTRY_SELECT)
     .single();
   if (error) throw error;
+
+  // Replace the attendance set when the edit supplied one. Delete-
+  // then-insert keeps the join in sync with the checkboxes the user
+  // left ticked, including clearing it to empty.
+  if (patch.attendeeIds !== undefined) {
+    const { error: delErr } = await supabase
+      .from('journal_entry_attendance')
+      .delete()
+      .eq('entry_id', entryId);
+    if (delErr) throw delErr;
+    if (patch.attendeeIds.length > 0) {
+      const { error: insErr } = await supabase
+        .from('journal_entry_attendance')
+        .insert(patch.attendeeIds.map(person_id => ({ entry_id: entryId, person_id })));
+      if (insErr) throw insErr;
+    }
+    const { data: refetched } = await supabase
+      .from('journal_entries')
+      .select(ENTRY_SELECT)
+      .eq('id', entryId)
+      .single();
+    if (refetched) return mapEntry(refetched);
+  }
+
   return mapEntry(data);
 }
 

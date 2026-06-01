@@ -216,6 +216,10 @@ export interface JournalEntry {
   editedByName?: string;
   // Activity-style prompts (all optional)
   whatHappened?: string;
+  // Single reflection field that replaced the four detailed
+  // prompts below. New entries use this; the legacy fields remain
+  // populated on historical entries and still render read-only.
+  learning?: string;
   encouragingSigns?: string;
   challenges?: string;
   peopleEmerging?: string;
@@ -223,6 +227,9 @@ export interface JournalEntry {
   // Nucleus-style free narrative
   body?: string;
   themes: LearningTheme[];
+  // Who attended the occurrence (activity entries only). Empty for
+  // entries written before attendance capture existed.
+  attendees: { id: string; name: string }[];
 }
 
 // One attachment on a timeline item. Kind discriminates the body
