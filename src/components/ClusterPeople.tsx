@@ -284,7 +284,7 @@ export function ClusterPeople() {
               <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-xl bg-blue-50 border border-blue-200">
                 <span className="text-sm font-semibold text-blue-900">{selectedIds.size} selected</span>
                 <div className="flex items-center gap-2">
-                  <label className="text-xs text-stone-600">Set faith:</label>
+                  <label className="text-xs text-stone-600">Enrolled?</label>
                   <select
                     value=""
                     onChange={e => { if (e.target.value) applyBulkFaith(e.target.value as ReligiousStatus); e.currentTarget.value = ''; }}
@@ -391,6 +391,7 @@ export function ClusterPeople() {
       {addOpen && selectedCluster && (
         <AddPersonModal
           clusterId={selectedCluster}
+          nuclei={clusterNuclei}
           onClose={() => setAddOpen(false)}
           onSaved={() => { setAddOpen(false); reload(selectedCluster); }}
         />
@@ -425,10 +426,11 @@ function ModalShell({ title, onClose, children }: { title: string; onClose: () =
   );
 }
 
-function AddPersonModal({ clusterId, onClose, onSaved }: { clusterId: string; onClose: () => void; onSaved: () => void }) {
+function AddPersonModal({ clusterId, nuclei, onClose, onSaved }: { clusterId: string; nuclei: NucleusRow[]; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState('');
   const [ageGroup, setAgeGroup] = useState<AgeGroup>('adult');
   const [faith, setFaith] = useState<ReligiousStatus>('unknown');
+  const [firstNucleus, setFirstNucleus] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -437,13 +439,17 @@ function AddPersonModal({ clusterId, onClose, onSaved }: { clusterId: string; on
     setSaving(true);
     setErr(null);
     try {
-      await createPerson({
+      const created = await createPerson({
         name: name.trim(),
         ageGroup,
         religiousStatus: faith,
         clusterId,
         profileStatus: 'confirmed',
       });
+      // Optional first nucleus — they can add more later from the roster.
+      if (firstNucleus) {
+        await setPersonClusterNuclei(created.id, clusterId, [firstNucleus]);
+      }
       onSaved();
     } catch (e) {
       console.error('Create person failed:', e);
@@ -476,6 +482,14 @@ function AddPersonModal({ clusterId, onClose, onSaved }: { clusterId: string; on
           <select value={faith} onChange={e => setFaith(e.target.value as ReligiousStatus)} className="w-full px-3 py-2 text-sm border border-stone-300 rounded-lg bg-white">
             {FAITH_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-stone-600 uppercase tracking-wider mb-1">Assign first nucleus?</label>
+          <select value={firstNucleus} onChange={e => setFirstNucleus(e.target.value)} className="w-full px-3 py-2 text-sm border border-stone-300 rounded-lg bg-white">
+            <option value="">None — assign later (optional)</option>
+            {nuclei.map(n => <option key={n.id} value={n.id}>{n.name}</option>)}
+          </select>
+          <p className="text-xs text-stone-400 mt-1">Optional. You can add this person to more nuclei later from the roster.</p>
         </div>
         {err && <p className="text-sm text-red-700">{err}</p>}
         <div className="flex justify-end gap-2 pt-2">

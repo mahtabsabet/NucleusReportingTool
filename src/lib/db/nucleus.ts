@@ -997,8 +997,12 @@ export async function setPersonClusterNuclei(
   const toRemove = [...activeNow].filter(id => !selectedSet.has(id));
 
   if (toAdd.length) {
+    // Land freshly-(re)assigned people in the nucleus's "unassigned" bucket,
+    // not a circle. engagement_level === null is what the concentric-circles
+    // view treats as unplaced; setting it explicitly also resets any stale
+    // level left over from a prior (since-removed) enrollment in this nucleus.
     await supabase.from('nucleus_enrollments').upsert(
-      toAdd.map(nid => ({ person_id: personId, nucleus_id: nid, deleted_at: null })),
+      toAdd.map(nid => ({ person_id: personId, nucleus_id: nid, engagement_level: null, deleted_at: null })),
       { onConflict: 'person_id,nucleus_id' },
     );
   }
