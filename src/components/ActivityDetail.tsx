@@ -958,7 +958,22 @@ export function ActivityDetail() {
                   <div className="flex items-start gap-3">
                     <BellIcon className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                     <div className="flex-1 min-w-0">
-                      {entryNudgeResult.dismissible ? (
+                      {!entryNudgeResult.dismissible ? (
+                        <>
+                          <p className="text-sm font-semibold text-blue-900">Log a session whenever this group meets</p>
+                          <p className="text-sm text-blue-800 mt-0.5">
+                            Record who came each time so attendance trends stay current.
+                          </p>
+                        </>
+                      ) : activity.schedulingMode === 'short_duration' ? (
+                        <>
+                          <p className="text-sm font-semibold text-blue-900">Time to log this activity</p>
+                          <p className="text-sm text-blue-800 mt-0.5">
+                            Its scheduled time has passed
+                            {entryNudgeResult.lastEntryAt ? ', with nothing logged since.' : ' — nothing logged yet.'}
+                          </p>
+                        </>
+                      ) : (
                         <>
                           <p className="text-sm font-semibold text-blue-900">Time to log a session</p>
                           <p className="text-sm text-blue-800 mt-0.5">
@@ -968,13 +983,6 @@ export function ActivityDetail() {
                             {entryNudgeResult.lastEntryAt
                               ? ' since your last entry.'
                               : ' — nothing logged yet.'}
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          <p className="text-sm font-semibold text-blue-900">Log a session whenever this group meets</p>
-                          <p className="text-sm text-blue-800 mt-0.5">
-                            Record who came each time so attendance trends stay current.
                           </p>
                         </>
                       )}
@@ -987,12 +995,17 @@ export function ActivityDetail() {
                         </button>
                         {entryNudgeResult.dismissible && entryNudgeResult.occurrenceDate && (
                           <>
-                            <button
-                              onClick={() => dismissEntryNudge('did_not_occur', entryNudgeResult.occurrenceDate!)}
-                              className="text-sm font-medium text-blue-700 hover:text-blue-900 bg-white border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors"
-                            >
-                              It didn't happen this time
-                            </button>
+                            {/* "Didn't happen this time" only fits a recurring
+                                schedule — for a short activity that never ran,
+                                the right move is to cancel it outright. */}
+                            {activity.schedulingMode !== 'short_duration' && (
+                              <button
+                                onClick={() => dismissEntryNudge('did_not_occur', entryNudgeResult.occurrenceDate!)}
+                                className="text-sm font-medium text-blue-700 hover:text-blue-900 bg-white border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors"
+                              >
+                                It didn't happen this time
+                              </button>
+                            )}
                             <button
                               onClick={() => dismissEntryNudge('dismissed', entryNudgeResult.occurrenceDate!)}
                               className="text-sm font-medium text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
