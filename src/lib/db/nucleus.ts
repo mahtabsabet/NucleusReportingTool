@@ -997,31 +997,46 @@ export async function setPersonClusterNuclei(
   const toRemove = [...activeNow].filter(id => !selectedSet.has(id));
 
   if (toAdd.length) {
-    // Land freshly-(re)assigned people in the nucleus's "unassigned" bucket,
-    // not a circle. engagement_level === null is what the concentric-circles
-    // view treats as unplaced; setting it explicitly also resets any stale
-    // level left over from a prior (since-removed) enrollment in this nucleus.
-    await supabase.from('nucleus_enrollments').upsert(
-      toAdd.map(nid => ({ person_id: personId, nucleus_id: nid, engagement_level: null, deleted_at: null })),
+    // Insert (or revive) the enrollment using exactly the same minimal payload
+    // as the activity-enrollment flow — this is the proven write path. Adding
+    // engagement_level into this INSERT is what regressed persistence, so keep
+    // it out here…
+    const { error: addErr } = await supabase.from('nucleus_enrollments').upsert(
+      toAdd.map(nid => ({ person_id: personId, nucleus_id: nid, deleted_at: null })),
       { onConflict: 'person_id,nucleus_id' },
     );
+    if (addErr) throw addErr;
+
+    // …and reset engagement_level to null as a separate UPDATE (the same path
+    // the concentric-circles drag-save uses). null is what the circles view
+    // treats as "unassigned", so freshly-(re)assigned people land there rather
+    // than in the "aware" ring, and any stale level from a prior enrollment is
+    // cleared.
+    const { error: lvlErr } = await supabase
+      .from('nucleus_enrollments')
+      .update({ engagement_level: null })
+      .eq('person_id', personId)
+      .in('nucleus_id', toAdd);
+    if (lvlErr) throw lvlErr;
   }
   if (toRemove.length) {
-    await supabase
+    const { error: rmErr } = await supabase
       .from('nucleus_enrollments')
       .update({ deleted_at: new Date().toISOString() })
       .eq('person_id', personId)
       .in('nucleus_id', toRemove);
+    if (rmErr) throw rmErr;
   }
 
   // Stamp the canonical affiliation if it's still blank (fills only — never
   // reassigns someone already attributed to a cluster).
   if (selected.length) {
-    await supabase
+    const { error: stampErr } = await supabase
       .from('persons')
       .update({ cluster_id: clusterId })
       .eq('id', personId)
       .is('cluster_id', null);
+    if (stampErr) throw stampErr;
   }
 
   // Log joins so the analytics match the activity-driven enrollment path.
