@@ -300,6 +300,7 @@ export function IndividualProfile() {
         ageGroup: editAgeGroup,
         isMinor: willBeMinor,
         profileStatus: editProfileStatus,
+        religiousStatus: editReligiousStatus,
         email: willBeMinor ? null : (editEmail.trim() || null),
         phone: willBeMinor ? null : (editPhone.trim() || null),
         photoUrl: savedPhotoUrl,
