@@ -437,6 +437,72 @@ export async function getActivitiesAttendance(
   return out;
 }
 
+// ─── Attendance nudges ───────────────────────────────────────
+
+export interface ActivityNudgeData {
+  // occurred_at of the most recent activity notebook entry, or null.
+  lastEntryAt: Date | null;
+  // Occurrence dates the lead has already dismissed or marked as
+  // "didn't happen" — used to suppress the "log an entry" nudge.
+  handledDates: Date[];
+}
+
+// Everything the "log an entry" nudge needs beyond the activity's own
+// schedule, in two cheap queries.
+export async function getActivityNudgeData(activityId: string): Promise<ActivityNudgeData> {
+  const [{ data: entry, error: entryErr }, { data: log, error: logErr }] = await Promise.all([
+    supabase
+      .from('journal_entries')
+      .select('occurred_at')
+      .eq('activity_id', activityId)
+      .eq('source', 'activity')
+      .order('occurred_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    supabase
+      .from('activity_occurrence_log')
+      .select('occurrence_date')
+      .eq('activity_id', activityId),
+  ]);
+  if (entryErr) throw entryErr;
+  // The occurrence-log table is new; tolerate its absence on older DBs.
+  if (logErr && !isMissingTable(logErr)) throw logErr;
+
+  return {
+    lastEntryAt: entry ? new Date((entry as any).occurred_at) : null,
+    handledDates: ((log ?? []) as any[]).map(r => new Date(`${r.occurrence_date}T00:00:00`)),
+  };
+}
+
+// Record a schedule exception: a dismissed reminder, or a confirmed
+// non-occurrence ("it didn't happen this time"). Upserts so re-acting
+// on the same occurrence updates the prior decision.
+export async function recordOccurrenceException(
+  activityId: string,
+  occurrenceDate: Date,
+  status: 'dismissed' | 'did_not_occur',
+): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const isoDate = `${occurrenceDate.getFullYear()}-${String(occurrenceDate.getMonth() + 1).padStart(2, '0')}-${String(occurrenceDate.getDate()).padStart(2, '0')}`;
+  const { error } = await supabase
+    .from('activity_occurrence_log')
+    .upsert(
+      {
+        activity_id: activityId,
+        occurrence_date: isoDate,
+        status,
+        created_by: user?.id ?? null,
+      },
+      { onConflict: 'activity_id,occurrence_date' },
+    );
+  if (error) throw error;
+}
+
+function isMissingTable(err: any): boolean {
+  // PostgREST: relation does not exist / not found in schema cache.
+  return err?.code === '42P01' || /does not exist|schema cache/i.test(err?.message ?? '');
+}
+
 // Default Nucleus Journal feed: nucleus-level entries only,
 // chronological. The two-page layout shows activity entries only
 // when filtered by a theme via listEntriesByTheme.
