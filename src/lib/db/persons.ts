@@ -2,7 +2,7 @@ import { supabase } from '../supabase';
 import { actionPermission, activityLeadActivityIds } from '../permissions';
 import { getCallerContext } from './users';
 import { fetchPersonCapacities, type PersonCapacity } from './capacities';
-import type { AgeGroup, ProfileStatus, CompletionStatus } from '../database.types';
+import type { AgeGroup, ProfileStatus, CompletionStatus, ReligiousStatus } from '../database.types';
 import {
   isMinorForAgeGroup,
   pickDistinguishingLabels,
@@ -15,6 +15,10 @@ export interface PersonDetail {
   ageGroup: AgeGroup;
   isMinor: boolean;
   profileStatus: ProfileStatus;
+  religiousStatus: ReligiousStatus;
+  // Canonical cluster affiliation (null until set via enrollment or the
+  // cluster people interface).
+  clusterId: string | null;
   email: string | null;
   phone: string | null;
   // Cluster-scoped capacities the person currently holds (one entry per
@@ -62,7 +66,7 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
   const [personRes, nucleiRes, coursesRes, unitsRes, activitiesRes, capacities] = await Promise.all([
     supabase
       .from('persons')
-      .select('id, name, age_group, is_minor, profile_status, email, phone, notes, profile_image_url')
+      .select('id, name, age_group, is_minor, profile_status, religious_status, cluster_id, email, phone, notes, profile_image_url')
       .eq('id', personId)
       .is('deleted_at', null)
       .single(),
@@ -96,6 +100,8 @@ export async function fetchPersonDetail(personId: string): Promise<PersonDetail 
     ageGroup: (p.age_group ?? 'unknown') as AgeGroup,
     isMinor: !!p.is_minor,
     profileStatus: (p.profile_status ?? 'provisional') as ProfileStatus,
+    religiousStatus: (p.religious_status ?? 'unknown') as ReligiousStatus,
+    clusterId: p.cluster_id ?? null,
     email: p.email ?? null,
     phone: p.phone ?? null,
     capacities,
@@ -132,6 +138,8 @@ export async function updatePersonBasic(
     ageGroup?: AgeGroup;
     minorOverride?: boolean;
     profileStatus?: ProfileStatus;
+    religiousStatus?: ReligiousStatus;
+    clusterId?: string | null;
     email?: string | null;
     phone?: string | null;
   }
@@ -139,6 +147,8 @@ export async function updatePersonBasic(
   const update: Record<string, any> = {};
   if (params.name !== undefined) update.name = params.name;
   if (params.profileStatus !== undefined) update.profile_status = params.profileStatus;
+  if (params.religiousStatus !== undefined) update.religious_status = params.religiousStatus;
+  if (params.clusterId !== undefined) update.cluster_id = params.clusterId;
 
   if (params.ageGroup !== undefined) {
     update.age_group = params.ageGroup;
@@ -383,6 +393,8 @@ export async function createPerson(params: {
   ageGroup?: AgeGroup;
   minorOverride?: boolean;
   profileStatus?: ProfileStatus;
+  religiousStatus?: ReligiousStatus;
+  clusterId?: string | null;
   email?: string | null;
   phone?: string | null;
 }): Promise<{ id: string; name: string }> {
@@ -394,6 +406,8 @@ export async function createPerson(params: {
     is_minor: isMinor,
     profile_status: params.profileStatus ?? 'provisional',
   };
+  if (params.religiousStatus !== undefined) row.religious_status = params.religiousStatus;
+  if (params.clusterId !== undefined && params.clusterId !== null) row.cluster_id = params.clusterId;
   if (!isMinor) {
     if (params.email !== undefined) row.email = params.email;
     if (params.phone !== undefined) row.phone = params.phone;
