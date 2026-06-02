@@ -26,7 +26,7 @@ import {
   ageGroupAllowsMinorToggle,
   isMinorForAgeGroup,
 } from '../lib/persons/disambiguators';
-import type { AgeGroup, ProfileStatus } from '../lib/database.types';
+import type { AgeGroup, ProfileStatus, ReligiousStatus } from '../lib/database.types';
 import { submitPermissionRequest } from '../lib/db/requests';
 import { fetchCourses } from '../lib/db/clusterProfile';
 import {
@@ -101,6 +101,7 @@ export function IndividualProfile() {
   const [editAgeGroup, setEditAgeGroup] = useState<AgeGroup>('unknown');
   const [editMinorOverride, setEditMinorOverride] = useState(false);
   const [editProfileStatus, setEditProfileStatus] = useState<ProfileStatus>('provisional');
+  const [editReligiousStatus, setEditReligiousStatus] = useState<ReligiousStatus>('unknown');
   const [editEmail, setEditEmail] = useState('');
   const [editPhone, setEditPhone] = useState('');
   const [saved, setSaved] = useState(false);
@@ -223,6 +224,7 @@ export function IndividualProfile() {
     setEditAgeGroup(person.ageGroup);
     setEditMinorOverride(person.isMinor);
     setEditProfileStatus(person.profileStatus);
+    setEditReligiousStatus(person.religiousStatus);
     setEditEmail(person.email ?? '');
     setEditPhone(person.phone ?? '');
     setEditPhotoFile(null);
@@ -254,6 +256,7 @@ export function IndividualProfile() {
         ageGroup: editAgeGroup,
         minorOverride: ageGroupAllowsMinorToggle(editAgeGroup) ? editMinorOverride : undefined,
         profileStatus: editProfileStatus,
+        religiousStatus: editReligiousStatus,
         email: willBeMinor ? null : (editEmail.trim() || null),
         phone: willBeMinor ? null : (editPhone.trim() || null),
       });
@@ -297,6 +300,7 @@ export function IndividualProfile() {
         ageGroup: editAgeGroup,
         isMinor: willBeMinor,
         profileStatus: editProfileStatus,
+        religiousStatus: editReligiousStatus,
         email: willBeMinor ? null : (editEmail.trim() || null),
         phone: willBeMinor ? null : (editPhone.trim() || null),
         photoUrl: savedPhotoUrl,
@@ -748,6 +752,20 @@ export function IndividualProfile() {
                         <option value="confirmed">Confirmed</option>
                       </select>
                     </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
+                        Relationship to the Faith
+                      </label>
+                      <select
+                        value={editReligiousStatus}
+                        onChange={e => setEditReligiousStatus(e.target.value as ReligiousStatus)}
+                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      >
+                        <option value="unknown">Unknown</option>
+                        <option value="bahai">Bahá'í</option>
+                        <option value="friend">Friend of the Faith</option>
+                      </select>
+                    </div>
                     {!isMinorForAgeGroup(editAgeGroup, editMinorOverride) && (
                       <>
                         <div>
@@ -793,6 +811,12 @@ export function IndividualProfile() {
                       <span className="font-semibold text-gray-500">Profile:</span>{' '}
                       {person.profileStatus === 'confirmed' ? 'Confirmed' : 'Provisional'}
                     </div>
+                    {person.religiousStatus === 'bahai' && (
+                      <div>Bahá'í</div>
+                    )}
+                    {person.religiousStatus === 'friend' && (
+                      <div>Friend of the Faith</div>
+                    )}
                     {!person.isMinor && (person.email || person.phone) && (
                       <div className="pt-1 space-y-0.5 text-xs text-gray-500">
                         {person.email && <div>✉ {person.email}</div>}

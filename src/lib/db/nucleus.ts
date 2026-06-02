@@ -507,6 +507,18 @@ export async function addPersonToActivity(params: {
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id ?? null;
 
+    // Stamp the person's canonical cluster affiliation if it isn't set
+    // yet, so they're counted toward this cluster's growth profile even
+    // if they later leave every nucleus/activity. Only fills a blank —
+    // never reassigns someone already attributed to a cluster.
+    if (clusterId) {
+      await supabase
+        .from('persons')
+        .update({ cluster_id: clusterId })
+        .eq('id', personId)
+        .is('cluster_id', null);
+    }
+
     if (isNewToNucleus) {
       await supabase.from('event_log').insert({
         type: 'person_created',
