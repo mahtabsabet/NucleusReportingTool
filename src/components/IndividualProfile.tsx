@@ -810,14 +810,12 @@ export function IndividualProfile() {
                       <span className="font-semibold text-gray-500">Profile:</span>{' '}
                       {person.profileStatus === 'confirmed' ? 'Confirmed' : 'Provisional'}
                     </div>
-                    <div>
-                      <span className="font-semibold text-gray-500">Faith:</span>{' '}
-                      {person.religiousStatus === 'bahai'
-                        ? "Bahá'í"
-                        : person.religiousStatus === 'friend'
-                        ? 'Friend of the Faith'
-                        : 'Unknown'}
-                    </div>
+                    {person.religiousStatus === 'bahai' && (
+                      <div>Bahá'í</div>
+                    )}
+                    {person.religiousStatus === 'friend' && (
+                      <div>Friend of the Faith</div>
+                    )}
                     {!person.isMinor && (person.email || person.phone) && (
                       <div className="pt-1 space-y-0.5 text-xs text-gray-500">
                         {person.email && <div>✉ {person.email}</div>}
