@@ -753,7 +753,7 @@ export function IndividualProfile() {
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wider mb-1">
-                        Belief status
+                        Relationship to the Faith
                       </label>
                       <select
                         value={editReligiousStatus}
@@ -811,7 +811,7 @@ export function IndividualProfile() {
                       {person.profileStatus === 'confirmed' ? 'Confirmed' : 'Provisional'}
                     </div>
                     <div>
-                      <span className="font-semibold text-gray-500">Belief:</span>{' '}
+                      <span className="font-semibold text-gray-500">Faith:</span>{' '}
                       {person.religiousStatus === 'bahai'
                         ? "Bahá'í"
                         : person.religiousStatus === 'friend'
