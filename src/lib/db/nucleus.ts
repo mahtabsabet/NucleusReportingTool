@@ -997,27 +997,17 @@ export async function setPersonClusterNuclei(
   const toRemove = [...activeNow].filter(id => !selectedSet.has(id));
 
   if (toAdd.length) {
-    // Insert (or revive) the enrollment using exactly the same minimal payload
-    // as the activity-enrollment flow — this is the proven write path. Adding
-    // engagement_level into this INSERT is what regressed persistence, so keep
-    // it out here…
+    // Enroll (or revive) in each newly-selected nucleus with a null
+    // engagement_level — which the concentric-circles view treats as
+    // "unassigned", so a directly-assigned person starts there rather than in
+    // the outer "aware" ring. Setting it explicitly also clears any stale level
+    // from a prior (since-removed) enrollment. Requires engagement_level to be
+    // nullable — see migrations/20260603_enrollment_engagement_nullable.sql.
     const { error: addErr } = await supabase.from('nucleus_enrollments').upsert(
-      toAdd.map(nid => ({ person_id: personId, nucleus_id: nid, deleted_at: null })),
+      toAdd.map(nid => ({ person_id: personId, nucleus_id: nid, engagement_level: null, deleted_at: null })),
       { onConflict: 'person_id,nucleus_id' },
     );
     if (addErr) throw addErr;
-
-    // …and reset engagement_level to null as a separate UPDATE (the same path
-    // the concentric-circles drag-save uses). null is what the circles view
-    // treats as "unassigned", so freshly-(re)assigned people land there rather
-    // than in the "aware" ring, and any stale level from a prior enrollment is
-    // cleared.
-    const { error: lvlErr } = await supabase
-      .from('nucleus_enrollments')
-      .update({ engagement_level: null })
-      .eq('person_id', personId)
-      .in('nucleus_id', toAdd);
-    if (lvlErr) throw lvlErr;
   }
   if (toRemove.length) {
     const { error: rmErr } = await supabase
