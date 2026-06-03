@@ -42,6 +42,22 @@ function initials(name: string): string {
   return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
 }
 
+// Supabase/PostgREST errors are plain objects ({ message, details, hint, code }),
+// not Error instances — so `e.message` via `instanceof Error` drops the real
+// reason. Pull out the message (and code, e.g. 42501 for an RLS denial) so the
+// UI shows something actionable instead of a generic "failed".
+function errText(e: unknown): string {
+  if (e && typeof e === 'object') {
+    const any = e as any;
+    const msg = any.message ?? any.error_description ?? any.error;
+    if (msg) {
+      const extra = [any.code, any.details, any.hint].filter(Boolean).join(' · ');
+      return extra ? `${msg} (${extra})` : String(msg);
+    }
+  }
+  return e instanceof Error ? e.message : 'Unexpected error';
+}
+
 function FaithBadge({ status }: { status: ReligiousStatus }) {
   if (status === 'bahai') {
     return <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">Bahá'í</span>;
@@ -125,7 +141,7 @@ export function ClusterPeople() {
       setSelectedIds(new Set());
     } catch (err) {
       console.error('Failed to load cluster people:', err);
-      setError(err instanceof Error ? err.message : 'Failed to load people');
+      setError(errText(err));
     } finally {
       setLoading(false);
     }
@@ -181,7 +197,7 @@ export function ClusterPeople() {
       await reload(selectedCluster);
     } catch (err) {
       console.error('Bulk faith tagging failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to update');
+      setError(errText(err));
     }
   };
 
@@ -192,7 +208,7 @@ export function ClusterPeople() {
       await reload(selectedCluster);
     } catch (err) {
       console.error('Bulk cluster reassign failed:', err);
-      setError(err instanceof Error ? err.message : 'Failed to reassign');
+      setError(errText(err));
     }
   };
 
@@ -453,7 +469,7 @@ function AddPersonModal({ clusterId, nuclei, onClose, onSaved }: { clusterId: st
       onSaved();
     } catch (e) {
       console.error('Create person failed:', e);
-      setErr(e instanceof Error ? e.message : 'Failed to create person');
+      setErr(errText(e));
       setSaving(false);
     }
   };
@@ -534,7 +550,7 @@ function AssignNucleiModal({
       onSaved();
     } catch (e) {
       console.error('Assign nuclei failed:', e);
-      setErr(e instanceof Error ? e.message : 'Failed to update nuclei');
+      setErr(errText(e));
       setSaving(false);
     }
   };
