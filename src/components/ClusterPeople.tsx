@@ -8,6 +8,8 @@ import {
   CheckIcon,
   UsersIcon,
   Loader2Icon,
+  GitMergeIcon,
+  AlertTriangleIcon,
 } from 'lucide-react';
 import { getCallerContext } from '../lib/db/users';
 import {
@@ -24,11 +26,13 @@ import {
   bulkSetReligiousStatus,
   bulkSetClusterAffiliation,
   searchPersonsByName,
+  mergePersons,
   type ClusterPerson,
   type PersonSearchMatch,
 } from '../lib/db/persons';
 import { setPersonClusterNuclei } from '../lib/db/nucleus';
 import { AGE_GROUP_LABELS } from '../lib/persons/disambiguators';
+import { findDuplicateGroups, type DuplicateReason } from '../lib/persons/duplicates';
 import type { AgeGroup, ReligiousStatus } from '../lib/database.types';
 
 const FAITH_OPTIONS: Array<{ value: ReligiousStatus; label: string }> = [
@@ -88,6 +92,9 @@ export function ClusterPeople() {
   // Modal state.
   const [addOpen, setAddOpen] = useState(false);
   const [assignTarget, setAssignTarget] = useState<ClusterPerson | null>(null);
+  // People to reconcile in the merge dialog (2+), or null when closed.
+  const [mergeCandidates, setMergeCandidates] = useState<ClusterPerson[] | null>(null);
+  const [showDuplicates, setShowDuplicates] = useState(false);
 
   // Which clusters the signed-in user may pick from. Admins / Super Admins /
   // Regional viewers see every cluster; Cluster Coordinators and LSA members
@@ -173,6 +180,12 @@ export function ClusterPeople() {
     return people.filter(p => p.name.toLowerCase().includes(q));
   }, [people, search]);
 
+  // Proactive duplicate detection over the loaded roster (editors only).
+  const duplicateGroups = useMemo(
+    () => (canEdit ? findDuplicateGroups(people) : []),
+    [people, canEdit],
+  );
+
   const toggleOne = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -230,6 +243,8 @@ export function ClusterPeople() {
       religiousStatus: 'unknown',
       clusterId: null,
       photoUrl: null,
+      email: null,
+      phone: null,
       nuclei: [],
     });
   };
@@ -322,6 +337,49 @@ export function ClusterPeople() {
               </p>
             )}
 
+            {/* Possible duplicates */}
+            {canEdit && duplicateGroups.length > 0 && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 overflow-hidden">
+                <button
+                  onClick={() => setShowDuplicates(s => !s)}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
+                >
+                  <AlertTriangleIcon className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span className="text-sm font-semibold text-amber-900">
+                    {duplicateGroups.length} possible duplicate {duplicateGroups.length === 1 ? 'set' : 'sets'} found
+                  </span>
+                  <span className="ml-auto text-xs font-medium text-amber-700">
+                    {showDuplicates ? 'Hide' : 'Review'}
+                  </span>
+                </button>
+                {showDuplicates && (
+                  <div className="px-3 pb-3 space-y-2">
+                    {duplicateGroups.map(g => (
+                      <div
+                        key={g.people.map(p => p.id).join('-')}
+                        className="flex items-center gap-3 rounded-lg bg-white border border-amber-100 px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-stone-900 truncate">
+                            {g.people.map(p => p.name).join(', ')}
+                          </div>
+                          <div className="text-[11px] text-stone-500">
+                            {g.people.length} profiles · matched on {g.reasons.map(reasonLabel).join(', ')}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setMergeCandidates(g.people)}
+                          className="flex-shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-800 hover:text-amber-900 px-2 py-1 rounded-lg hover:bg-amber-100"
+                        >
+                          <GitMergeIcon className="w-3.5 h-3.5" /> Review &amp; merge
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Bulk action bar */}
             {canEdit && selectedIds.size > 0 && (
               <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-xl bg-blue-50 border border-blue-200">
@@ -351,6 +409,14 @@ export function ClusterPeople() {
                       ))}
                     </select>
                   </div>
+                )}
+                {selectedIds.size === 2 && (
+                  <button
+                    onClick={() => setMergeCandidates(people.filter(p => selectedIds.has(p.id)))}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700"
+                  >
+                    <GitMergeIcon className="w-4 h-4" /> Merge…
+                  </button>
                 )}
                 <button
                   onClick={() => setSelectedIds(new Set())}
@@ -451,8 +517,29 @@ export function ClusterPeople() {
           onSaved={() => { setAssignTarget(null); reload(selectedCluster); }}
         />
       )}
+
+      {mergeCandidates && selectedCluster && (
+        <MergePersonModal
+          candidates={mergeCandidates}
+          onClose={() => setMergeCandidates(null)}
+          onSaved={() => {
+            setMergeCandidates(null);
+            setSelectedIds(new Set());
+            reload(selectedCluster);
+          }}
+        />
+      )}
     </div>
   );
+}
+
+const DUPLICATE_REASON_LABELS: Record<DuplicateReason, string> = {
+  name: 'name',
+  email: 'email',
+  phone: 'phone',
+};
+function reasonLabel(r: DuplicateReason): string {
+  return DUPLICATE_REASON_LABELS[r];
 }
 
 function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
@@ -691,6 +778,97 @@ function AssignNucleiModal({
           className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50"
         >
           {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+function MergePersonModal({
+  candidates, onClose, onSaved,
+}: {
+  candidates: ClusterPerson[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [survivorId, setSurvivorId] = useState(candidates[0]?.id ?? '');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const losers = candidates.filter(c => c.id !== survivorId);
+
+  const doMerge = async () => {
+    if (!survivorId || losers.length === 0) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      // Fold each duplicate into the survivor, one at a time.
+      for (const loser of losers) {
+        await mergePersons(loser.id, survivorId);
+      }
+      onSaved();
+    } catch (e) {
+      console.error('Merge failed:', e);
+      setErr(errText(e));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ModalShell title="Merge duplicate people" onClose={onClose}>
+      <p className="text-xs text-stone-500 mb-3">
+        Choose the profile to keep. The others will be archived, and all their nuclei,
+        activities, courses and attendance history will move to the one you keep. This
+        can be undone by an admin.
+      </p>
+      <div className="space-y-2 max-h-80 overflow-y-auto">
+        {candidates.map(c => {
+          const isSurvivor = c.id === survivorId;
+          return (
+            <label
+              key={c.id}
+              className={`flex gap-3 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${
+                isSurvivor ? 'border-blue-400 bg-blue-50' : 'border-stone-200 hover:bg-stone-50'
+              }`}
+            >
+              <input
+                type="radio"
+                name="survivor"
+                checked={isSurvivor}
+                onChange={() => setSurvivorId(c.id)}
+                className="mt-1 flex-shrink-0"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-stone-900 truncate">{c.name}</span>
+                  <FaithBadge status={c.religiousStatus} />
+                  {isSurvivor
+                    ? <span className="text-[11px] font-semibold text-blue-700">Keep</span>
+                    : <span className="text-[11px] text-stone-400">Will be archived</span>}
+                </div>
+                <div className="flex items-center gap-2 flex-wrap text-xs text-stone-500 mt-0.5">
+                  <span>{AGE_GROUP_LABELS[c.ageGroup] || 'Unknown'}</span>
+                  {c.email && <span className="truncate">{c.email}</span>}
+                  {c.phone && <span>{c.phone}</span>}
+                  {c.nuclei.map(n => (
+                    <span key={n.id} className="px-1.5 py-0.5 rounded bg-stone-100 text-stone-600">{n.name}</span>
+                  ))}
+                </div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+      {err && <p className="text-sm text-red-700 mt-3">{err}</p>}
+      <div className="flex justify-end gap-2 pt-4">
+        <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg text-stone-600 hover:bg-stone-100">Cancel</button>
+        <button
+          onClick={doMerge}
+          disabled={saving || losers.length === 0}
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50"
+        >
+          <GitMergeIcon className="w-4 h-4" />
+          {saving ? 'Merging…' : losers.length === 1 ? 'Merge 2 into 1' : `Merge ${candidates.length} into 1`}
         </button>
       </div>
     </ModalShell>
