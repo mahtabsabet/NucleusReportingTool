@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeftIcon,
@@ -23,7 +23,9 @@ import {
   createPerson,
   bulkSetReligiousStatus,
   bulkSetClusterAffiliation,
+  searchPersonsByName,
   type ClusterPerson,
+  type PersonSearchMatch,
 } from '../lib/db/persons';
 import { setPersonClusterNuclei } from '../lib/db/nucleus';
 import { AGE_GROUP_LABELS } from '../lib/persons/disambiguators';
@@ -210,6 +212,31 @@ export function ClusterPeople() {
       console.error('Bulk cluster reassign failed:', err);
       setError(errText(err));
     }
+  };
+
+  // Reuse an existing person surfaced as a possible duplicate in the add dialog
+  // instead of creating a new profile. If they're already on this cluster's
+  // roster we hand the live ClusterPerson (with its current nuclei) to the
+  // assign modal; otherwise we build a minimal one so it starts unchecked.
+  const assignExistingFromAdd = (match: PersonSearchMatch) => {
+    setAddOpen(false);
+    const onRoster = people.find(p => p.id === match.id);
+    setAssignTarget(onRoster ?? {
+      id: match.id,
+      name: match.name,
+      ageGroup: match.ageGroup,
+      isMinor: match.isMinor,
+      profileStatus: match.profileStatus,
+      religiousStatus: 'unknown',
+      clusterId: null,
+      photoUrl: null,
+      nuclei: [],
+    });
+  };
+
+  const openProfileFromAdd = (personId: string) => {
+    setAddOpen(false);
+    navigate(`/individual/${personId}`);
   };
 
   // ----- render -----
@@ -410,6 +437,8 @@ export function ClusterPeople() {
           nuclei={clusterNuclei}
           onClose={() => setAddOpen(false)}
           onSaved={() => { setAddOpen(false); reload(selectedCluster); }}
+          onOpenProfile={openProfileFromAdd}
+          onAssignExisting={assignExistingFromAdd}
         />
       )}
 
@@ -442,13 +471,49 @@ function ModalShell({ title, onClose, children }: { title: string; onClose: () =
   );
 }
 
-function AddPersonModal({ clusterId, nuclei, onClose, onSaved }: { clusterId: string; nuclei: NucleusRow[]; onClose: () => void; onSaved: () => void }) {
+function AddPersonModal({
+  clusterId, nuclei, onClose, onSaved, onOpenProfile, onAssignExisting,
+}: {
+  clusterId: string;
+  nuclei: NucleusRow[];
+  onClose: () => void;
+  onSaved: () => void;
+  onOpenProfile: (personId: string) => void;
+  onAssignExisting: (match: PersonSearchMatch) => void;
+}) {
   const [name, setName] = useState('');
   const [ageGroup, setAgeGroup] = useState<AgeGroup>('adult');
   const [faith, setFaith] = useState<ReligiousStatus>('unknown');
   const [firstNucleus, setFirstNucleus] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Possible-duplicate detection: as they type a name we surface existing
+  // people so they can reuse a profile instead of creating a duplicate.
+  const [matches, setMatches] = useState<PersonSearchMatch[]>([]);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const trimmed = name.trim();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (trimmed.length < 2) {
+      setMatches([]);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        setMatches(await searchPersonsByName(trimmed, { limit: 6 }));
+      } catch {
+        // A failed lookup shouldn't block adding a person — just hide hints.
+        setMatches([]);
+      }
+    }, 280);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [name]);
+
+  const hasMatches = matches.length > 0;
 
   const save = async () => {
     if (!name.trim()) return;
@@ -487,6 +552,50 @@ function AddPersonModal({ clusterId, nuclei, onClose, onSaved }: { clusterId: st
             placeholder="Full name"
           />
         </div>
+
+        {hasMatches && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-2.5">
+            <p className="text-xs font-semibold text-amber-800 mb-1.5">
+              {matches.length === 1 ? 'A person with a similar name already exists' : 'People with similar names already exist'}
+            </p>
+            <ul className="space-y-1.5">
+              {matches.map(m => {
+                const detail = m.disambiguators.length > 0
+                  ? m.disambiguators.join(' • ')
+                  : AGE_GROUP_LABELS[m.ageGroup] || 'Unknown';
+                return (
+                  <li
+                    key={m.id}
+                    className="flex items-center gap-2 rounded-md bg-white border border-amber-100 px-2.5 py-1.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-stone-900 truncate">{m.name}</div>
+                      <div className="text-[11px] text-stone-500 truncate">{detail}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onOpenProfile(m.id)}
+                      className="flex-shrink-0 text-xs font-medium text-blue-600 hover:text-blue-800 px-1.5 py-1 rounded hover:bg-blue-50"
+                    >
+                      Open profile
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onAssignExisting(m)}
+                      className="flex-shrink-0 text-xs font-medium text-blue-600 hover:text-blue-800 px-1.5 py-1 rounded hover:bg-blue-50"
+                    >
+                      Assign nucleus
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="text-[11px] text-amber-700 mt-1.5">
+              Reuse one of these to avoid a duplicate, or add a new person below.
+            </p>
+          </div>
+        )}
+
         <div>
           <label className="block text-xs font-semibold text-stone-600 uppercase tracking-wider mb-1">Age group</label>
           <select value={ageGroup} onChange={e => setAgeGroup(e.target.value as AgeGroup)} className="w-full px-3 py-2 text-sm border border-stone-300 rounded-lg bg-white">
@@ -515,7 +624,7 @@ function AddPersonModal({ clusterId, nuclei, onClose, onSaved }: { clusterId: st
             disabled={saving || !name.trim()}
             className="px-4 py-2 text-sm rounded-lg bg-blue-600 text-white font-semibold hover:bg-blue-700 disabled:opacity-50"
           >
-            {saving ? 'Adding…' : 'Add person'}
+            {saving ? 'Adding…' : hasMatches ? 'Add as new person anyway' : 'Add person'}
           </button>
         </div>
       </div>
