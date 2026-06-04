@@ -423,6 +423,135 @@ export async function createPerson(params: {
   return { id: p.id, name: p.name };
 }
 
+export interface ClusterPerson {
+  id: string;
+  name: string;
+  ageGroup: AgeGroup;
+  isMinor: boolean;
+  profileStatus: ProfileStatus;
+  religiousStatus: ReligiousStatus;
+  clusterId: string | null;
+  photoUrl: string | null;
+  // Nuclei in *this* cluster the person is currently enrolled in.
+  nuclei: Array<{ id: string; name: string }>;
+}
+
+// Everyone attributable to a cluster: a canonical `cluster_id` match, plus
+// anyone reachable through one of the cluster's nuclei (an enrollment) or its
+// activities (a participation). The three sets are unioned so the roster never
+// misses someone who belongs to the cluster by any of those routes.
+export async function fetchClusterPeople(clusterId: string): Promise<ClusterPerson[]> {
+  // The cluster's nuclei (id + name) — used both to scope enrollments and to
+  // label each person's nucleus chips.
+  const { data: nucleiRows, error: nucleiErr } = await supabase
+    .from('nuclei')
+    .select('id, name')
+    .eq('cluster_id', clusterId)
+    .is('deleted_at', null);
+  if (nucleiErr) throw nucleiErr;
+  const nuclei = (nucleiRows ?? []) as Array<{ id: string; name: string }>;
+  const nucleusIds = nuclei.map(n => n.id);
+  const nucleusNameById = new Map(nuclei.map(n => [n.id, n.name]));
+
+  // person_id -> set of (this cluster's) nucleus ids they're enrolled in.
+  const enrollmentsByPerson = new Map<string, Set<string>>();
+  if (nucleusIds.length) {
+    const { data: enr, error: enrErr } = await supabase
+      .from('nucleus_enrollments')
+      .select('person_id, nucleus_id')
+      .in('nucleus_id', nucleusIds)
+      .is('deleted_at', null);
+    if (enrErr) throw enrErr;
+    for (const row of (enr ?? []) as any[]) {
+      if (!enrollmentsByPerson.has(row.person_id)) enrollmentsByPerson.set(row.person_id, new Set());
+      enrollmentsByPerson.get(row.person_id)!.add(row.nucleus_id);
+    }
+  }
+
+  // People reachable only through an activity in one of the cluster's nuclei.
+  const activityPersonIds = new Set<string>();
+  if (nucleusIds.length) {
+    const { data: acts } = await supabase
+      .from('activities')
+      .select('id')
+      .in('nucleus_id', nucleusIds)
+      .is('deleted_at', null);
+    const activityIds = ((acts ?? []) as any[]).map(a => a.id);
+    if (activityIds.length) {
+      const { data: parts } = await supabase
+        .from('activity_participants')
+        .select('person_id')
+        .in('activity_id', activityIds)
+        .is('deleted_at', null);
+      for (const row of (parts ?? []) as any[]) activityPersonIds.add(row.person_id);
+    }
+  }
+
+  // People with a canonical affiliation to this cluster.
+  const { data: byCluster, error: byClusterErr } = await supabase
+    .from('persons')
+    .select('id')
+    .eq('cluster_id', clusterId)
+    .is('deleted_at', null);
+  if (byClusterErr) throw byClusterErr;
+
+  const ids = new Set<string>();
+  for (const r of (byCluster ?? []) as any[]) ids.add(r.id);
+  for (const id of enrollmentsByPerson.keys()) ids.add(id);
+  for (const id of activityPersonIds) ids.add(id);
+  if (ids.size === 0) return [];
+
+  const { data: persons, error: personsErr } = await supabase
+    .from('persons')
+    .select('id, name, age_group, is_minor, profile_status, religious_status, cluster_id, profile_image_url')
+    .in('id', [...ids])
+    .is('deleted_at', null);
+  if (personsErr) throw personsErr;
+
+  return ((persons ?? []) as any[])
+    .map(p => ({
+      id: p.id,
+      name: p.name,
+      ageGroup: (p.age_group ?? 'unknown') as AgeGroup,
+      isMinor: !!p.is_minor,
+      profileStatus: (p.profile_status ?? 'provisional') as ProfileStatus,
+      religiousStatus: (p.religious_status ?? 'unknown') as ReligiousStatus,
+      clusterId: p.cluster_id ?? null,
+      photoUrl: (p.profile_image_url ?? null) as string | null,
+      nuclei: [...(enrollmentsByPerson.get(p.id) ?? [])]
+        .map(nid => ({ id: nid, name: nucleusNameById.get(nid) ?? nid }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Bulk-set the relationship-to-the-Faith on several people at once. RLS is
+// the authority on which of these the caller may actually write.
+export async function bulkSetReligiousStatus(
+  personIds: string[],
+  status: ReligiousStatus,
+): Promise<void> {
+  if (personIds.length === 0) return;
+  const { error } = await supabase
+    .from('persons')
+    .update({ religious_status: status })
+    .in('id', personIds);
+  if (error) throw error;
+}
+
+// Bulk-reassign the canonical cluster affiliation for several people.
+export async function bulkSetClusterAffiliation(
+  personIds: string[],
+  clusterId: string,
+): Promise<void> {
+  if (personIds.length === 0) return;
+  const { error } = await supabase
+    .from('persons')
+    .update({ cluster_id: clusterId })
+    .in('id', personIds);
+  if (error) throw error;
+}
+
 // Direct-delete capability irrespective of person scope. Only Super Admin /
 // Admin / Cluster Coordinator (within their cluster) can delete directly.
 // Use personDeletePermission(personId) for scope-aware results including

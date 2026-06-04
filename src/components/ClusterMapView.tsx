@@ -570,6 +570,31 @@ export function ClusterMapView() {
                 </button>
               )}
 
+              {/* Cluster People — the roster + people-management page. Same
+                  audience as the Learning Hub (CC, LSA, regional viewer,
+                  admin/super-admin); LSA / regional users see it read-only.
+                  Needs a selected cluster to be meaningful. */}
+              {!!callerCtx && (
+                callerCtx.isAdmin
+                || callerCtx.isSuperAdmin
+                || callerCtx.isRegionalViewer
+                || isClusterCoordinator(callerCtx)
+                || isLsaMember(callerCtx)
+              ) && (
+                <button
+                  onClick={() => selectedCluster && navigate(`/cluster-people?cluster=${selectedCluster}`)}
+                  disabled={isPlacing || !selectedCluster}
+                  title={selectedCluster ? undefined : 'Select a cluster to open its People page'}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all duration-200 text-left ${
+                    !selectedCluster
+                      ? 'opacity-40 cursor-not-allowed text-gray-400'
+                      : `hover:bg-blue-50 text-gray-700 hover:text-blue-900 ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`
+                  }`}>
+                  <UserPlusIcon className={`w-5 h-5 ${selectedCluster ? 'text-blue-500' : 'text-gray-300'}`} />
+                  <span className="font-semibold">People</span>
+                </button>
+              )}
+
               <button
                 onClick={() =>
                 navigate(
