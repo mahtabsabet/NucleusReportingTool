@@ -855,15 +855,15 @@ function MergePersonModal({
       </p>
       <ul className="text-xs text-stone-600 mb-3 space-y-1 bg-stone-50 border border-stone-200 rounded-lg p-2.5">
         <li>
-          <strong className="text-stone-700">Combined:</strong> nuclei, activities, course
-          progress and attendance from every profile move onto the one you keep.
+          <strong className="text-stone-700">Brought together:</strong> all of their nuclei,
+          activities, course progress and attendance end up on the profile you keep.
         </li>
         <li>
-          <strong className="text-stone-700">Kept profile wins:</strong> for single details
-          like email, phone and photo, the archived profiles only fill in blanks — they never
-          overwrite a value the kept profile already has.
+          <strong className="text-stone-700">Filling the gaps:</strong> if the profile you keep
+          is missing an email, phone or photo, we’ll copy it from the other one. If both have
+          one, we keep the one you chose.
         </li>
-        <li>Archived profiles can be restored by an admin.</li>
+        <li>You can ask an admin to undo a merge.</li>
       </ul>
       <div className="space-y-2 max-h-[28rem] overflow-y-auto">
         {candidates.map(c => {
