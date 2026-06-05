@@ -432,6 +432,8 @@ export interface ClusterPerson {
   religiousStatus: ReligiousStatus;
   clusterId: string | null;
   photoUrl: string | null;
+  email: string | null;
+  phone: string | null;
   // Nuclei in *this* cluster the person is currently enrolled in.
   nuclei: Array<{ id: string; name: string }>;
 }
@@ -503,7 +505,7 @@ export async function fetchClusterPeople(clusterId: string): Promise<ClusterPers
 
   const { data: persons, error: personsErr } = await supabase
     .from('persons')
-    .select('id, name, age_group, is_minor, profile_status, religious_status, cluster_id, profile_image_url')
+    .select('id, name, age_group, is_minor, profile_status, religious_status, cluster_id, profile_image_url, email, phone')
     .in('id', [...ids])
     .is('deleted_at', null);
   if (personsErr) throw personsErr;
@@ -518,6 +520,8 @@ export async function fetchClusterPeople(clusterId: string): Promise<ClusterPers
       religiousStatus: (p.religious_status ?? 'unknown') as ReligiousStatus,
       clusterId: p.cluster_id ?? null,
       photoUrl: (p.profile_image_url ?? null) as string | null,
+      email: (p.email ?? null) as string | null,
+      phone: (p.phone ?? null) as string | null,
       nuclei: [...(enrollmentsByPerson.get(p.id) ?? [])]
         .map(nid => ({ id: nid, name: nucleusNameById.get(nid) ?? nid }))
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -639,29 +643,55 @@ export async function deletePerson(personId: string): Promise<void> {
     .single();
   if (!person) throw new Error('Person not found');
 
-  // Hard-delete the person record. FK constraints in the database handle
-  // cascading removal of related rows:
-  //   ON DELETE CASCADE  → activity_participants, nucleus_enrollments,
-  //                        session_attendance, course_enrollments
-  //   ON DELETE SET NULL → nucleus_enrollments.primary_contact_id, event_log.person_id
-  //   ON DELETE SET NULL → profiles.person_id (pre-existing constraint)
+  // Soft-delete (per the policy in DATA_MODEL.md): archive the person and the
+  // roster memberships that would otherwise keep surfacing them in cluster
+  // rosters and concentric circles. Course / session / journal history is left
+  // intact so "who attended when" survives the archive. Who may do this is
+  // governed by the persons UPDATE RLS policy.
+  const ts = new Date().toISOString();
   const { error } = await supabase
     .from('persons')
-    .delete()
+    .update({ deleted_at: ts })
     .eq('id', personId);
   if (error) throw error;
 
-  // best-effort audit log — person_id intentionally omitted; the person no longer exists
+  await supabase
+    .from('nucleus_enrollments')
+    .update({ deleted_at: ts })
+    .eq('person_id', personId)
+    .is('deleted_at', null);
+  await supabase
+    .from('activity_participants')
+    .update({ deleted_at: ts })
+    .eq('person_id', personId)
+    .is('deleted_at', null);
+
+  // best-effort audit log
   try {
     await supabase.from('event_log').insert({
       type: 'person_deleted' as any,
+      person_id: personId,
       user_id: user.id,
-      description: `Deleted person "${(person as any).name}"`,
+      description: `Archived person "${(person as any).name}"`,
       details: { personName: (person as any).name },
     });
   } catch {
-    // non-critical; deletion already committed
+    // non-critical; archive already committed
   }
+}
+
+// Merge a duplicate person (loser) into the one to keep (survivor). All of the
+// loser's nuclei, activities, courses, attendance and history move to the
+// survivor; the loser is archived and tagged with merged_into_id. Runs entirely
+// in the `merge_persons` SQL function so it is atomic. RLS / the function's own
+// guard decide whether the caller may do it.
+export async function mergePersons(loserId: string, survivorId: string): Promise<void> {
+  if (loserId === survivorId) throw new Error('Cannot merge a person into themselves');
+  const { error } = await (supabase as any).rpc('merge_persons', {
+    p_loser: loserId,
+    p_survivor: survivorId,
+  });
+  if (error) throw error;
 }
 
 export interface CurriculumProgressInput {

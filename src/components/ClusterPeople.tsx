@@ -8,6 +8,10 @@ import {
   CheckIcon,
   UsersIcon,
   Loader2Icon,
+  GitMergeIcon,
+  AlertTriangleIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from 'lucide-react';
 import { getCallerContext } from '../lib/db/users';
 import {
@@ -24,11 +28,15 @@ import {
   bulkSetReligiousStatus,
   bulkSetClusterAffiliation,
   searchPersonsByName,
+  mergePersons,
+  fetchPersonDetail,
   type ClusterPerson,
   type PersonSearchMatch,
+  type PersonDetail,
 } from '../lib/db/persons';
 import { setPersonClusterNuclei } from '../lib/db/nucleus';
 import { AGE_GROUP_LABELS } from '../lib/persons/disambiguators';
+import { findDuplicateGroups, type DuplicateReason } from '../lib/persons/duplicates';
 import type { AgeGroup, ReligiousStatus } from '../lib/database.types';
 
 const FAITH_OPTIONS: Array<{ value: ReligiousStatus; label: string }> = [
@@ -88,6 +96,9 @@ export function ClusterPeople() {
   // Modal state.
   const [addOpen, setAddOpen] = useState(false);
   const [assignTarget, setAssignTarget] = useState<ClusterPerson | null>(null);
+  // People to reconcile in the merge dialog (2+), or null when closed.
+  const [mergeCandidates, setMergeCandidates] = useState<ClusterPerson[] | null>(null);
+  const [showDuplicates, setShowDuplicates] = useState(false);
 
   // Which clusters the signed-in user may pick from. Admins / Super Admins /
   // Regional viewers see every cluster; Cluster Coordinators and LSA members
@@ -173,6 +184,12 @@ export function ClusterPeople() {
     return people.filter(p => p.name.toLowerCase().includes(q));
   }, [people, search]);
 
+  // Proactive duplicate detection over the loaded roster (editors only).
+  const duplicateGroups = useMemo(
+    () => (canEdit ? findDuplicateGroups(people) : []),
+    [people, canEdit],
+  );
+
   const toggleOne = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -230,6 +247,8 @@ export function ClusterPeople() {
       religiousStatus: 'unknown',
       clusterId: null,
       photoUrl: null,
+      email: null,
+      phone: null,
       nuclei: [],
     });
   };
@@ -322,6 +341,49 @@ export function ClusterPeople() {
               </p>
             )}
 
+            {/* Possible duplicates */}
+            {canEdit && duplicateGroups.length > 0 && (
+              <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/70 overflow-hidden">
+                <button
+                  onClick={() => setShowDuplicates(s => !s)}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-left"
+                >
+                  <AlertTriangleIcon className="w-4 h-4 text-amber-600 flex-shrink-0" />
+                  <span className="text-sm font-semibold text-amber-900">
+                    {duplicateGroups.length} possible duplicate {duplicateGroups.length === 1 ? 'set' : 'sets'} found
+                  </span>
+                  <span className="ml-auto text-xs font-medium text-amber-700">
+                    {showDuplicates ? 'Hide' : 'Review'}
+                  </span>
+                </button>
+                {showDuplicates && (
+                  <div className="px-3 pb-3 space-y-2">
+                    {duplicateGroups.map(g => (
+                      <div
+                        key={g.people.map(p => p.id).join('-')}
+                        className="flex items-center gap-3 rounded-lg bg-white border border-amber-100 px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-stone-900 truncate">
+                            {g.people.map(p => p.name).join(', ')}
+                          </div>
+                          <div className="text-[11px] text-stone-500">
+                            {g.people.length} profiles · matched on {g.reasons.map(reasonLabel).join(', ')}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setMergeCandidates(g.people)}
+                          className="flex-shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold text-amber-800 hover:text-amber-900 px-2 py-1 rounded-lg hover:bg-amber-100"
+                        >
+                          <GitMergeIcon className="w-3.5 h-3.5" /> Review &amp; merge
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Bulk action bar */}
             {canEdit && selectedIds.size > 0 && (
               <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-xl bg-blue-50 border border-blue-200">
@@ -351,6 +413,14 @@ export function ClusterPeople() {
                       ))}
                     </select>
                   </div>
+                )}
+                {selectedIds.size === 2 && (
+                  <button
+                    onClick={() => setMergeCandidates(people.filter(p => selectedIds.has(p.id)))}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-700"
+                  >
+                    <GitMergeIcon className="w-4 h-4" /> Merge…
+                  </button>
                 )}
                 <button
                   onClick={() => setSelectedIds(new Set())}
@@ -451,14 +521,35 @@ export function ClusterPeople() {
           onSaved={() => { setAssignTarget(null); reload(selectedCluster); }}
         />
       )}
+
+      {mergeCandidates && selectedCluster && (
+        <MergePersonModal
+          candidates={mergeCandidates}
+          onClose={() => setMergeCandidates(null)}
+          onSaved={() => {
+            setMergeCandidates(null);
+            setSelectedIds(new Set());
+            reload(selectedCluster);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function ModalShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+const DUPLICATE_REASON_LABELS: Record<DuplicateReason, string> = {
+  name: 'name',
+  email: 'email',
+  phone: 'phone',
+};
+function reasonLabel(r: DuplicateReason): string {
+  return DUPLICATE_REASON_LABELS[r];
+}
+
+function ModalShell({ title, onClose, children, maxWidth = 'max-w-md' }: { title: string; onClose: () => void; children: React.ReactNode; maxWidth?: string }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
+      <div className={`bg-white rounded-2xl shadow-xl w-full ${maxWidth} p-5`} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold text-stone-900">{title}</h2>
           <button onClick={onClose} className="p-1 rounded-lg hover:bg-stone-100 text-stone-500">
@@ -694,5 +785,218 @@ function AssignNucleiModal({
         </button>
       </div>
     </ModalShell>
+  );
+}
+
+function MergePersonModal({
+  candidates, onClose, onSaved,
+}: {
+  candidates: ClusterPerson[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [survivorId, setSurvivorId] = useState(candidates[0]?.id ?? '');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Lazily-loaded fuller profiles, so the user can see what each record holds
+  // before deciding who to keep. Fetched once per person, on first expand.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [details, setDetails] = useState<Record<string, PersonDetail | null>>({});
+  const [loadingDetail, setLoadingDetail] = useState<Set<string>>(new Set());
+
+  const losers = candidates.filter(c => c.id !== survivorId);
+
+  const toggleDetails = async (id: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+    if (details[id] === undefined && !loadingDetail.has(id)) {
+      setLoadingDetail(prev => new Set(prev).add(id));
+      try {
+        const d = await fetchPersonDetail(id);
+        setDetails(prev => ({ ...prev, [id]: d }));
+      } catch (e) {
+        console.error('Failed to load profile detail:', e);
+        setDetails(prev => ({ ...prev, [id]: null }));
+      } finally {
+        setLoadingDetail(prev => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+    }
+  };
+
+  const doMerge = async () => {
+    if (!survivorId || losers.length === 0) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      // Fold each duplicate into the survivor, one at a time.
+      for (const loser of losers) {
+        await mergePersons(loser.id, survivorId);
+      }
+      onSaved();
+    } catch (e) {
+      console.error('Merge failed:', e);
+      setErr(errText(e));
+      setSaving(false);
+    }
+  };
+
+  return (
+    <ModalShell title="Merge duplicate people" onClose={onClose} maxWidth="max-w-lg">
+      <p className="text-xs text-stone-500 mb-2">
+        Choose the profile to keep — click a name to see what each one holds.
+      </p>
+      <ul className="text-xs text-stone-600 mb-3 space-y-1 bg-stone-50 border border-stone-200 rounded-lg p-2.5">
+        <li>
+          <strong className="text-stone-700">Brought together:</strong> all of their nuclei,
+          activities, course progress and attendance end up on the profile you keep.
+        </li>
+        <li>
+          <strong className="text-stone-700">Filling the gaps:</strong> if the profile you keep
+          is missing an email, phone or photo, we’ll copy it from the other one. If both have
+          one, we keep the one you chose.
+        </li>
+        <li>You can ask an admin to undo a merge.</li>
+      </ul>
+      <div className="space-y-2 max-h-[28rem] overflow-y-auto">
+        {candidates.map(c => {
+          const isSurvivor = c.id === survivorId;
+          const isOpen = expanded.has(c.id);
+          return (
+            <div
+              key={c.id}
+              className={`rounded-xl border transition-colors ${
+                isSurvivor ? 'border-blue-400 bg-blue-50' : 'border-stone-200'
+              }`}
+            >
+              <div className="flex gap-3 px-3 py-2.5">
+                <input
+                  type="radio"
+                  name="survivor"
+                  checked={isSurvivor}
+                  onChange={() => setSurvivorId(c.id)}
+                  aria-label={`Keep ${c.name}`}
+                  className="mt-1 flex-shrink-0"
+                />
+                <button
+                  type="button"
+                  onClick={() => toggleDetails(c.id)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {isOpen
+                      ? <ChevronDownIcon className="w-3.5 h-3.5 text-stone-400 flex-shrink-0" />
+                      : <ChevronRightIcon className="w-3.5 h-3.5 text-stone-400 flex-shrink-0" />}
+                    <span className="font-semibold text-stone-900 truncate">{c.name}</span>
+                    <FaithBadge status={c.religiousStatus} />
+                    {isSurvivor
+                      ? <span className="text-[11px] font-semibold text-blue-700">Keep</span>
+                      : <span className="text-[11px] text-stone-400">Will be archived</span>}
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap text-xs text-stone-500 mt-0.5 pl-5">
+                    <span>{AGE_GROUP_LABELS[c.ageGroup] || 'Unknown'}</span>
+                    {c.email && <span className="truncate">{c.email}</span>}
+                    {c.phone && <span>{c.phone}</span>}
+                    {c.nuclei.map(n => (
+                      <span key={n.id} className="px-1.5 py-0.5 rounded bg-stone-100 text-stone-600">{n.name}</span>
+                    ))}
+                  </div>
+                </button>
+              </div>
+              {isOpen && (
+                <div className="px-3 pb-3 pl-11">
+                  {loadingDetail.has(c.id) ? (
+                    <div className="flex items-center gap-2 text-xs text-stone-400 py-1">
+                      <Loader2Icon className="w-3.5 h-3.5 animate-spin" /> Loading profile…
+                    </div>
+                  ) : details[c.id] ? (
+                    <PersonDetailSummary detail={details[c.id]!} />
+                  ) : (
+                    <p className="text-xs text-stone-400 py-1">Couldn’t load this profile.</p>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {err && <p className="text-sm text-red-700 mt-3">{err}</p>}
+      <div className="flex justify-end gap-2 pt-4">
+        <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg text-stone-600 hover:bg-stone-100">Cancel</button>
+        <button
+          onClick={doMerge}
+          disabled={saving || losers.length === 0}
+          className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg bg-amber-600 text-white font-semibold hover:bg-amber-700 disabled:opacity-50"
+        >
+          <GitMergeIcon className="w-4 h-4" />
+          {saving ? 'Merging…' : losers.length === 1 ? 'Merge 2 into 1' : `Merge ${candidates.length} into 1`}
+        </button>
+      </div>
+    </ModalShell>
+  );
+}
+
+const FAITH_LABELS: Record<ReligiousStatus, string> = {
+  bahai: "Bahá'í",
+  friend: 'Friend of the Faith',
+  unknown: 'Unknown',
+};
+
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-2 text-xs">
+      <span className="text-stone-400 w-20 flex-shrink-0">{label}</span>
+      <span className="text-stone-700 min-w-0">{children}</span>
+    </div>
+  );
+}
+
+function PersonDetailSummary({ detail }: { detail: PersonDetail }) {
+  const completed = detail.courseEnrollments.filter(c => c.status === 'completed').length;
+  const inProgress = detail.courseEnrollments.filter(c => c.status !== 'completed').length;
+  const courseBits = [
+    completed > 0 ? `${completed} completed` : null,
+    inProgress > 0 ? `${inProgress} in progress` : null,
+  ].filter(Boolean).join(', ');
+
+  return (
+    <div className="space-y-1.5 border-t border-stone-100 pt-2">
+      <DetailRow label="Status">
+        {detail.profileStatus === 'confirmed' ? 'Confirmed' : 'Provisional'}
+      </DetailRow>
+      <DetailRow label="To the Faith">{FAITH_LABELS[detail.religiousStatus]}</DetailRow>
+      <DetailRow label="Email">{detail.email || <span className="text-stone-300">—</span>}</DetailRow>
+      <DetailRow label="Phone">{detail.phone || <span className="text-stone-300">—</span>}</DetailRow>
+      <DetailRow label="Nuclei">
+        {detail.nuclei.length > 0
+          ? detail.nuclei.map(n => n.name).join(', ')
+          : <span className="text-stone-300">None</span>}
+      </DetailRow>
+      <DetailRow label="Activities">
+        {detail.activities.length > 0
+          ? detail.activities.map(a => `${a.activityName}${a.role ? ` (${a.role})` : ''}`).join(', ')
+          : <span className="text-stone-300">None</span>}
+      </DetailRow>
+      <DetailRow label="Courses">
+        {courseBits || <span className="text-stone-300">None</span>}
+      </DetailRow>
+      {detail.capacities.length > 0 && (
+        <DetailRow label="Capacities">
+          {detail.capacities.map(cap => cap.name).join(', ')}
+        </DetailRow>
+      )}
+      {detail.notes.trim() && (
+        <DetailRow label="Notes">
+          <span className="line-clamp-3 whitespace-pre-wrap">{detail.notes.trim()}</span>
+        </DetailRow>
+      )}
+    </div>
   );
 }
