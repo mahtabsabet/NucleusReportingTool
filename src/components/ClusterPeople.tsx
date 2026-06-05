@@ -850,11 +850,21 @@ function MergePersonModal({
 
   return (
     <ModalShell title="Merge duplicate people" onClose={onClose} maxWidth="max-w-lg">
-      <p className="text-xs text-stone-500 mb-3">
-        Choose the profile to keep. Click a name to see what each one holds. The others
-        will be archived, and all their nuclei, activities, courses and attendance history
-        will move to the one you keep. This can be undone by an admin.
+      <p className="text-xs text-stone-500 mb-2">
+        Choose the profile to keep — click a name to see what each one holds.
       </p>
+      <ul className="text-xs text-stone-600 mb-3 space-y-1 bg-stone-50 border border-stone-200 rounded-lg p-2.5">
+        <li>
+          <strong className="text-stone-700">Combined:</strong> nuclei, activities, course
+          progress and attendance from every profile move onto the one you keep.
+        </li>
+        <li>
+          <strong className="text-stone-700">Kept profile wins:</strong> for single details
+          like email, phone and photo, the archived profiles only fill in blanks — they never
+          overwrite a value the kept profile already has.
+        </li>
+        <li>Archived profiles can be restored by an admin.</li>
+      </ul>
       <div className="space-y-2 max-h-[28rem] overflow-y-auto">
         {candidates.map(c => {
           const isSurvivor = c.id === survivorId;
