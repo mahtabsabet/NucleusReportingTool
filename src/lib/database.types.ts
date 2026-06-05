@@ -11,7 +11,9 @@ export type CompletionStatus = 'in_progress' | 'partially_completed' | 'complete
 export type CurriculumStream = 'ruhi_main' | 'branch' | 'jysep';
 export type ActivityLifecycleEnum = 'planned' | 'active' | 'completed' | 'cancelled';
 export type ActivitySchedulingModeEnum = 'structured_recurring' | 'sporadic_ongoing' | 'short_duration';
-export type EventLogType = 'activity_created' | 'participant_added' | 'participant_removed' | 'circle_movement' | 'course_completed' | 'course_started' | 'person_created' | 'person_deleted' | 'nucleus_created' | 'nucleus_deleted' | 'activity_deleted' | 'session_logged' | 'profile_updated' | 'permission_request_submitted' | 'permission_request_resolved' | 'user_role_changed' | 'user_deleted';
+export type ActivityParticipantStatusEnum = 'active' | 'inactive';
+export type ActivityOccurrenceStatusEnum = 'did_not_occur' | 'dismissed';
+export type EventLogType = 'activity_created' | 'participant_added' | 'participant_removed' | 'circle_movement' | 'course_completed' | 'course_started' | 'person_created' | 'person_deleted' | 'nucleus_created' | 'nucleus_deleted' | 'activity_deleted' | 'session_logged' | 'profile_updated' | 'permission_request_submitted' | 'permission_request_resolved' | 'user_role_changed' | 'user_deleted' | 'participant_marked_inactive' | 'participant_reactivated';
 
 export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
@@ -201,10 +203,27 @@ export interface Database {
           person_id: string;
           role: ParticipantRole;
           role_notes: string | null;
+          status: ActivityParticipantStatusEnum;
+          status_changed_at: string | null;
+          status_changed_by: string | null;
+          last_reviewed_at: string | null;
           deleted_at: string | null;
         };
         Insert: Omit<Database['public']['Tables']['activity_participants']['Row'], 'id'> & { id?: string };
         Update: Partial<Database['public']['Tables']['activity_participants']['Insert']>;
+      };
+      activity_occurrence_log: {
+        Row: {
+          id: string;
+          activity_id: string;
+          occurrence_date: string;
+          status: ActivityOccurrenceStatusEnum;
+          note: string | null;
+          created_by: string | null;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['activity_occurrence_log']['Row'], 'id' | 'created_at'> & { id?: string; created_at?: string };
+        Update: Partial<Database['public']['Tables']['activity_occurrence_log']['Insert']>;
       };
       sessions: {
         Row: {

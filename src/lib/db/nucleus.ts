@@ -9,7 +9,7 @@ import { actionPermission, canDirectly } from '../permissions';
 import { getCallerContext } from './users';
 import { fetchCapacityNamesByPerson } from './capacities';
 import { isMinorForAgeGroup } from '../persons/disambiguators';
-import type { AgeGroup } from '../database.types';
+import type { AgeGroup, ActivityParticipantStatusEnum } from '../database.types';
 
 // Date columns on `activities` are Postgres `date` (calendar date,
 // no time zone) — same convention as timeline_events. We parse them
@@ -346,20 +346,33 @@ export interface ActivityDetailResult {
   activity: Activity;
   nucleusName: string;
   personNames: Record<string, string>;
+  // Participation lifecycle, keyed by person id. Defaults to 'active'
+  // for every roster member when the status column isn't present yet.
+  participantStatus: Record<string, ActivityParticipantStatusEnum>;
+  // last_reviewed_at per person, so the lapsed-participant prompt can
+  // snooze after a lead acts on it.
+  participantReviewedAt: Record<string, Date | null>;
 }
 
 export async function fetchActivityDetail(activityId: string): Promise<ActivityDetailResult | null> {
-  const run = (cols: string) =>
+  const NEW_PART = 'person_id, role, deleted_at, status, last_reviewed_at';
+  const OLD_PART = 'person_id, role, deleted_at';
+  const run = (cols: string, part: string) =>
     supabase
       .from('activities')
-      .select(`${cols}, nuclei(name), activity_participants(person_id, role, deleted_at)`)
+      .select(`${cols}, nuclei(name), activity_participants(${part})`)
       .eq('id', activityId)
       .is('deleted_at', null)
       .single();
 
-  let { data, error } = await run(ACTIVITY_BASE_COLUMNS);
+  // Two independent back-compat fallbacks: the participation status
+  // columns, then the activity lifecycle columns.
+  let { data, error } = await run(ACTIVITY_BASE_COLUMNS, NEW_PART);
   if (error && isMissingColumnError(error)) {
-    ({ data, error } = await run(ACTIVITY_LEGACY_COLUMNS));
+    ({ data, error } = await run(ACTIVITY_BASE_COLUMNS, OLD_PART));
+  }
+  if (error && isMissingColumnError(error)) {
+    ({ data, error } = await run(ACTIVITY_LEGACY_COLUMNS, OLD_PART));
   }
   if (error) {
     console.warn('[fetchActivityDetail] activities query failed', { activityId, error });
@@ -379,9 +392,13 @@ export async function fetchActivityDetail(activityId: string): Promise<ActivityD
   }
 
   const participants: Record<string, string[]> = {};
+  const participantStatus: Record<string, ActivityParticipantStatusEnum> = {};
+  const participantReviewedAt: Record<string, Date | null> = {};
   activeParticipants.forEach((p: any) => {
     if (!participants[p.role]) participants[p.role] = [];
     participants[p.role].push(p.person_id);
+    participantStatus[p.person_id] = (p.status ?? 'active') as ActivityParticipantStatusEnum;
+    participantReviewedAt[p.person_id] = p.last_reviewed_at ? new Date(p.last_reviewed_at) : null;
   });
 
   const personNames: Record<string, string> = {};
@@ -422,7 +439,13 @@ export async function fetchActivityDetail(activityId: string): Promise<ActivityD
     currentBook,
   };
 
-  return { activity, nucleusName: (a.nuclei as any)?.name ?? '', personNames };
+  return {
+    activity,
+    nucleusName: (a.nuclei as any)?.name ?? '',
+    personNames,
+    participantStatus,
+    participantReviewedAt,
+  };
 }
 
 export async function addPersonToActivity(params: {
@@ -585,6 +608,69 @@ export async function removeActivityParticipant(
     description: `${personName} removed from activity (${role})`,
     details: { personName, role },
   });
+}
+
+// Flip a participant between 'active' and 'inactive' without removing
+// them from the roster. Inactive participants keep their attendance
+// history but drop out of the upcoming cluster growth profile. Logged
+// to event_log for the same audit trail as removals.
+export async function setParticipantStatus(
+  activityId: string,
+  personId: string,
+  status: ActivityParticipantStatusEnum,
+): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { error } = await supabase
+    .from('activity_participants')
+    .update({
+      status,
+      status_changed_at: new Date().toISOString(),
+      status_changed_by: user?.id ?? null,
+      // Acting on the prompt counts as a review, so it snoozes either way.
+      last_reviewed_at: new Date().toISOString(),
+    })
+    .eq('activity_id', activityId)
+    .eq('person_id', personId)
+    .is('deleted_at', null);
+  if (error) throw error;
+
+  const { data: activity } = await supabase
+    .from('activities')
+    .select('nucleus_id, nuclei(cluster_id)')
+    .eq('id', activityId)
+    .single();
+  const { data: person } = await supabase
+    .from('persons')
+    .select('name')
+    .eq('id', personId)
+    .single();
+  const personName = (person as any)?.name ?? 'Person';
+
+  await supabase.from('event_log').insert({
+    type: status === 'inactive' ? 'participant_marked_inactive' : 'participant_reactivated',
+    cluster_id: (activity as any)?.nuclei?.cluster_id ?? null,
+    nucleus_id: (activity as any)?.nucleus_id ?? null,
+    activity_id: activityId,
+    person_id: personId,
+    user_id: user?.id ?? null,
+    description: `${personName} marked ${status} in activity`,
+    details: { personName, status },
+  });
+}
+
+// Record that a lead reviewed a lapsed participant and chose to keep
+// them. Snoozes the 60-day prompt without changing their status.
+export async function markParticipantReviewed(
+  activityId: string,
+  personId: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('activity_participants')
+    .update({ last_reviewed_at: new Date().toISOString() })
+    .eq('activity_id', activityId)
+    .eq('person_id', personId)
+    .is('deleted_at', null);
+  if (error) throw error;
 }
 
 // Returns one of 'direct' | 'request' | 'none'. Activity Leads may

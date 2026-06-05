@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   ChevronLeftIcon,
+  ChevronDownIcon,
   XIcon,
   CheckIcon,
   ClockIcon,
+  BellIcon,
+  AlertCircleIcon,
+  UserMinusIcon,
   Trash2Icon,
   PlayCircleIcon,
   CheckCircleIcon,
@@ -14,11 +18,15 @@ import {
   fetchActivityDetail,
   addPersonToActivity,
   removeActivityParticipant,
+  setParticipantStatus,
+  markParticipantReviewed,
   updateActivityDetails,
   activityDeletePermission,
   deleteActivity,
   setActivityLifecycle,
 } from '../lib/db/nucleus';
+import type { ActivityParticipantStatusEnum } from '../lib/database.types';
+import { entryNudge, participantsNeedingReview } from '../lib/nudges';
 import { submitPermissionRequest } from '../lib/db/requests';
 import { getCallerContext } from '../lib/db/users';
 import {
@@ -37,7 +45,13 @@ import { PersonNameCombobox } from './PersonNameCombobox';
 import { GlobalSearch } from './GlobalSearch';
 import { ActivityNotebook } from './ActivityNotebook';
 import { RecencyDot, AttendanceStrip, AttendanceLegend } from './AttendanceIndicator';
-import { getActivityAttendance, type ActivityAttendance } from '../lib/db/journal';
+import {
+  getActivityAttendance,
+  getActivityNudgeData,
+  recordOccurrenceException,
+  type ActivityAttendance,
+  type ActivityNudgeData,
+} from '../lib/db/journal';
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -132,7 +146,20 @@ export function ActivityDetail() {
   const [nucleusName, setNucleusName] = useState('');
   const [personNames, setPersonNames] = useState<Record<string, string>>({});
   const [participants, setParticipants] = useState<Record<string, string[]>>({});
+  // Participation lifecycle + review timestamps, keyed by person id.
+  const [participantStatuses, setParticipantStatuses] =
+    useState<Record<string, ActivityParticipantStatusEnum>>({});
+  const [participantReviewedAt, setParticipantReviewedAt] =
+    useState<Record<string, Date | null>>({});
   const [attendance, setAttendance] = useState<ActivityAttendance | null>(null);
+  // Data behind the "log an entry" nudge (last entry date + handled occurrences).
+  const [nudgeData, setNudgeData] = useState<ActivityNudgeData | null>(null);
+  // Pending Mark-inactive / Remove action awaiting confirmation.
+  const [confirmTarget, setConfirmTarget] =
+    useState<{ kind: 'inactive' | 'remove'; role: string; pid: string; name: string } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
+  const notebookRef = useRef<HTMLDivElement>(null);
   const [loading, setLoading] = useState(true);
   const [saved, setSaved] = useState(false);
   const [schedule, setSchedule] = useState('');
@@ -201,7 +228,74 @@ export function ActivityDetail() {
       .then(setAttendance)
       .catch(() => setAttendance(null));
   };
-  useEffect(() => { loadAttendance(); }, [activityId]);
+  const loadNudge = () => {
+    if (!activityId) return;
+    getActivityNudgeData(activityId)
+      .then(setNudgeData)
+      .catch(() => setNudgeData(null));
+  };
+  useEffect(() => { loadAttendance(); loadNudge(); }, [activityId]);
+
+  // Refresh only the roster-derived state after a participant action,
+  // leaving the (possibly dirty) schedule form untouched.
+  const refreshRoster = async () => {
+    if (!activityId) return;
+    const fresh = await fetchActivityDetail(activityId);
+    if (!fresh) return;
+    const expectedRoles = ROLES_FOR_TYPE[fresh.activity.type] ?? [];
+    const next = { ...fresh.activity.participants };
+    expectedRoles.forEach(role => { if (!next[role]) next[role] = []; });
+    setParticipants(next);
+    setParticipantStatuses(fresh.participantStatus);
+    setParticipantReviewedAt(fresh.participantReviewedAt);
+    setPersonNames(fresh.personNames);
+    loadAttendance();
+  };
+
+  const handleConfirmAction = async () => {
+    if (!confirmTarget) return;
+    setConfirmBusy(true);
+    try {
+      if (confirmTarget.kind === 'inactive') {
+        await setParticipantStatus(activityId!, confirmTarget.pid, 'inactive');
+      } else {
+        await removeActivityParticipant(activityId!, confirmTarget.pid, confirmTarget.role);
+      }
+      setConfirmTarget(null);
+      await refreshRoster();
+    } catch (err) {
+      console.error('Participant action failed:', err);
+    } finally {
+      setConfirmBusy(false);
+    }
+  };
+
+  const handleReactivate = async (pid: string) => {
+    try {
+      await setParticipantStatus(activityId!, pid, 'active');
+      await refreshRoster();
+    } catch (err) {
+      console.error('Failed to reactivate participant:', err);
+    }
+  };
+
+  const handleKeepReviewed = async (pid: string) => {
+    try {
+      await markParticipantReviewed(activityId!, pid);
+      await refreshRoster();
+    } catch (err) {
+      console.error('Failed to mark participant reviewed:', err);
+    }
+  };
+
+  const dismissEntryNudge = async (status: 'dismissed' | 'did_not_occur', date: Date) => {
+    try {
+      await recordOccurrenceException(activityId!, date, status);
+      loadNudge();
+    } catch (err) {
+      console.error('Failed to record occurrence exception:', err);
+    }
+  };
 
   useEffect(() => {
     if (!activityId) return;
@@ -211,6 +305,8 @@ export function ActivityDetail() {
         setActivity(a);
         setNucleusName(nName);
         setPersonNames(pNames);
+        setParticipantStatuses(result.participantStatus);
+        setParticipantReviewedAt(result.participantReviewedAt);
         const loadedSchedule = a.schedule ?? '';
         const loadedMode = a.schedulingMode ?? 'sporadic_ongoing';
         const loadedDays = [...(a.daysOfWeek ?? [])].sort();
@@ -306,18 +402,6 @@ export function ActivityDetail() {
       </div>
     );
   }
-
-  const removeParticipant = async (role: string, personId: string) => {
-    try {
-      await removeActivityParticipant(activityId!, personId, role);
-      setParticipants(prev => ({
-        ...prev,
-        [role]: prev[role].filter(id => id !== personId),
-      }));
-    } catch (err) {
-      console.error('Failed to remove participant:', err);
-    }
-  };
 
   const addParticipantToRole = async (
     role: string,
@@ -508,6 +592,66 @@ export function ActivityDetail() {
   // Number of recorded sessions in the attendance window; 0 hides
   // every indicator (activity has no attendance logged yet).
   const recentCount = attendance?.recentSessionDates.length ?? 0;
+
+  // ─── Nudges + participation status (cheap, recomputed per render) ──
+  const statusOf = (pid: string): ActivityParticipantStatusEnum =>
+    participantStatuses[pid] ?? 'active';
+  const isActivePid = (pid: string) => statusOf(pid) === 'active';
+
+  // Inactive members, flattened across roles for the collapsed section.
+  const inactiveMembers: { pid: string; role: string }[] = [];
+  for (const [role, ids] of Object.entries(participants)) {
+    for (const pid of ids) {
+      if (statusOf(pid) === 'inactive') inactiveMembers.push({ pid, role });
+    }
+  }
+
+  const roleOf = (pid: string) =>
+    Object.entries(participants).find(([, ids]) => ids.includes(pid))?.[0] ?? '';
+
+  const now = new Date();
+  const activeParticipantIds = Object.values(participants).flat().filter(isActivePid);
+  const lapsedIds = attendance
+    ? participantsNeedingReview({
+        lifecycle: activity.lifecycle,
+        attendance,
+        participantIds: activeParticipantIds,
+        reviewedAt: participantReviewedAt,
+        now,
+      })
+    : [];
+  const lapsedSet = new Set(lapsedIds);
+  // Stable order for the review panel: most-recently-seen last.
+  const lapsedList = lapsedIds
+    .map(pid => ({ pid, lastAttended: attendance?.byPerson[pid]?.lastAttended ?? null }))
+    .sort((a, b) => (a.lastAttended?.getTime() ?? 0) - (b.lastAttended?.getTime() ?? 0));
+
+  const entryNudgeResult = nudgeData
+    ? entryNudge({
+        activity: {
+          schedulingMode: activity.schedulingMode,
+          daysOfWeek: activity.daysOfWeek,
+          intervalWeeks: activity.intervalWeeks,
+          time: activity.time,
+          startDate: activity.startDate,
+          endDate: activity.endDate,
+          lifecycle: activity.lifecycle,
+        },
+        lastEntryAt: nudgeData.lastEntryAt,
+        handledDates: nudgeData.handledDates,
+        now,
+      })
+    : null;
+
+  const fmtDate = (d: Date) =>
+    d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  const sinceLabel = (d: Date | null) => {
+    if (!d) return 'never attended';
+    const days = Math.floor((now.getTime() - d.getTime()) / 86_400_000);
+    if (days < 60) return `last seen ${fmtDate(d)}`;
+    if (days < 365) return `last seen ${Math.round(days / 30)} months ago`;
+    return `last seen ${fmtDate(d)}`;
+  };
 
   // Schedule editing is locked while the activity is in a terminal
   // state — the user has to flip it back to active/planned (via the
@@ -727,6 +871,65 @@ export function ActivityDetail() {
         </div>
       )}
 
+      {/* Mark-inactive / Remove confirmation. Both warn about the
+          cluster growth profile; Remove adds the roster/history note. */}
+      {confirmTarget && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4">
+              <div
+                className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                  confirmTarget.kind === 'remove' ? 'bg-red-100' : 'bg-amber-100'
+                }`}
+              >
+                {confirmTarget.kind === 'remove' ? (
+                  <Trash2Icon className="w-5 h-5 text-red-600" />
+                ) : (
+                  <UserMinusIcon className="w-5 h-5 text-amber-600" />
+                )}
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">
+                {confirmTarget.kind === 'remove'
+                  ? `Remove ${confirmTarget.name}?`
+                  : `Mark ${confirmTarget.name} inactive?`}
+              </h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-2">
+              This will remove <strong>{confirmTarget.name}</strong> from the upcoming cluster growth profile.
+            </p>
+            <p className="text-sm text-gray-600 mb-4">
+              {confirmTarget.kind === 'remove'
+                ? "They'll be taken off this activity's roster. Their attendance on past sessions stays on record. Mark them inactive instead to keep them on the roster."
+                : 'They’ll stay on the roster under "Inactive" with their attendance history, and you can reactivate them anytime.'}
+            </p>
+            <div className="flex gap-3 pt-2 border-t border-gray-100">
+              <button
+                onClick={() => setConfirmTarget(null)}
+                disabled={confirmBusy}
+                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmAction}
+                disabled={confirmBusy}
+                className={`flex-1 px-4 py-2.5 text-white font-medium rounded-xl shadow-sm hover:shadow transition-all disabled:opacity-50 ${
+                  confirmTarget.kind === 'remove'
+                    ? 'bg-red-600 hover:bg-red-700'
+                    : 'bg-amber-600 hover:bg-amber-700'
+                }`}
+              >
+                {confirmBusy
+                  ? 'Working…'
+                  : confirmTarget.kind === 'remove'
+                  ? 'Remove'
+                  : 'Mark inactive'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* ─── Main column: participants + notebook ──────────────────────
@@ -746,22 +949,156 @@ export function ActivityDetail() {
                   </div>
                 )}
               </div>
+
+              {/* Nudge 1 — log an entry. Only for active activities; the
+                  schedule decides whether it's a missed-occurrence prompt
+                  (dismissible) or a steady reminder (sporadic). */}
+              {!regionalOnly && entryNudgeResult && (
+                <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50/70 p-4">
+                  <div className="flex items-start gap-3">
+                    <BellIcon className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      {!entryNudgeResult.dismissible ? (
+                        <>
+                          <p className="text-sm font-semibold text-blue-900">Log a session whenever this group meets</p>
+                          <p className="text-sm text-blue-800 mt-0.5">
+                            Record who came each time so attendance trends stay current.
+                          </p>
+                        </>
+                      ) : activity.schedulingMode === 'short_duration' ? (
+                        <>
+                          <p className="text-sm font-semibold text-blue-900">Time to log this activity</p>
+                          <p className="text-sm text-blue-800 mt-0.5">
+                            Its scheduled time has passed
+                            {entryNudgeResult.lastEntryAt ? ', with nothing logged since.' : ' — nothing logged yet.'}
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-sm font-semibold text-blue-900">Time to log a session</p>
+                          <p className="text-sm text-blue-800 mt-0.5">
+                            {entryNudgeResult.missedCount > 1
+                              ? `${entryNudgeResult.missedCount} scheduled sessions have passed`
+                              : `A scheduled session passed on ${fmtDate(entryNudgeResult.occurrenceDate!)}`}
+                            {entryNudgeResult.lastEntryAt
+                              ? ' since your last entry.'
+                              : ' — nothing logged yet.'}
+                          </p>
+                        </>
+                      )}
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        <button
+                          onClick={() => notebookRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                          className="text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg transition-colors"
+                        >
+                          Log entry
+                        </button>
+                        {entryNudgeResult.dismissible && entryNudgeResult.occurrenceDate && (
+                          <>
+                            {/* "Didn't happen this time" only fits a recurring
+                                schedule — for a short activity that never ran,
+                                the right move is to cancel it outright. */}
+                            {activity.schedulingMode !== 'short_duration' && (
+                              <button
+                                onClick={() => dismissEntryNudge('did_not_occur', entryNudgeResult.occurrenceDate!)}
+                                className="text-sm font-medium text-blue-700 hover:text-blue-900 bg-white border border-blue-200 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors"
+                              >
+                                It didn't happen this time
+                              </button>
+                            )}
+                            <button
+                              onClick={() => dismissEntryNudge('dismissed', entryNudgeResult.occurrenceDate!)}
+                              className="text-sm font-medium text-gray-500 hover:text-gray-700 px-3 py-1.5 rounded-lg transition-colors"
+                            >
+                              Dismiss
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Nudge 2 — participants who've gone quiet for 60+ days. */}
+              {!regionalOnly && lapsedList.length > 0 && (
+                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertCircleIcon className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                    <p className="text-sm font-semibold text-amber-900">
+                      {lapsedList.length === 1
+                        ? "1 participant hasn't attended in 60+ days"
+                        : `${lapsedList.length} participants haven't attended in 60+ days`}
+                    </p>
+                  </div>
+                  <ul className="space-y-2">
+                    {lapsedList.map(({ pid, lastAttended }) => {
+                      const name = personNames[pid] ?? pid;
+                      const role = roleOf(pid);
+                      return (
+                        <li
+                          key={pid}
+                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white border border-amber-100 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <button
+                              onClick={() => navigate(`/individual/${pid}`)}
+                              className="text-sm font-semibold text-blue-700 hover:text-blue-900"
+                            >
+                              {name}
+                            </button>
+                            <span className="text-xs text-amber-700 ml-2">{sinceLabel(lastAttended)}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleKeepReviewed(pid)}
+                              className="text-xs font-semibold text-gray-600 hover:text-gray-800 bg-gray-50 hover:bg-gray-100 px-2.5 py-1 rounded-md transition-colors"
+                            >
+                              Keep
+                            </button>
+                            <button
+                              onClick={() => setConfirmTarget({ kind: 'inactive', role, pid, name })}
+                              className="text-xs font-semibold text-amber-700 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded-md transition-colors"
+                            >
+                              Mark inactive
+                            </button>
+                            <button
+                              onClick={() => setConfirmTarget({ kind: 'remove', role, pid, name })}
+                              className="text-xs font-semibold text-red-600 hover:text-red-800 bg-red-50 hover:bg-red-100 px-2.5 py-1 rounded-md transition-colors"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
               <div className="space-y-7">
-                {roles.map(role => (
+                {roles.map(role => {
+                  const activeIds = (participants[role] ?? []).filter(isActivePid);
+                  return (
                   <div key={role}>
                     <h4 className="font-bold text-gray-900 capitalize border-b border-gray-100 pb-2 mb-3 tracking-tight flex items-baseline gap-2">
                       {ROLE_DISPLAY[role] ?? role}
                       <span className="text-xs font-medium text-gray-400 tabular-nums">
-                        {(participants[role] ?? []).length}
+                        {activeIds.length}
                       </span>
                     </h4>
                     <div className="flex flex-wrap gap-2">
-                      {(participants[role] ?? []).map(pid => {
+                      {activeIds.map(pid => {
                         const name = personNames[pid] ?? pid;
+                        const lapsed = lapsedSet.has(pid);
                         return (
                           <div
                             key={pid}
-                            className="flex items-center gap-2.5 bg-gray-50/80 border border-gray-100 pl-3 pr-2 py-1.5 rounded-xl group hover:border-blue-200 transition-colors duration-200"
+                            className={`flex items-center gap-2.5 border pl-3 pr-2 py-1.5 rounded-xl group transition-colors duration-200 ${
+                              lapsed
+                                ? 'bg-amber-50/70 border-amber-200'
+                                : 'bg-gray-50/80 border-gray-100 hover:border-blue-200'
+                            }`}
                           >
                             <RecencyDot
                               data={attendance?.byPerson[pid]}
@@ -778,13 +1115,22 @@ export function ActivityDetail() {
                               recentCount={recentCount}
                             />
                             {!regionalOnly && (
-                              <button
-                                onClick={() => removeParticipant(role, pid)}
-                                className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-all duration-200"
-                                title={`Remove ${name}`}
-                              >
-                                <XIcon className="w-4 h-4" />
-                              </button>
+                              <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                                <button
+                                  onClick={() => setConfirmTarget({ kind: 'inactive', role, pid, name })}
+                                  className="text-gray-400 hover:text-amber-600 hover:bg-amber-50 p-1 rounded-md transition-colors"
+                                  title={`Mark ${name} inactive`}
+                                >
+                                  <UserMinusIcon className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={() => setConfirmTarget({ kind: 'remove', role, pid, name })}
+                                  className="text-gray-400 hover:text-red-600 hover:bg-red-50 p-1 rounded-md transition-colors"
+                                  title={`Remove ${name}`}
+                                >
+                                  <XIcon className="w-4 h-4" />
+                                </button>
+                              </div>
                             )}
                           </div>
                         );
@@ -799,7 +1145,62 @@ export function ActivityDetail() {
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
+
+                {/* Inactive members, kept on the roster with their history. */}
+                {inactiveMembers.length > 0 && (
+                  <div className="pt-5 border-t border-gray-100">
+                    <button
+                      onClick={() => setShowInactive(s => !s)}
+                      className="flex items-center gap-2 text-sm font-bold text-gray-500 uppercase tracking-wider hover:text-gray-700 transition-colors"
+                    >
+                      <ChevronDownIcon
+                        className={`w-4 h-4 transition-transform ${showInactive ? '' : '-rotate-90'}`}
+                      />
+                      Inactive
+                      <span className="text-xs font-medium text-gray-400 tabular-nums">
+                        {inactiveMembers.length}
+                      </span>
+                    </button>
+                    {showInactive && (
+                      <div className="flex flex-wrap gap-2 mt-3">
+                        {inactiveMembers.map(({ pid, role }) => {
+                          const name = personNames[pid] ?? pid;
+                          return (
+                            <div
+                              key={pid}
+                              className="flex items-center gap-2.5 bg-gray-50/60 border border-gray-100 pl-3 pr-2 py-1.5 rounded-xl"
+                            >
+                              <button
+                                onClick={() => navigate(`/individual/${pid}`)}
+                                className="text-sm font-medium text-gray-500 hover:text-gray-700"
+                              >
+                                {name}
+                              </button>
+                              <span className="text-[11px] uppercase tracking-wide text-gray-400">
+                                {ROLE_DISPLAY[role] ?? role}
+                              </span>
+                              <AttendanceStrip
+                                data={attendance?.byPerson[pid]}
+                                recentCount={recentCount}
+                              />
+                              {!regionalOnly && (
+                                <button
+                                  onClick={() => handleReactivate(pid)}
+                                  className="text-xs font-semibold text-emerald-600 hover:text-emerald-800 bg-emerald-50 hover:bg-emerald-100 px-2 py-1 rounded-md transition-colors"
+                                  title={`Reactivate ${name}`}
+                                >
+                                  Reactivate
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {activity.type === 'study-circle' && activity.currentBook && (
@@ -815,13 +1216,15 @@ export function ActivityDetail() {
               )}
             </div>
 
-            <ActivityNotebook
-              activityId={activity.id}
-              nucleusId={activity.nucleusId}
-              readOnly={regionalOnly}
-              roster={notebookRoster}
-              onEntriesChanged={loadAttendance}
-            />
+            <div ref={notebookRef}>
+              <ActivityNotebook
+                activityId={activity.id}
+                nucleusId={activity.nucleusId}
+                readOnly={regionalOnly}
+                roster={notebookRoster}
+                onEntriesChanged={() => { loadAttendance(); loadNudge(); }}
+              />
+            </div>
 
             {!regionalOnly && (
               <div className="flex flex-wrap items-center gap-3">
