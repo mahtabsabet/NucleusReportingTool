@@ -530,6 +530,18 @@ export async function addPersonToActivity(params: {
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id ?? null;
 
+    // Stamp the person's canonical cluster affiliation if it isn't set
+    // yet, so they're counted toward this cluster's growth profile even
+    // if they later leave every nucleus/activity. Only fills a blank —
+    // never reassigns someone already attributed to a cluster.
+    if (clusterId) {
+      await supabase
+        .from('persons')
+        .update({ cluster_id: clusterId })
+        .eq('id', personId)
+        .is('cluster_id', null);
+    }
+
     if (isNewToNucleus) {
       await supabase.from('event_log').insert({
         type: 'person_created',
@@ -1033,4 +1045,93 @@ export async function fetchPersonsForNucleus(nucleusId: string): Promise<PersonP
       status: ce.status as CompletionStatus,
     })),
   }));
+}
+
+// Reconcile a person's nucleus memberships *within a single cluster* to exactly
+// `selectedNucleusIds`: enroll them in newly-selected nuclei and soft-delete the
+// enrollments they were de-selected from — but only ever touching nuclei that
+// belong to `clusterId`, never the person's memberships in other clusters. This
+// is the direct (no-activity) path: an enrolled person shows up in that
+// nucleus's concentric circles even without joining an activity. The canonical
+// `cluster_id` is stamped when still blank, mirroring addPersonToActivity.
+export async function setPersonClusterNuclei(
+  personId: string,
+  clusterId: string,
+  selectedNucleusIds: string[],
+): Promise<void> {
+  const { data: nucleiRows, error: nucleiErr } = await supabase
+    .from('nuclei')
+    .select('id, name')
+    .eq('cluster_id', clusterId)
+    .is('deleted_at', null);
+  if (nucleiErr) throw nucleiErr;
+  const clusterNucleusIds = new Set(((nucleiRows ?? []) as any[]).map(n => n.id));
+  const selected = selectedNucleusIds.filter(id => clusterNucleusIds.has(id));
+  const selectedSet = new Set(selected);
+
+  const { data: existing, error: existErr } = await supabase
+    .from('nucleus_enrollments')
+    .select('nucleus_id, deleted_at')
+    .eq('person_id', personId)
+    .in('nucleus_id', [...clusterNucleusIds]);
+  if (existErr) throw existErr;
+  const activeNow = new Set(
+    ((existing ?? []) as any[]).filter(r => r.deleted_at === null).map(r => r.nucleus_id),
+  );
+
+  const toAdd = selected.filter(id => !activeNow.has(id));
+  const toRemove = [...activeNow].filter(id => !selectedSet.has(id));
+
+  if (toAdd.length) {
+    // Enroll (or revive) in each newly-selected nucleus with a null
+    // engagement_level — which the concentric-circles view treats as
+    // "unassigned", so a directly-assigned person starts there rather than in
+    // the outer "aware" ring. Setting it explicitly also clears any stale level
+    // from a prior (since-removed) enrollment. Requires engagement_level to be
+    // nullable — see migrations/20260603_enrollment_engagement_nullable.sql.
+    const { error: addErr } = await supabase.from('nucleus_enrollments').upsert(
+      toAdd.map(nid => ({ person_id: personId, nucleus_id: nid, engagement_level: null, deleted_at: null })),
+      { onConflict: 'person_id,nucleus_id' },
+    );
+    if (addErr) throw addErr;
+  }
+  if (toRemove.length) {
+    const { error: rmErr } = await supabase
+      .from('nucleus_enrollments')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('person_id', personId)
+      .in('nucleus_id', toRemove);
+    if (rmErr) throw rmErr;
+  }
+
+  // Stamp the canonical affiliation if it's still blank (fills only — never
+  // reassigns someone already attributed to a cluster).
+  if (selected.length) {
+    const { error: stampErr } = await supabase
+      .from('persons')
+      .update({ cluster_id: clusterId })
+      .eq('id', personId)
+      .is('cluster_id', null);
+    if (stampErr) throw stampErr;
+  }
+
+  // Log joins so the analytics match the activity-driven enrollment path.
+  if (toAdd.length) {
+    const { data: person } = await supabase.from('persons').select('name').eq('id', personId).single();
+    const personName = (person as any)?.name ?? '';
+    const { data: { user } } = await supabase.auth.getUser();
+    const userId = user?.id ?? null;
+    const nameById = new Map(((nucleiRows ?? []) as any[]).map(n => [n.id, n.name]));
+    for (const nid of toAdd) {
+      await supabase.from('event_log').insert({
+        type: 'person_created',
+        cluster_id: clusterId,
+        nucleus_id: nid,
+        person_id: personId,
+        user_id: userId,
+        description: `${personName} joined ${nameById.get(nid) ?? 'nucleus'}`,
+        details: { personName, source: 'cluster_people' },
+      });
+    }
+  }
 }

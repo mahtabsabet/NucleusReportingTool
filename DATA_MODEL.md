@@ -385,7 +385,13 @@ Mostly cumulative within a scope hierarchy — a Cluster Coordinator can do ever
 
 All core entities include a `deleted_at` timestamp. A non-null value means the record is archived, not destroyed. This preserves the integrity of the EventLog and Session history — you can see that "Sara taught the class on March 3rd" even if Sara's record is later archived.
 
-Hard deletes are never performed in the application layer.
+Hard deletes are never performed in the application layer. Archiving a person (`deletePerson`) sets `deleted_at` on the person and on their nucleus enrollments and activity participations, so they drop out of rosters and concentric circles while course / session / journal history is retained.
+
+### Merging Duplicate People
+
+When the same individual ends up with two profiles, a coordinator can merge them. The `merge_persons(loser, survivor)` SQL function re-points every relationship the loser owns — nucleus enrollments, activity participations, course/unit enrollments, session & journal attendance, capacities, LSA household links, user links and the event log — onto the survivor, dropping any row that would duplicate one the survivor already has. The loser is then soft-deleted and stamped with `merged_into_id` (pointing at the survivor), and a `person_merged` event is logged. Empty survivor contact fields (email, phone, photo, cluster) are backfilled from the loser; existing survivor data is never overwritten. The whole operation is atomic.
+
+Duplicates are surfaced two ways on the People page: a proactive "possible duplicates" panel (matching on name, email, or phone) and an on-demand merge of any two selected people.
 
 ---
 

@@ -14,6 +14,7 @@ import { IndividualProfile } from './components/IndividualProfile';
 import { ActivityTypeReport } from './components/ActivityTypeReport';
 import { ClusterProfile } from './components/ClusterProfile';
 import { ClusterLearningHub } from './components/ClusterLearningHub';
+import { ClusterPeople } from './components/ClusterPeople';
 import { GrowthReport } from './components/GrowthReport';
 import { UserGuide } from './components/UserGuide';
 import { UserManagement } from './components/UserManagement';
@@ -235,6 +236,7 @@ function AppRoutes() {
           {/* Read-only community-building views in their cluster. */}
           <Route path="/" element={<ClusterMapView />} />
           <Route path="/map" element={<ClusterMapView />} />
+          <Route path="/cluster-people" element={<ClusterPeople />} />
           <Route path="/learning-hub" element={<ClusterLearningHub />} />
           <Route path="/nucleus/:id" element={<NucleusDashboard />} />
           <Route path="/nucleus/:id/timeline" element={<NucleusTimeline />} />
@@ -296,6 +298,7 @@ function AppRoutes() {
       <Route path="/individual/:id" element={<IndividualProfile />} />
       <Route path="/report/:type" element={<ActivityTypeReport />} />
       <Route path="/cluster-profile" element={<ClusterProfile />} />
+      <Route path="/cluster-people" element={<ClusterPeople />} />
       <Route path="/learning-hub" element={<ClusterLearningHub />} />
       <Route path="/growth-report" element={<GrowthReport />} />
       <Route path="/nucleus/:nucleusId/growth-report" element={<GrowthReport />} />

@@ -1,5 +1,8 @@
 export type AgeGroup = 'child' | 'junior_youth' | 'youth' | 'adult' | 'unknown';
 export type ProfileStatus = 'provisional' | 'confirmed';
+// Bahá'í vs. friend-of-the-faith distinction used by the Cluster Growth
+// Profile. 'unknown' is the default for un-reviewed records.
+export type ReligiousStatus = 'bahai' | 'friend' | 'unknown';
 export type EngagementLevel = 'aware' | 'participating' | 'supporting' | 'coordinating';
 export type ActivityType = 'children_class' | 'junior_youth' | 'study_circle' | 'devotional' | 'fireside' | 'other';
 export type ParticipantRole = 'teacher' | 'animator' | 'tutor' | 'child' | 'junior_youth' | 'parent' | 'host' | 'attendee' | 'participant' | 'other';
