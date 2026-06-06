@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useUnsavedChanges, useConfirmDiscard } from '../lib/unsavedChanges';
+import { useUnsavedChanges } from '../lib/unsavedChanges';
 import {
   CalendarIcon,
   LightbulbIcon,
@@ -423,8 +423,8 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
 
   const hasContent = Object.values(values).some(v => v.trim().length > 0);
 
-  // Unsaved-changes guard: warn before losing an in-progress entry.
-  const confirmDiscard = useConfirmDiscard();
+  // Unsaved-changes guard: warn before leaving the page with an in-progress
+  // entry. (Cancel is a deliberate discard, so it is not guarded.)
   const initialSig = useMemo(
     () =>
       JSON.stringify({
@@ -443,9 +443,6 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
   });
   const dirty = currentSig !== initialSig || draftThemes.length > 0;
   useUnsavedChanges(dirty);
-  const handleCancel = () => {
-    if (confirmDiscard()) onCancel();
-  };
 
   const toggleAttendee = (id: string) => {
     setAttendeeIds(prev => {
@@ -671,7 +668,7 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
           {saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Save entry'}
         </button>
         <button
-          onClick={handleCancel}
+          onClick={onCancel}
           className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900"
         >
           Cancel
