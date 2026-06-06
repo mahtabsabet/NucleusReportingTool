@@ -14,10 +14,15 @@ import { useNavigate, type NavigateOptions, type To } from 'react-router-dom';
 // Unsaved-changes guard
 //
 // Forms that require an explicit Save call useUnsavedChanges(isDirty).
-// While dirty, the user is warned before they lose the edits by:
+// While ANY registered source is dirty, the user is warned before they
+// lose edits by:
 //   • closing the tab / refreshing / leaving the site  (beforeunload)
 //   • pressing the browser Back/Forward button          (popstate)
-//   • clicking an in-app navigation that routes through useGuardedNavigate()
+//   • clicking an in-app navigation routed through useGuardedNavigate()
+//
+// Multiple independent sources can be dirty at once (e.g. a page and a
+// child widget), so each registers under its own id and the guard fires
+// while any of them is dirty.
 //
 // We deliberately keep the manual Save — nothing is auto-saved; this only
 // stops silent data loss. The confirm is a native window.confirm so it can
@@ -27,36 +32,61 @@ import { useNavigate, type NavigateOptions, type To } from 'react-router-dom';
 const MESSAGE = 'You have unsaved changes that will be lost. Leave this page without saving?';
 
 interface UnsavedChangesApi {
-  setDirty: (dirty: boolean) => void;
-  isDirty: () => boolean;
+  setSourceDirty: (id: number, dirty: boolean) => void;
+  removeSource: (id: number) => void;
   // Returns true if it's safe to proceed (clean, or the user confirmed).
   confirmDiscard: () => boolean;
 }
 
 const Ctx = createContext<UnsavedChangesApi | null>(null);
 
-export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
-  const [dirty, setDirtyState] = useState(false);
-  // Mirror in a ref so the window-level handlers always read the latest value
-  // without being re-bound on every change.
-  const dirtyRef = useRef(false);
+let sourceCounter = 0;
 
-  const setDirty = useCallback((d: boolean) => {
-    dirtyRef.current = d;
-    setDirtyState(d);
+export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
+  const sourcesRef = useRef<Map<number, boolean>>(new Map());
+  // State mirror drives the Back-button sentinel effect; the ref is the
+  // source of truth the window-level handlers read synchronously.
+  const [anyDirty, setAnyDirty] = useState(false);
+
+  const recompute = useCallback(() => {
+    let dirty = false;
+    for (const v of sourcesRef.current.values()) {
+      if (v) { dirty = true; break; }
+    }
+    setAnyDirty(dirty);
   }, []);
 
+  const setSourceDirty = useCallback((id: number, dirty: boolean) => {
+    sourcesRef.current.set(id, dirty);
+    recompute();
+  }, [recompute]);
+
+  const removeSource = useCallback((id: number) => {
+    sourcesRef.current.delete(id);
+    recompute();
+  }, [recompute]);
+
+  const anyDirtyNow = () => {
+    for (const v of sourcesRef.current.values()) if (v) return true;
+    return false;
+  };
+
   const confirmDiscard = useCallback(() => {
-    if (!dirtyRef.current) return true;
+    if (!anyDirtyNow()) return true;
     const ok = window.confirm(MESSAGE);
-    if (ok) setDirty(false);
+    if (ok) {
+      // Clear so the imminent navigation doesn't re-prompt; unmounting
+      // editors will have their sources removed on cleanup anyway.
+      sourcesRef.current.clear();
+      recompute();
+    }
     return ok;
-  }, [setDirty]);
+  }, [recompute]);
 
   // Close tab / refresh / navigate to a non-app URL.
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (!dirtyRef.current) return;
+      if (!anyDirtyNow()) return;
       e.preventDefault();
       e.returnValue = ''; // required for the prompt to show in most browsers
     };
@@ -68,12 +98,13 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
   // entry so the first Back lands us back on this same URL, giving us a chance
   // to confirm before actually leaving.
   useEffect(() => {
-    if (!dirty) return;
+    if (!anyDirty) return;
     window.history.pushState(null, '', window.location.href);
     const onPopState = () => {
-      if (!dirtyRef.current) return;
+      if (!anyDirtyNow()) return;
       if (window.confirm(MESSAGE)) {
-        setDirty(false);
+        sourcesRef.current.clear();
+        recompute();
         window.history.back(); // proceed past the sentinel to the real prior page
       } else {
         window.history.pushState(null, '', window.location.href); // re-arm; stay put
@@ -81,11 +112,11 @@ export function UnsavedChangesProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
-  }, [dirty, setDirty]);
+  }, [anyDirty, recompute]);
 
   const api = useMemo<UnsavedChangesApi>(
-    () => ({ setDirty, confirmDiscard, isDirty: () => dirtyRef.current }),
-    [setDirty, confirmDiscard],
+    () => ({ setSourceDirty, removeSource, confirmDiscard }),
+    [setSourceDirty, removeSource, confirmDiscard],
   );
 
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
@@ -102,13 +133,19 @@ function useUnsavedChangesApi(): UnsavedChangesApi {
 /**
  * Register a form's live "dirty" flag with the guard. While the flag is true,
  * the user is warned before navigating or closing the tab. Clears on unmount.
+ * Multiple components may call this independently; the guard fires while any
+ * of them is dirty.
  */
 export function useUnsavedChanges(isDirty: boolean): void {
-  const { setDirty } = useUnsavedChangesApi();
+  const { setSourceDirty, removeSource } = useUnsavedChangesApi();
+  const idRef = useRef<number>();
+  if (idRef.current === undefined) idRef.current = ++sourceCounter;
+
   useEffect(() => {
-    setDirty(isDirty);
-  }, [isDirty, setDirty]);
-  useEffect(() => () => setDirty(false), [setDirty]);
+    setSourceDirty(idRef.current!, isDirty);
+  }, [isDirty, setSourceDirty]);
+
+  useEffect(() => () => removeSource(idRef.current!), [removeSource]);
 }
 
 /**

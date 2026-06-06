@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useUnsavedChanges, useGuardedNavigate } from '../lib/unsavedChanges';
 import {
   UserIcon,
   CheckIcon,
@@ -91,6 +92,16 @@ const VIEWPORT_MAX_CSS = '100%';
 
 // Order from innermost to outermost — used for nesting / z-ordering
 const ORDERED_LEVELS: Level[] = ['coordinating', 'supporting', 'participating', 'aware'];
+
+// A stable signature of who sits in which ring (and who's unplaced), used to
+// detect unsaved drag changes for the unsaved-changes guard.
+function placementSignature(circles: Record<Level, NameEntry[]>, unplaced: NameEntry[]): string {
+  const pairs: [string, string][] = [];
+  for (const level of ORDERED_LEVELS) for (const e of circles[level]) pairs.push([e.id, level]);
+  for (const e of unplaced) pairs.push([e.id, 'unplaced']);
+  pairs.sort((a, b) => a[0].localeCompare(b[0]));
+  return JSON.stringify(pairs);
+}
 
 const LEVEL_LABEL_COLOR: Record<Level, string> = {
   aware:         '#6b7280',
@@ -242,6 +253,10 @@ function validContacts(
 export function ConcentricCircles({ nucleusId, compact, canEdit = true }: ConcentricCirclesProps) {
   const readOnly = !canEdit;
   const navigate = useNavigate();
+  const guardedNavigate = useGuardedNavigate();
+  // Baseline placement captured at load / after save; compared against the
+  // live placement to detect unsaved drag changes.
+  const baselineSigRef = useRef<string | null>(null);
 
   const [circles, setCircles] = useState<Record<Level, NameEntry[]>>({
     coordinating: [], supporting: [], participating: [], aware: [],
@@ -296,10 +311,17 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
         });
         setCircles(result);
         setUnplaced(newUnplaced);
+        baselineSigRef.current = placementSignature(result, newUnplaced);
         setLoading(false);
       })
       .catch(() => setLoading(false));
   }, [nucleusId]);
+
+  // Unsaved-changes guard: warn before leaving with un-saved drag changes.
+  const placementSig = useMemo(() => placementSignature(circles, unplaced), [circles, unplaced]);
+  const isDirty =
+    !readOnly && baselineSigRef.current !== null && placementSig !== baselineSigRef.current;
+  useUnsavedChanges(isDirty);
 
   const handleSave = async () => {
     const updates: Promise<void>[] = [];
@@ -310,6 +332,8 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     }
     try {
       await Promise.all(updates);
+      // Now persisted — re-baseline so the page is no longer "dirty".
+      baselineSigRef.current = placementSignature(circles, unplaced);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {
@@ -843,7 +867,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           {/* footer */}
           <div className="px-6 pb-6 pt-2 border-t border-gray-100">
             <button
-              onClick={() => { closePanel(); navigate(`/individual/${entry.id}`); }}
+              onClick={() => { closePanel(); guardedNavigate(`/individual/${entry.id}`); }}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-blue-500 text-blue-600 font-semibold hover:bg-blue-50 transition-colors"
             >
               <UserIcon className="w-4 h-4" />
