@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useUnsavedChanges, useGuardedNavigate } from '../lib/unsavedChanges';
 import {
   ChevronLeftIcon,
   ChevronDownIcon,
@@ -141,6 +142,8 @@ const ROLE_DISPLAY: Record<string, string> = {
 export function ActivityDetail() {
   const { nucleusId, activityId } = useParams<{ nucleusId: string; activityId: string }>();
   const navigate = useNavigate();
+  // Confirms before leaving when there are unsaved edits (see isDirty below).
+  const guardedNavigate = useGuardedNavigate();
 
   const [activity, setActivity] = useState<Activity | null>(null);
   const [nucleusName, setNucleusName] = useState('');
@@ -376,6 +379,9 @@ export function ActivityDetail() {
     return false;
   }, [initialForm, schedule, schedulingMode, daysOfWeek, time, intervalWeeks, startDate, endDate]);
 
+  // Warn before navigating away / closing the tab with unsaved schedule edits.
+  useUnsavedChanges(isDirty);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -393,7 +399,7 @@ export function ActivityDetail() {
         <div className="text-center">
           <p className="text-gray-500 mb-4">Activity not found</p>
           <button
-            onClick={() => navigate(`/nucleus/${nucleusId}`)}
+            onClick={() => guardedNavigate(`/nucleus/${nucleusId}`)}
             className="text-blue-600 hover:underline"
           >
             Back to nucleus
@@ -699,7 +705,7 @@ export function ActivityDetail() {
               <div /> /* spacer keeps GlobalSearch right-aligned */
             ) : (
               <button
-                onClick={() => navigate(`/nucleus/${nucleusId}`)}
+                onClick={() => guardedNavigate(`/nucleus/${nucleusId}`)}
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
               >
                 <ChevronLeftIcon className="w-4 h-4" />
@@ -1042,7 +1048,7 @@ export function ActivityDetail() {
                         >
                           <div className="min-w-0">
                             <button
-                              onClick={() => navigate(`/individual/${pid}`)}
+                              onClick={() => guardedNavigate(`/individual/${pid}`)}
                               className="text-sm font-semibold text-blue-700 hover:text-blue-900"
                             >
                               {name}
@@ -1105,7 +1111,7 @@ export function ActivityDetail() {
                               recentCount={recentCount}
                             />
                             <button
-                              onClick={() => navigate(`/individual/${pid}`)}
+                              onClick={() => guardedNavigate(`/individual/${pid}`)}
                               className="text-sm font-semibold text-blue-700 hover:text-blue-900"
                             >
                               {name}
@@ -1173,7 +1179,7 @@ export function ActivityDetail() {
                               className="flex items-center gap-2.5 bg-gray-50/60 border border-gray-100 pl-3 pr-2 py-1.5 rounded-xl"
                             >
                               <button
-                                onClick={() => navigate(`/individual/${pid}`)}
+                                onClick={() => guardedNavigate(`/individual/${pid}`)}
                                 className="text-sm font-medium text-gray-500 hover:text-gray-700"
                               >
                                 {name}
@@ -1229,7 +1235,7 @@ export function ActivityDetail() {
             {!regionalOnly && (
               <div className="flex flex-wrap items-center gap-3">
                 <button
-                  onClick={() => navigate(`/nucleus/${nucleusId}`)}
+                  onClick={() => guardedNavigate(`/nucleus/${nucleusId}`)}
                   className="px-6 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
                 >
                   Cancel
