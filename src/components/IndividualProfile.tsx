@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useUnsavedChanges, useGuardedNavigate } from '../lib/unsavedChanges';
 import {
   ChevronLeftIcon,
   ClockIcon,
@@ -77,6 +78,7 @@ const ROLE_DISPLAY: Record<string, string> = {
 export function IndividualProfile() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const guardedNavigate = useGuardedNavigate();
 
   const [person, setPerson] = useState<PersonDetail | null>(null);
   const [allCourses, setAllCourses] = useState<Course[]>([]);
@@ -173,6 +175,50 @@ export function IndividualProfile() {
       setDeleting(false);
     }
   };
+
+  // ── Unsaved-changes guard ──────────────────────────────────
+  // A signature of everything the edit form can change. We snapshot it when
+  // edit mode opens (fields are initialized synchronously in startEditing
+  // before setEditing(true)), then treat any later divergence as dirty.
+  const editFormSignature = useMemo(
+    () =>
+      JSON.stringify({
+        name: editName,
+        email: editEmail,
+        phone: editPhone,
+        ageGroup: editAgeGroup,
+        minor: editMinorOverride,
+        profileStatus: editProfileStatus,
+        religiousStatus: editReligiousStatus,
+        capacities: editCapacities.map(c => c.capacityId ?? c.name),
+        courses: [...editCourseStatuses.entries()].sort(),
+        units: [...editUnitStatuses.entries()].sort(),
+        photo: !!editPhotoFile,
+      }),
+    [
+      editName,
+      editEmail,
+      editPhone,
+      editAgeGroup,
+      editMinorOverride,
+      editProfileStatus,
+      editReligiousStatus,
+      editCapacities,
+      editCourseStatuses,
+      editUnitStatuses,
+      editPhotoFile,
+    ],
+  );
+  const baselineSigRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Capture the baseline the moment edit mode opens; clear it on exit.
+    baselineSigRef.current = editing ? editFormSignature : null;
+    // Intentionally keyed on `editing` only, so the snapshot is taken once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+  const isDirty =
+    editing && baselineSigRef.current !== null && editFormSignature !== baselineSigRef.current;
+  useUnsavedChanges(isDirty);
 
   if (loading) {
     return (
@@ -416,7 +462,7 @@ export function IndividualProfile() {
       <header className="bg-white border-b border-gray-200/80 px-8 py-5 sticky top-0 z-10 shadow-sm">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-4">
           <button
-            onClick={() => navigate(-1)}
+            onClick={() => guardedNavigate(-1)}
             className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
           >
             <ChevronLeftIcon className="w-4 h-4" />
@@ -683,7 +729,7 @@ export function IndividualProfile() {
                   {person.nuclei.map(n => (
                     <button
                       key={n.id}
-                      onClick={() => navigate(`/nucleus/${n.id}`)}
+                      onClick={() => guardedNavigate(`/nucleus/${n.id}`)}
                       className="px-4 py-2 bg-blue-50 text-blue-700 border border-blue-200/60 rounded-xl font-semibold hover:bg-blue-100 hover:border-blue-300 transition-all duration-200"
                     >
                       {n.name}
@@ -981,7 +1027,7 @@ export function IndividualProfile() {
                       </div>
                       <button
                         onClick={() =>
-                          navigate(`/nucleus/${activity.nucleusId}/activity/${activity.activityId}`)
+                          guardedNavigate(`/nucleus/${activity.nucleusId}/activity/${activity.activityId}`)
                         }
                         className="text-blue-600 hover:text-blue-800 font-semibold text-sm bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
                       >

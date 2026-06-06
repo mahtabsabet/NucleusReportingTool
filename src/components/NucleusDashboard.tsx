@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useUnsavedChanges, useGuardedNavigate } from '../lib/unsavedChanges';
 import {
   ChevronLeftIcon,
   PlusIcon,
@@ -76,6 +77,7 @@ const MODULES: { id: FocusedModule; label: string; Icon: React.FC<{ className?: 
 export function NucleusDashboard() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const guardedNavigate = useGuardedNavigate();
   // Allow deep-linking straight into a module, e.g. the Cluster
   // Learning Hub links to ?module=journal to open a nucleus's
   // journal directly.
@@ -267,6 +269,13 @@ export function NucleusDashboard() {
     }
   };
 
+  // Warn before leaving with an in-progress nucleus rename (the only staged
+  // edit on this page). The browser-level guard covers tab close / Back; the
+  // back-to-map button routes through guardedNavigate below.
+  const isDirty =
+    editingName && !!nucleus && nameInput.trim() !== '' && nameInput.trim() !== nucleus.name;
+  useUnsavedChanges(isDirty);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -432,7 +441,7 @@ export function NucleusDashboard() {
           {!nucleusCollaboratorOnly && (
             <>
               <button
-                onClick={() => navigate('/')}
+                onClick={() => guardedNavigate('/')}
                 className="inline-flex items-center gap-1 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors bg-white/50 px-2.5 py-1.5 rounded-lg backdrop-blur-sm flex-shrink-0"
               >
                 <ChevronLeftIcon className="w-4 h-4" />
