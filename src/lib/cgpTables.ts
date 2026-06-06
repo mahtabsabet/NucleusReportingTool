@@ -2,63 +2,95 @@ import type { ClusterGrowthProfile, ActivityStatRow } from './cgp';
 
 // A neutral table representation shared by the on-screen render and the
 // exports, so the five CGP tables stay identical across surfaces.
+//
+// Tables are laid out HORIZONTALLY to mirror the printed Cluster Growth
+// Profile they're used to populate: the items being counted run across
+// the top as columns, and the metric(s) sit in the row(s) beneath.
 export interface CgpTable {
   key: string;
   title: string;
   columns: string[];
   rows: (string | number)[][];
-  // Indices of rows that are roll-up totals (rendered emphasized).
-  totalRowIndices?: number[];
+  // Column indices that are roll-up totals (rendered emphasized).
+  totalColIndices?: number[];
+  // Optional legend / footnote shown under the table.
+  note?: string;
 }
 
-const ACTIVITY_COLUMNS = ['', 'Activities', 'Attending', 'Friends of the faith'];
+const BOOKS_8_14 = [8, 9, 10, 11, 12, 13, 14];
 
-function activityRow(label: string, s: ActivityStatRow): (string | number)[] {
-  return [label, s.activities, s.participants, s.friends];
+function activityMetricRows(
+  label: string,
+  cols: { label: string; stat: ActivityStatRow }[],
+): { columns: string[]; rows: (string | number)[][] } {
+  return {
+    columns: ['', ...cols.map(c => c.label)],
+    rows: [
+      ['Activities', ...cols.map(c => c.stat.activities)],
+      ['Attending', ...cols.map(c => c.stat.participants)],
+      ['Friends of the faith', ...cols.map(c => c.stat.friends)],
+    ],
+  };
 }
 
 export function cgpTables(p: ClusterGrowthProfile): CgpTable[] {
-  return [
-    {
-      key: 'books-1-7',
-      title: 'Ruhi books completed (Books 1–7)',
-      columns: ['Book', 'Title', 'Completed'],
-      rows: p.mainBooks.map(b => [`Book ${b.book}`, b.name, b.completed]),
-    },
-    {
-      key: 'books-8-14',
-      title: 'Ruhi books completed by unit (Books 8–14)',
-      columns: ['Book', 'Unit', 'Completed'],
-      rows: p.unitBooks.map(u => [`Book ${u.book}`, `Unit ${u.unit}`, u.completed]),
-    },
-    {
-      key: 'branch-courses',
-      title: 'Branch courses completed',
-      columns: ['Book', 'Branch course', 'Completed'],
-      rows: p.branchCourses.map(b => [`Book ${b.parentBook}`, b.label, b.completed]),
-    },
-    {
-      key: 'educational',
-      title: 'Educational activities',
-      columns: ACTIVITY_COLUMNS,
-      rows: [
-        activityRow("Children's classes", p.childrenClasses),
-        activityRow('Junior youth groups', p.juniorYouth),
-        activityRow('Study circles', p.studyCircles),
-        activityRow('Total educational', p.educationalTotal),
-      ],
-      totalRowIndices: [3],
-    },
-    {
-      key: 'core',
-      title: 'Core activities',
-      columns: ACTIVITY_COLUMNS,
-      rows: [
-        activityRow('Devotional gatherings', p.devotionals),
-        activityRow('Total educational activities', p.educationalTotal),
-        activityRow('Total core activities', p.coreTotal),
-      ],
-      totalRowIndices: [1, 2],
-    },
-  ];
+  // Table 1 — Books 1–7 across the top, one "Completed" row.
+  const t1: CgpTable = {
+    key: 'books-1-7',
+    title: 'Ruhi books completed (Books 1–7)',
+    columns: ['', ...p.mainBooks.map(b => `Book ${b.book}`)],
+    rows: [['Completed', ...p.mainBooks.map(b => b.completed)]],
+  };
+
+  // Table 2 — Books 8–14 across the top, a row per unit.
+  const t2: CgpTable = {
+    key: 'books-8-14',
+    title: 'Ruhi books completed by unit (Books 8–14)',
+    columns: ['', ...BOOKS_8_14.map(b => `Book ${b}`)],
+    rows: [1, 2, 3].map(unit => [
+      `Unit ${unit}`,
+      ...BOOKS_8_14.map(b => p.unitBooks.find(u => u.book === b && u.unit === unit)?.completed ?? 0),
+    ]),
+  };
+
+  // Table 3 — branch courses across the top (abbreviated), one row.
+  const t3: CgpTable = {
+    key: 'branch-courses',
+    title: 'Branch courses completed',
+    columns: [
+      '',
+      'B3 G2', 'B3 G3', 'B3 G4', 'B3 G5',
+      'B5 BC1', 'B5 BC2', 'B5 BC3',
+      'B7 BC1', 'B7 BC2', 'B7 BC3',
+    ],
+    rows: [['Completed', ...p.branchCourses.map(b => b.completed)]],
+    note: 'B = Book · G = Grade · BC = Branch Course',
+  };
+
+  // Table 4 — educational activity types across the top, metric rows.
+  const t4: CgpTable = {
+    key: 'educational',
+    title: 'Educational activities',
+    ...activityMetricRows('', [
+      { label: "Children's classes", stat: p.childrenClasses },
+      { label: 'Junior youth groups', stat: p.juniorYouth },
+      { label: 'Study circles', stat: p.studyCircles },
+      { label: 'Total educational', stat: p.educationalTotal },
+    ]),
+    totalColIndices: [4],
+  };
+
+  // Table 5 — devotionals + roll-ups across the top, metric rows.
+  const t5: CgpTable = {
+    key: 'core',
+    title: 'Core activities',
+    ...activityMetricRows('', [
+      { label: 'Devotional gatherings', stat: p.devotionals },
+      { label: 'Total educational', stat: p.educationalTotal },
+      { label: 'Total core', stat: p.coreTotal },
+    ]),
+    totalColIndices: [2, 3],
+  };
+
+  return [t1, t2, t3, t4, t5];
 }

@@ -19,6 +19,7 @@ export async function exportCgpToXlsx(
   const wb = XLSX.utils.book_new();
   for (const table of cgpTables(profile)) {
     const aoa: (string | number)[][] = [table.columns, ...table.rows];
+    if (table.note) aoa.push([], [table.note]);
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     // Sheet names are capped at 31 chars and can't contain []:*?/\.
     const sheetName = table.title.replace(/[[\]:*?/\\]/g, '').slice(0, 31);

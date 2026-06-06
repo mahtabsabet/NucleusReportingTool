@@ -147,42 +147,47 @@ export function ClusterGrowthProfile() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-200">
-                      {table.columns.map((col, i) => (
-                        <th
-                          key={i}
-                          className={`py-2 px-3 font-semibold text-gray-500 ${
-                            i === 0 ? 'text-left' : 'text-right'
-                          }`}
-                        >
-                          {col}
-                        </th>
-                      ))}
+                      {table.columns.map((col, i) => {
+                        const isTotal = table.totalColIndices?.includes(i);
+                        return (
+                          <th
+                            key={i}
+                            className={`py-2 px-3 font-semibold ${
+                              i === 0 ? 'text-left' : 'text-right'
+                            } ${isTotal ? 'text-gray-900' : 'text-gray-500'}`}
+                          >
+                            {col}
+                          </th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
-                    {table.rows.map((row, ri) => {
-                      const isTotal = table.totalRowIndices?.includes(ri);
-                      return (
-                        <tr
-                          key={ri}
-                          className={`border-b border-gray-100 last:border-0 ${
-                            isTotal ? 'font-bold text-gray-900 bg-gray-50/70' : 'text-gray-700'
-                          }`}
-                        >
-                          {row.map((cell, ci) => (
+                    {table.rows.map((row, ri) => (
+                      <tr key={ri} className="border-b border-gray-100 last:border-0 text-gray-700">
+                        {row.map((cell, ci) => {
+                          const isTotal = table.totalColIndices?.includes(ci);
+                          return (
                             <td
                               key={ci}
-                              className={`py-2 px-3 ${ci === 0 ? 'text-left' : 'text-right tabular-nums'}`}
+                              className={`py-2 px-3 ${
+                                ci === 0
+                                  ? 'text-left font-medium text-gray-600'
+                                  : 'text-right tabular-nums'
+                              } ${isTotal ? 'font-bold text-gray-900 bg-gray-50/70' : ''}`}
                             >
                               {cell}
                             </td>
-                          ))}
-                        </tr>
-                      );
-                    })}
+                          );
+                        })}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
+              {table.note && (
+                <p className="text-xs text-gray-400 mt-3">{table.note}</p>
+              )}
             </section>
           ))}
       </div>
