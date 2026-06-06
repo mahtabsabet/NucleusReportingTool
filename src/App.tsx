@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { UnsavedChangesProvider } from './lib/unsavedChanges';
 import { AuthProvider, useAuth } from './lib/auth';
 import { LoginPage } from './components/LoginPage';
 import { ForgotPasswordPage } from './components/ForgotPasswordPage';
@@ -320,7 +321,9 @@ export function App() {
       {!splashDone && <SplashScreen onDone={() => setSplashDone(true)} />}
       <AuthProvider>
         <BrowserRouter>
-          <AppRoutes />
+          <UnsavedChangesProvider>
+            <AppRoutes />
+          </UnsavedChangesProvider>
         </BrowserRouter>
       </AuthProvider>
     </>

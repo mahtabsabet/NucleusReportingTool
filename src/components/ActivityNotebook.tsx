@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useUnsavedChanges } from '../lib/unsavedChanges';
 import {
   CalendarIcon,
   LightbulbIcon,
@@ -421,6 +422,27 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
   const [saving, setSaving] = useState(false);
 
   const hasContent = Object.values(values).some(v => v.trim().length > 0);
+
+  // Unsaved-changes guard: warn before leaving the page with an in-progress
+  // entry. (Cancel is a deliberate discard, so it is not guarded.)
+  const initialSig = useMemo(
+    () =>
+      JSON.stringify({
+        values: { whatHappened: initial?.whatHappened ?? '', learning: initial?.learning ?? '' },
+        themes: (initial?.themes.map(t => t.id) ?? []).slice().sort(),
+        attendees: (initial?.attendees.map(a => a.id) ?? []).slice().sort(),
+        date: toDateInputValue(initial?.occurredAt ?? new Date()),
+      }),
+    [initial],
+  );
+  const currentSig = JSON.stringify({
+    values,
+    themes: [...selectedThemeIds].sort(),
+    attendees: [...attendeeIds].sort(),
+    date: activityDate,
+  });
+  const dirty = currentSig !== initialSig || draftThemes.length > 0;
+  useUnsavedChanges(dirty);
 
   const toggleAttendee = (id: string) => {
     setAttendeeIds(prev => {

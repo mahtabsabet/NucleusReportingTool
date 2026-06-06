@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useUnsavedChanges, useConfirmDiscard } from '../lib/unsavedChanges';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeftIcon,
@@ -75,6 +76,13 @@ export function ClusterLearningHub() {
     () => themes.find(t => t.id === selectedThemeId) ?? null,
     [themes, selectedThemeId],
   );
+
+  // Switching themes hides any open synthesis composer (local state, not
+  // navigation), so confirm first if there are unsaved reflection edits.
+  const confirmDiscard = useConfirmDiscard();
+  const selectTheme = (themeId: string | null) => {
+    if (confirmDiscard()) setSelectedThemeId(themeId);
+  };
 
   useEffect(() => {
     if (!clusterId) return;
@@ -168,8 +176,8 @@ export function ClusterLearningHub() {
             loading={loadingThemes}
             canEdit={canEdit}
             showArchived={showArchived}
-            onToggleArchived={() => { setSelectedThemeId(null); setShowArchived(s => !s); }}
-            onSelect={setSelectedThemeId}
+            onToggleArchived={() => { if (confirmDiscard()) { setSelectedThemeId(null); setShowArchived(s => !s); } }}
+            onSelect={selectTheme}
             onConsolidationChange={async (id, level) => {
               setThemes(prev => prev.map(t => t.id === id ? { ...t, consolidationLevel: level } : t));
               await updateConsolidationLevel(id, level);
@@ -460,6 +468,11 @@ function AddThemeForm({
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Unsaved-changes guard: warn before leaving with an in-progress theme.
+  // (Cancel is a deliberate discard, so it is not guarded.)
+  const dirty = name.trim().length > 0 || description.trim().length > 0;
+  useUnsavedChanges(dirty);
+
   return (
     <div className="bg-white/80 border border-amber-900/20 rounded-xl p-3 mb-4 space-y-2">
       <input
@@ -690,6 +703,11 @@ function SynthesisColumn({
 }) {
   const [body, setBody] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // Unsaved-changes guard: warn before leaving with an in-progress reflection.
+  // (Cancel is a deliberate discard, so it is not guarded.)
+  const dirty = composerOpen && body.trim().length > 0;
+  useUnsavedChanges(dirty);
 
   if (!theme) {
     return (
