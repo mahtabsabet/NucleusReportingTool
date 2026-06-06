@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useUnsavedChanges } from '../lib/unsavedChanges';
+import { useUnsavedChanges, useConfirmDiscard } from '../lib/unsavedChanges';
 import {
   ClockIcon,
   PlusIcon,
@@ -81,6 +81,13 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
     [themes, selectedThemeId],
   );
 
+  // Selecting/leaving a theme hides any open composer (local state, not
+  // navigation), so confirm first if there are unsaved entry edits.
+  const confirmDiscard = useConfirmDiscard();
+  const selectTheme = (themeId: string | null) => {
+    if (confirmDiscard()) setSelectedThemeId(themeId);
+  };
+
   // When viewing a theme's entries, label each individual-entry tab
   // with the activity it came from (if any), so the tab conveys
   // provenance, not just a date.
@@ -122,7 +129,7 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
             {selectedTheme ? (
               <>
                 <button
-                  onClick={() => setSelectedThemeId(null)}
+                  onClick={() => selectTheme(null)}
                   className="inline-flex items-center gap-1 text-[11px] uppercase tracking-[0.2em] text-amber-800/80 hover:text-amber-900 mb-2"
                 >
                   <ChevronLeftIcon className="w-3.5 h-3.5" /> Back to journal
@@ -265,7 +272,7 @@ export function NucleusJournal({ nucleusId, readOnly, canCurate }: NucleusJourna
                 theme={theme}
                 active={theme.id === selectedThemeId}
                 canCurate={canCurate}
-                onSelect={() => setSelectedThemeId(theme.id)}
+                onSelect={() => selectTheme(theme.id)}
                 onPromote={async () => { await promoteTheme(theme.id); await loadThemes(); }}
                 onArchive={async () => {
                   await archiveTheme(theme.id);

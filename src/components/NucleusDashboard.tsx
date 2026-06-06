@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { useUnsavedChanges, useGuardedNavigate } from '../lib/unsavedChanges';
+import { useUnsavedChanges, useGuardedNavigate, useConfirmDiscard } from '../lib/unsavedChanges';
 import {
   ChevronLeftIcon,
   PlusIcon,
@@ -276,6 +276,15 @@ export function NucleusDashboard() {
     editingName && !!nucleus && nameInput.trim() !== '' && nameInput.trim() !== nucleus.name;
   useUnsavedChanges(isDirty);
 
+  // Switching dashboard sub-views (journal, circles, activities…) is local
+  // state, not navigation, so it bypasses the route guard. Route those
+  // switches through confirmDiscard so unsaved journal/circles edits prompt
+  // before the sub-view unmounts and silently drops them.
+  const confirmDiscard = useConfirmDiscard();
+  const goToModule = (m: FocusedModule | null) => {
+    if (confirmDiscard()) setFocusedModule(m);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -413,7 +422,7 @@ export function NucleusDashboard() {
   const backToDashboard = (
     <div className="flex justify-end mt-6 pt-4 border-t border-gray-100">
       <button
-        onClick={() => setFocusedModule(null)}
+        onClick={() => goToModule(null)}
         className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
       >
         <LayoutDashboardIcon className="w-4 h-4" />
@@ -576,7 +585,7 @@ export function NucleusDashboard() {
             {/* Vertical icon rail */}
             <div className="sticky top-4 w-[72px] flex-shrink-0 bg-white/95 backdrop-blur-sm border border-gray-200/80 rounded-2xl py-3 flex flex-col items-center gap-1 shadow-sm">
               <button
-                onClick={() => setFocusedModule(null)}
+                onClick={() => goToModule(null)}
                 className="w-full flex flex-col items-center gap-1 py-3 px-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700 transition-all duration-200 rounded-xl"
                 title="Back to Dashboard"
               >
@@ -589,7 +598,7 @@ export function NucleusDashboard() {
               {MODULES.map(m => (
                 <button
                   key={m.id}
-                  onClick={() => setFocusedModule(m.id)}
+                  onClick={() => goToModule(m.id)}
                   className={`w-full flex flex-col items-center gap-1 py-3 px-1 rounded-xl transition-all duration-200 ${
                     focusedModule === m.id
                       ? 'bg-blue-50 text-blue-600'
@@ -851,7 +860,7 @@ export function NucleusDashboard() {
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 
               {/* Activities card */}
-              <div className={cardBase} onClick={() => setFocusedModule('activities')}>
+              <div className={cardBase} onClick={() => goToModule('activities')}>
                 {cardHeader('Core and Other Activities', 'Manage activities and participation.')}
                 <div className="border border-gray-100 rounded-xl overflow-hidden bg-white flex-1">
                   <table className="w-full text-left border-collapse">
@@ -891,13 +900,13 @@ export function NucleusDashboard() {
               </div>
 
               {/* Circles card */}
-              <div className={cardBase} onClick={() => setFocusedModule('circles')}>
+              <div className={cardBase} onClick={() => goToModule('circles')}>
                 {cardHeader('Overall Participation', 'Drag and drop names between circles to update engagement levels.')}
                 <ConcentricCircles nucleusId={id!} compact />
               </div>
 
               {/* Network card */}
-              <div className={cardBase} onClick={() => setFocusedModule('network')}>
+              <div className={cardBase} onClick={() => goToModule('network')}>
                 {cardHeader('Network Overview', 'Connections between participants in this nucleus.')}
                 <div className="flex flex-col items-center justify-center flex-1 py-4 gap-2 rounded-xl bg-gray-50">
                   <NetworkIcon className="w-8 h-8 text-blue-300" />
@@ -909,7 +918,7 @@ export function NucleusDashboard() {
               </div>
 
               {/* Capacities & Books card */}
-              <div className={cardBase} onClick={() => setFocusedModule('capacities')}>
+              <div className={cardBase} onClick={() => goToModule('capacities')}>
                 {cardHeader('Capacities & Books', 'Educational progress and capacities.')}
                 <div className="grid grid-cols-2 gap-4 flex-1">
                   <div>
@@ -952,7 +961,7 @@ export function NucleusDashboard() {
               </div>
 
               {/* Journal card */}
-              <div className={cardBase} onClick={() => setFocusedModule('journal')}>
+              <div className={cardBase} onClick={() => goToModule('journal')}>
                 {cardHeader('Nucleus Journal', 'Reflections and learning over time.')}
                 <div className="flex-1 flex flex-col gap-3">
                   {journalPreviewEntry ? (

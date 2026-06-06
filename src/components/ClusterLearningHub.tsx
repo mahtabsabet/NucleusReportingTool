@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useUnsavedChanges } from '../lib/unsavedChanges';
+import { useUnsavedChanges, useConfirmDiscard } from '../lib/unsavedChanges';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeftIcon,
@@ -76,6 +76,13 @@ export function ClusterLearningHub() {
     () => themes.find(t => t.id === selectedThemeId) ?? null,
     [themes, selectedThemeId],
   );
+
+  // Switching themes hides any open synthesis composer (local state, not
+  // navigation), so confirm first if there are unsaved reflection edits.
+  const confirmDiscard = useConfirmDiscard();
+  const selectTheme = (themeId: string | null) => {
+    if (confirmDiscard()) setSelectedThemeId(themeId);
+  };
 
   useEffect(() => {
     if (!clusterId) return;
@@ -169,8 +176,8 @@ export function ClusterLearningHub() {
             loading={loadingThemes}
             canEdit={canEdit}
             showArchived={showArchived}
-            onToggleArchived={() => { setSelectedThemeId(null); setShowArchived(s => !s); }}
-            onSelect={setSelectedThemeId}
+            onToggleArchived={() => { if (confirmDiscard()) { setSelectedThemeId(null); setShowArchived(s => !s); } }}
+            onSelect={selectTheme}
             onConsolidationChange={async (id, level) => {
               setThemes(prev => prev.map(t => t.id === id ? { ...t, consolidationLevel: level } : t));
               await updateConsolidationLevel(id, level);
