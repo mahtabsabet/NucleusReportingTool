@@ -11,6 +11,7 @@ import {
   MinusCircleIcon,
   ActivityIcon,
   CircleIcon,
+  BarChart3Icon,
 } from 'lucide-react';
 import {
   fetchEventSummary,
@@ -192,7 +193,7 @@ export function GrowthReport() {
             <div className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-xl flex items-center justify-center shadow-inner">
               <TrendingUpIcon className="w-6 h-6" />
             </div>
-            <div>
+            <div className="flex-1">
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
                 {title}
               </h1>
@@ -200,6 +201,15 @@ export function GrowthReport() {
                 Track growth and changes over time
               </p>
             </div>
+            {clusterId && (
+              <button
+                onClick={() => navigate(`/cluster/${clusterId}/cgp`)}
+                className="inline-flex items-center gap-2 text-sm font-semibold text-white bg-indigo-600 hover:bg-indigo-700 px-4 py-2.5 rounded-xl shadow-sm transition-colors flex-shrink-0"
+              >
+                <BarChart3Icon className="w-4 h-4" />
+                <span className="hidden sm:inline">Generate </span>Cluster Growth Profile
+              </button>
+            )}
           </div>
         </div>
       </header>

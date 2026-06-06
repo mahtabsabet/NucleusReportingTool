@@ -16,6 +16,7 @@ import { ClusterProfile } from './components/ClusterProfile';
 import { ClusterLearningHub } from './components/ClusterLearningHub';
 import { ClusterPeople } from './components/ClusterPeople';
 import { GrowthReport } from './components/GrowthReport';
+import { ClusterGrowthProfile } from './components/ClusterGrowthProfile';
 import { UserGuide } from './components/UserGuide';
 import { UserManagement } from './components/UserManagement';
 import { AccountMenu } from './components/AccountMenu';
@@ -302,6 +303,7 @@ function AppRoutes() {
       <Route path="/learning-hub" element={<ClusterLearningHub />} />
       <Route path="/growth-report" element={<GrowthReport />} />
       <Route path="/nucleus/:nucleusId/growth-report" element={<GrowthReport />} />
+      <Route path="/cluster/:clusterId/cgp" element={<ClusterGrowthProfile />} />
       <Route path="/users" element={<UserManagement />} />
       <Route path="/lsa/households" element={<LsaHouseholdMapView />} />
       <Route path="/lsa/:clusterId/households" element={<LsaHouseholdMapView />} />
