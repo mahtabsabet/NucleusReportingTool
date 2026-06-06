@@ -21,9 +21,9 @@ through 14. (7 books × 3 units.)
 
 ### Table 3 — Branch courses
 How many people have completed the branch courses of:
-- Book 3 (?) — Grade 2, 3, 4, and 5   ← see Open Question 1
-- Book 5 — branch course 1, 2, and 3
-- Book 7 — branch course 1, 2, and 3
+- **Book 3** — Grade 2, 3, 4, and 5
+- **Book 5** — branch course 1, 2, and 3
+- **Book 7** — branch course 1, 2, and 3
 
 Not all of these exist in our logging yet; any that don't simply return **0**.
 
@@ -53,16 +53,17 @@ For each of the three educational activity types, show **# of activities**,
 | Cluster affiliation (people) | `persons.cluster_id` |
 | Roster / attendance | `activity_participants` (+ `status` active/inactive) |
 
-## Open questions (blocking — answer before build)
+## Resolved decisions (locked 2026-06-06)
 
-1. **Table 3 "Book 5 (Grade 2–5)":** the write-up lists Book 5 twice. Grades 2–5
-   are children's-class grades, which in Ruhi are branch courses of **Book 3**.
-   Is the first group meant to be **Book 3** (Grades 2–5)?
-2. **What counts as "attending"/"attendees":** current **active roster
-   participants** (`activity_participants`, excluding `inactive`)? Or people with
-   recorded notebook attendance?
-3. **"Friends of the faith":** `religious_status = 'friend'` **only** (treat
-   `'unknown'` as not-a-friend)?
-4. **Which activities are counted:** only **active** activities (exclude
-   planned/completed/cancelled)? And totals are simple **sums** across activities
-   (double-counting a person who attends multiple activities is fine)?
+1. **Table 3 grouping:** Book **3** (Grades 2–5), Book **5** (branch 1–3), Book
+   **7** (branch 1–3). Missing branch courses return 0.
+2. **"Attending" / "attendees" = current active roster** — `activity_participants`
+   with `status = 'active'`. We do **not** derive attendance from logged notebook
+   presence: leads/coordinators are responsible for marking people inactive, so a
+   regular participant who is simply away (e.g. travelling) still counts as
+   attending until explicitly inactivated.
+3. **Friend of the faith = `religious_status = 'friend'` only.** `'unknown'` does
+   **not** count toward the friend tally (nor does `'bahai'`).
+4. **Only `active` activities** are counted (exclude planned/completed/cancelled).
+   Roll-up totals are simple **sums** across activities — a person on the roster of
+   two activities is counted in both (no cross-activity de-duplication).
