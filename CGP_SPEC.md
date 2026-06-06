@@ -41,6 +41,26 @@ For each of the three educational activity types, show **# of activities**,
 - **Total core activities** (devotionals + total educational): activity #,
   participant #, friend-of-faith # — summed from devotional row + educational total.
 
+## Implementation plan
+
+- **Surface:** a **"Generate Cluster Growth Profile"** button in the **Growth
+  Report** interface (`GrowthReport.tsx`), shown when the report is
+  **cluster-scoped** (`?cluster=<id>`). It opens an in-app CGP page for that same
+  cluster, so viewing permissions exactly track the Growth Report's cluster scope.
+- **Route:** `/cluster/:clusterId/cgp` (read-only page rendering the 5 tables).
+- **Export:** from the CGP page — user's choice of:
+  - **Excel (.xlsx)** via SheetJS (`xlsx`) — natural fit for these tables, one
+    sheet per table (or stacked). Recommended.
+  - **PDF** — recommend a **print-optimized layout + "Save as PDF"** (browser
+    print, zero deps) for an exact-fidelity snapshot; can swap to `jspdf` +
+    `jspdf-autotable` if a pixel-controlled standalone PDF is preferred.
+- **Code layout:**
+  - `src/lib/cgp.ts` — pure, unit-tested compute (raw rows → the 5 tables).
+  - `src/lib/db/cgp.ts` — one cluster-scoped fetch (people + completions + active
+    activities/rosters).
+  - `src/components/ClusterGrowthProfile.tsx` — the page + export actions.
+  - `src/lib/__tests__/cgp.test.ts` — compute tests.
+
 ## Data-model mapping (from current schema)
 
 | Spec concept | Source |
