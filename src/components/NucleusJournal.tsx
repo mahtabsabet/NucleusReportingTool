@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useUnsavedChanges, useConfirmDiscard } from '../lib/unsavedChanges';
 import {
   ClockIcon,
   PlusIcon,
@@ -552,6 +553,19 @@ function NucleusEntryComposer({
   );
   const [saving, setSaving] = useState(false);
 
+  // Unsaved-changes guard for an in-progress journal entry.
+  const confirmDiscard = useConfirmDiscard();
+  const initialThemeSig = useMemo(
+    () => (initial?.themes.map(t => t.id) ?? []).slice().sort().join(','),
+    [initial],
+  );
+  const entryDirty =
+    body !== (initial?.body ?? '') || [...selected].sort().join(',') !== initialThemeSig;
+  useUnsavedChanges(entryDirty);
+  const handleCancel = () => {
+    if (confirmDiscard()) onCancel();
+  };
+
   const toggle = (id: string) => setSelected(prev => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -595,7 +609,7 @@ function NucleusEntryComposer({
         >
           {saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Record entry'}
         </button>
-        <button onClick={onCancel} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
+        <button onClick={handleCancel} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
           Cancel
         </button>
         {mode === 'edit' && (
@@ -625,6 +639,14 @@ function ThemeComposer({
   const [suggestions, setSuggestions] = useState<
     { id: string; name: string; description?: string; color: string }[]
   >([]);
+
+  // Unsaved-changes guard for an in-progress new Object of Learning.
+  const confirmDiscard = useConfirmDiscard();
+  const themeDirty = name.trim().length > 0 || description.trim().length > 0;
+  useUnsavedChanges(themeDirty);
+  const handleCancel = () => {
+    if (confirmDiscard()) onCancel();
+  };
 
   useEffect(() => {
     listSiblingClusterThemeSuggestions(nucleusId).then(setSuggestions).catch(() => setSuggestions([]));
@@ -701,7 +723,7 @@ function ThemeComposer({
         >
           {saving ? 'Saving…' : 'Add theme'}
         </button>
-        <button onClick={onCancel} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
+        <button onClick={handleCancel} className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900">
           Cancel
         </button>
       </div>

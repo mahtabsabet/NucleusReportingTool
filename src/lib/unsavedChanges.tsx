@@ -149,6 +149,16 @@ export function useUnsavedChanges(isDirty: boolean): void {
 }
 
 /**
+ * Returns a function that, when there are unsaved changes, asks the user to
+ * confirm discarding them. Returns true if it's safe to proceed. Useful for
+ * guarding non-navigation actions like a composer's Cancel/close button.
+ */
+export function useConfirmDiscard(): () => boolean {
+  const { confirmDiscard } = useUnsavedChangesApi();
+  return confirmDiscard;
+}
+
+/**
  * Drop-in replacement for react-router's useNavigate that prompts for
  * confirmation when there are unsaved changes before navigating.
  */

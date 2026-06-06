@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useUnsavedChanges, useConfirmDiscard } from '../lib/unsavedChanges';
 import {
   CalendarIcon,
   LightbulbIcon,
@@ -422,6 +423,30 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
 
   const hasContent = Object.values(values).some(v => v.trim().length > 0);
 
+  // Unsaved-changes guard: warn before losing an in-progress entry.
+  const confirmDiscard = useConfirmDiscard();
+  const initialSig = useMemo(
+    () =>
+      JSON.stringify({
+        values: { whatHappened: initial?.whatHappened ?? '', learning: initial?.learning ?? '' },
+        themes: (initial?.themes.map(t => t.id) ?? []).slice().sort(),
+        attendees: (initial?.attendees.map(a => a.id) ?? []).slice().sort(),
+        date: toDateInputValue(initial?.occurredAt ?? new Date()),
+      }),
+    [initial],
+  );
+  const currentSig = JSON.stringify({
+    values,
+    themes: [...selectedThemeIds].sort(),
+    attendees: [...attendeeIds].sort(),
+    date: activityDate,
+  });
+  const dirty = currentSig !== initialSig || draftThemes.length > 0;
+  useUnsavedChanges(dirty);
+  const handleCancel = () => {
+    if (confirmDiscard()) onCancel();
+  };
+
   const toggleAttendee = (id: string) => {
     setAttendeeIds(prev => {
       const next = new Set(prev);
@@ -646,7 +671,7 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
           {saving ? 'Saving…' : mode === 'edit' ? 'Save changes' : 'Save entry'}
         </button>
         <button
-          onClick={onCancel}
+          onClick={handleCancel}
           className="px-4 py-2 text-sm font-medium text-stone-600 hover:text-stone-900"
         >
           Cancel

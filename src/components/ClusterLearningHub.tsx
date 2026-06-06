@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useUnsavedChanges, useConfirmDiscard } from '../lib/unsavedChanges';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ChevronLeftIcon,
@@ -460,6 +461,14 @@ function AddThemeForm({
   const [description, setDescription] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Unsaved-changes guard for an in-progress new theme.
+  const confirmDiscard = useConfirmDiscard();
+  const dirty = name.trim().length > 0 || description.trim().length > 0;
+  useUnsavedChanges(dirty);
+  const handleCancel = () => {
+    if (confirmDiscard()) onCancel();
+  };
+
   return (
     <div className="bg-white/80 border border-amber-900/20 rounded-xl p-3 mb-4 space-y-2">
       <input
@@ -503,7 +512,7 @@ function AddThemeForm({
         >
           {saving ? 'Adding…' : 'Add theme'}
         </button>
-        <button onClick={onCancel} className="px-2 py-1.5 text-xs text-stone-600 hover:text-stone-900">Cancel</button>
+        <button onClick={handleCancel} className="px-2 py-1.5 text-xs text-stone-600 hover:text-stone-900">Cancel</button>
       </div>
     </div>
   );
@@ -691,6 +700,14 @@ function SynthesisColumn({
   const [body, setBody] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Unsaved-changes guard for an in-progress cluster reflection.
+  const confirmDiscard = useConfirmDiscard();
+  const dirty = composerOpen && body.trim().length > 0;
+  useUnsavedChanges(dirty);
+  const handleCancel = () => {
+    if (confirmDiscard()) { setBody(''); onCancel(); }
+  };
+
   if (!theme) {
     return (
       <section className="bg-amber-50/40 border border-amber-900/15 rounded-2xl p-5 min-h-[420px] flex items-center justify-center">
@@ -752,7 +769,7 @@ function SynthesisColumn({
             >
               {saving ? 'Saving…' : 'Record reflection'}
             </button>
-            <button onClick={onCancel} className="px-2 py-1.5 text-xs text-stone-600 hover:text-stone-900">
+            <button onClick={handleCancel} className="px-2 py-1.5 text-xs text-stone-600 hover:text-stone-900">
               Cancel
             </button>
           </div>
