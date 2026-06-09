@@ -101,23 +101,16 @@ const ACTIVITY_ICON_COLORS: Record<string, { icon: React.ElementType; color: str
 };
 
 // ── Arc layout constants ───────────────────────────────────────────────────────
-// The visualization is a fan/amphitheater: center anchor at the bottom,
-// arcs open upward. Core (innermost) is closest to the center; Aware (outermost)
-// is at the top of the fan.
+const ARC_VB_W = 740;
+const ARC_VB_H = 390;
+const ARC_CX   = ARC_VB_W / 2;   // 370
+const ARC_CY   = ARC_VB_H - 10;  // 380
 
-const ARC_VB_W = 740;          // SVG viewBox width
-const ARC_VB_H = 390;          // SVG viewBox height (slightly taller than half-width to add top margin)
-const ARC_CX   = ARC_VB_W / 2; // 370 — horizontal center
-const ARC_CY   = ARC_VB_H - 10; // 380 — anchor near very bottom edge
+const ARC_MARGIN_RAD = 0.08;
+const ARC_START = -(Math.PI - ARC_MARGIN_RAD);
+const ARC_END   = -ARC_MARGIN_RAD;
+const ARC_SPAN  = ARC_END - ARC_START;
 
-// The fan spans almost a full semicircle, with a small margin so arcs don't
-// reach the exact bottom-left / bottom-right corners of the viewport.
-const ARC_MARGIN_RAD = 0.08; // radians of margin on each side
-const ARC_START = -(Math.PI - ARC_MARGIN_RAD); // ≈ -3.06 rad (left side, slightly above horizontal)
-const ARC_END   = -ARC_MARGIN_RAD;              // ≈ -0.08 rad (right side, slightly above horizontal)
-const ARC_SPAN  = ARC_END - ARC_START;          // ≈ 2.98 rad
-
-// Fixed radial dimensions for each tier band (in SVG units)
 const ARC_BANDS: Record<Level, { innerR: number; outerR: number }> = {
   coordinating: { innerR: 50,  outerR: 108 },
   supporting:   { innerR: 122, outerR: 182 },
@@ -125,18 +118,18 @@ const ARC_BANDS: Record<Level, { innerR: number; outerR: number }> = {
   aware:        { innerR: 270, outerR: 330 },
 };
 
-// Person avatar size in SVG units (used for spacing math) and in CSS px (rendered size)
-const NODE_SVG_R = 17;   // layout radius in SVG units
-const NODE_CSS_PX = 40;  // rendered avatar diameter in CSS pixels
-const NODE_SPACING_SVG = NODE_SVG_R * 2 + 8; // min arc-length between adjacent avatars
+// Avatar badge layout (SVG layout units vs rendered CSS px)
+const NODE_SVG_R       = 17;
+const NODE_CSS_PX      = 40;
+const NODE_SPACING_SVG = NODE_SVG_R * 2 + 8; // min arc-length per badge slot
 
-// Aspect ratio string for the container CSS
+// Dot mode: rendered when the tier is too crowded for badges at current zoom
+const DOT_R_SVG = 4; // dot radius in SVG units
+
 const ARC_ASPECT = `${ARC_VB_W} / ${ARC_VB_H}`;
-
-// Ordered from innermost (core) to outermost (aware)
 const ORDERED_LEVELS: Level[] = ['coordinating', 'supporting', 'participating', 'aware'];
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Pure geometry helpers ─────────────────────────────────────────────────────
 
 function getInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -148,23 +141,52 @@ function formatRole(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1).replace(/_/g, ' ');
 }
 
-/** Max visible avatars for a tier before overflow kicks in. */
-function arcCapacity(level: Level): number {
+/**
+ * How many avatar badges fit along an arc at the current zoom scale.
+ * At higher zoom the user-space arc is the same but the counter-scaled badges
+ * are physically smaller, so more fit.
+ */
+function arcCapacityAtScale(level: Level, scale: number): number {
   const { innerR, outerR } = ARC_BANDS[level];
   const midR = (innerR + outerR) / 2;
-  return Math.max(3, Math.floor((midR * ARC_SPAN) / NODE_SPACING_SVG));
+  return Math.max(3, Math.floor((midR * ARC_SPAN * scale) / NODE_SPACING_SVG));
 }
 
-/** SVG arc band path (donut sector). */
+/** Evenly space `count` badge avatars along the arc mid-radius. */
+function layoutArcBadges(count: number, level: Level): { x: number; y: number }[] {
+  if (count === 0) return [];
+  const { innerR, outerR } = ARC_BANDS[level];
+  const midR = (innerR + outerR) / 2;
+  const margin = 0.04 * ARC_SPAN;
+  const sa = ARC_START + margin, ea = ARC_END - margin;
+  return Array.from({ length: count }, (_, i) => {
+    const t = count === 1 ? 0.5 : i / (count - 1);
+    const a = sa + t * (ea - sa);
+    return { x: ARC_CX + midR * Math.cos(a), y: ARC_CY + midR * Math.sin(a) };
+  });
+}
+
+/** Evenly space `count` dots along the arc mid-radius (tighter margin than badges). */
+function layoutArcDots(count: number, level: Level): { x: number; y: number }[] {
+  if (count === 0) return [];
+  const { innerR, outerR } = ARC_BANDS[level];
+  const midR = (innerR + outerR) / 2;
+  const margin = 0.02 * ARC_SPAN;
+  const sa = ARC_START + margin, ea = ARC_END - margin;
+  return Array.from({ length: count }, (_, i) => {
+    const t = count === 1 ? 0.5 : i / (count - 1);
+    const a = sa + t * (ea - sa);
+    return { x: ARC_CX + midR * Math.cos(a), y: ARC_CY + midR * Math.sin(a) };
+  });
+}
+
+/** SVG donut-sector path for an arc band. */
 function arcBandPath(innerR: number, outerR: number): string {
-  const cos = Math.cos, sin = Math.sin;
-  const cx = ARC_CX, cy = ARC_CY;
   const sa = ARC_START, ea = ARC_END;
-  // span < π so large-arc-flag = 0; outer arc sweeps counterclockwise (SVG sweep=0) through top
-  const ox1 = cx + outerR * cos(sa), oy1 = cy + outerR * sin(sa);
-  const ox2 = cx + outerR * cos(ea), oy2 = cy + outerR * sin(ea);
-  const ix1 = cx + innerR * cos(ea), iy1 = cy + innerR * sin(ea);
-  const ix2 = cx + innerR * cos(sa), iy2 = cy + innerR * sin(sa);
+  const ox1 = ARC_CX + outerR * Math.cos(sa), oy1 = ARC_CY + outerR * Math.sin(sa);
+  const ox2 = ARC_CX + outerR * Math.cos(ea), oy2 = ARC_CY + outerR * Math.sin(ea);
+  const ix1 = ARC_CX + innerR * Math.cos(ea), iy1 = ARC_CY + innerR * Math.sin(ea);
+  const ix2 = ARC_CX + innerR * Math.cos(sa), iy2 = ARC_CY + innerR * Math.sin(sa);
   return [
     `M ${ox1.toFixed(2)} ${oy1.toFixed(2)}`,
     `A ${outerR} ${outerR} 0 0 0 ${ox2.toFixed(2)} ${oy2.toFixed(2)}`,
@@ -174,41 +196,22 @@ function arcBandPath(innerR: number, outerR: number): string {
   ].join(' ');
 }
 
-/** CSS polygon clip-path approximating the arc band shape (using % units). */
+/** CSS polygon clip-path matching the arc band shape (% units, for drop zones). */
 function arcClipPath(innerR: number, outerR: number, steps = 24): string {
-  const cx = ARC_CX, cy = ARC_CY;
-  const pts: string[] = [];
   const pct = (x: number, y: number) =>
     `${((x / ARC_VB_W) * 100).toFixed(3)}% ${((y / ARC_VB_H) * 100).toFixed(3)}%`;
-  // outer arc: start → end (counterclockwise through top)
+  const pts: string[] = [];
   for (let i = 0; i <= steps; i++) {
     const a = ARC_START + (i / steps) * ARC_SPAN;
-    pts.push(pct(cx + outerR * Math.cos(a), cy + outerR * Math.sin(a)));
+    pts.push(pct(ARC_CX + outerR * Math.cos(a), ARC_CY + outerR * Math.sin(a)));
   }
-  // inner arc: end → start (clockwise through top)
   for (let i = steps; i >= 0; i--) {
     const a = ARC_START + (i / steps) * ARC_SPAN;
-    pts.push(pct(cx + innerR * Math.cos(a), cy + innerR * Math.sin(a)));
+    pts.push(pct(ARC_CX + innerR * Math.cos(a), ARC_CY + innerR * Math.sin(a)));
   }
   return `polygon(${pts.join(', ')})`;
 }
 
-/** Evenly space `count` avatars along the arc mid-radius for a tier. */
-function layoutArcNodes(count: number, level: Level): { x: number; y: number }[] {
-  const { innerR, outerR } = ARC_BANDS[level];
-  const midR = (innerR + outerR) / 2;
-  const cx = ARC_CX, cy = ARC_CY;
-  const margin = 0.04 * ARC_SPAN;
-  const sa = ARC_START + margin;
-  const ea = ARC_END - margin;
-  return Array.from({ length: count }, (_, i) => {
-    const t = count === 1 ? 0.5 : i / (count - 1);
-    const a = sa + t * (ea - sa);
-    return { x: cx + midR * Math.cos(a), y: cy + midR * Math.sin(a) };
-  });
-}
-
-/** Placement signature for unsaved-changes detection. */
 function placementSignature(circles: Record<Level, NameEntry[]>, unplaced: NameEntry[]): string {
   const pairs: [string, string][] = [];
   for (const level of ORDERED_LEVELS) for (const e of circles[level]) pairs.push([e.id, level]);
@@ -219,9 +222,8 @@ function placementSignature(circles: Record<Level, NameEntry[]>, unplaced: NameE
 
 function getAllPlaced(circles: Record<Level, NameEntry[]>): { id: string; name: string; level: Level }[] {
   const result: { id: string; name: string; level: Level }[] = [];
-  for (const level of Object.keys(circles) as Level[]) {
+  for (const level of Object.keys(circles) as Level[])
     for (const entry of circles[level]) result.push({ id: entry.id, name: entry.name, level });
-  }
   return result;
 }
 
@@ -273,22 +275,20 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
   const [dragOverUnplaced, setDragOverUnplaced] = useState(false);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  // Person side-panel
+  // Per-person side-panel
   const [panel, setPanel] = useState<{ entry: NameEntry; level: Level | 'unplaced' } | null>(null);
   const [panelActivities, setPanelActivities] = useState<PanelActivity[]>([]);
   const [panelLoading, setPanelLoading] = useState(false);
   const [panelContactId, setPanelContactId] = useState<string | null>(null);
   const [panelContactSaving, setPanelContactSaving] = useState(false);
 
-  // Tier side-panel (shows all people in a tier)
-  const [tierPanel, setTierPanel] = useState<Level | null>(null);
-  const [tierSearch, setTierSearch] = useState('');
+  // Full-screen tier expand overlay
+  const [expandedTier, setExpandedTier] = useState<Level | null>(null);
+  const [expandSearch, setExpandSearch] = useState('');
 
   // "Assign primary contact" prompt after drop from unplaced
   const [contactPrompt, setContactPrompt] = useState<{
-    entry: NameEntry;
-    targetLevel: Level;
-    selectedId: string;
+    entry: NameEntry; targetLevel: Level; selectedId: string;
   } | null>(null);
 
   // Zoom & pan
@@ -302,7 +302,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
   const ZOOM_MAX = 3;
   const zoomStorageKey = `nucleus-circle-zoom:${nucleusId}`;
 
-  // ── Load data ──────────────────────────────────────────────────────────────
+  // ── Data load ──────────────────────────────────────────────────────────────
   useEffect(() => {
     setLoading(true);
     fetchNucleusEnrollmentsWithNames(nucleusId)
@@ -314,11 +314,8 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
         const unplacedIds = new Set(getUnplacedPersonIds(nucleusId));
         enrollments.forEach(e => {
           const entry: NameEntry = { id: e.personId, name: e.name, primaryContactId: e.primaryContactId, photoUrl: e.photoUrl };
-          if (e.engagementLevel === null || unplacedIds.has(e.personId)) {
-            newUnplaced.push(entry);
-          } else {
-            result[e.engagementLevel].push(entry);
-          }
+          if (e.engagementLevel === null || unplacedIds.has(e.personId)) newUnplaced.push(entry);
+          else result[e.engagementLevel].push(entry);
         });
         setCircles(result);
         setUnplaced(newUnplaced);
@@ -328,7 +325,6 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
       .catch(() => setLoading(false));
   }, [nucleusId]);
 
-  // ── Unsaved-changes guard ──────────────────────────────────────────────────
   const placementSig = useMemo(() => placementSignature(circles, unplaced), [circles, unplaced]);
   const isDirty = !readOnly && baselineSigRef.current !== null && placementSig !== baselineSigRef.current;
   useUnsavedChanges(isDirty);
@@ -336,9 +332,8 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
   // ── Save ───────────────────────────────────────────────────────────────────
   const handleSave = async () => {
     const updates: Promise<void>[] = [];
-    for (const level of ORDERED_LEVELS) {
+    for (const level of ORDERED_LEVELS)
       for (const entry of circles[level]) updates.push(updateEngagementLevel(entry.id, nucleusId, level));
-    }
     try {
       await Promise.all(updates);
       baselineSigRef.current = placementSignature(circles, unplaced);
@@ -349,9 +344,9 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     }
   };
 
-  // ── Person panel ───────────────────────────────────────────────────────────
-  const openPanel = (entry: NameEntry, level: Level | 'unplaced') => {
-    setTierPanel(null);
+  // ── Per-person panel ───────────────────────────────────────────────────────
+  const openPanel = useCallback((entry: NameEntry, level: Level | 'unplaced') => {
+    setExpandedTier(null);
     setPanel({ entry, level });
     setPanelContactId(entry.primaryContactId ?? null);
     setPanelLoading(true);
@@ -359,7 +354,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     fetchPanelActivities(entry.id)
       .then(acts => { setPanelActivities(acts); setPanelLoading(false); })
       .catch(() => setPanelLoading(false));
-  };
+  }, []);
 
   const closePanel = () => setPanel(null);
 
@@ -369,14 +364,13 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     try {
       await updatePrimaryContact(panel.entry.id, nucleusId, newContactId);
       setPanelContactId(newContactId);
-      const updateEntry = (entry: NameEntry) =>
-        entry.id === panel.entry.id ? { ...entry, primaryContactId: newContactId } : entry;
+      const upd = (e: NameEntry) => e.id === panel.entry.id ? { ...e, primaryContactId: newContactId } : e;
       setCircles(prev => {
         const next = { ...prev };
-        for (const level of Object.keys(next) as Level[]) next[level] = next[level].map(updateEntry);
+        for (const l of Object.keys(next) as Level[]) next[l] = next[l].map(upd);
         return next;
       });
-      setUnplaced(prev => prev.map(updateEntry));
+      setUnplaced(prev => prev.map(upd));
       setPanel(prev => prev ? { ...prev, entry: { ...prev.entry, primaryContactId: newContactId } } : null);
     } catch (err) {
       console.error('Failed to update primary contact:', err);
@@ -385,24 +379,12 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     }
   };
 
-  // ── Tier panel ─────────────────────────────────────────────────────────────
-  const openTierPanel = (level: Level) => {
+  // ── Tier expand overlay ────────────────────────────────────────────────────
+  const openExpandedTier = useCallback((level: Level) => {
     setPanel(null);
-    setTierPanel(level);
-    setTierSearch('');
-  };
-
-  const movePersonToTier = (personId: string, fromLevel: Level, toLevel: Level) => {
-    setCircles(prev => {
-      const entry = prev[fromLevel].find(p => p.id === personId);
-      if (!entry) return prev;
-      return {
-        ...prev,
-        [fromLevel]: prev[fromLevel].filter(p => p.id !== personId),
-        [toLevel]: [...prev[toLevel], entry],
-      };
-    });
-  };
+    setExpandedTier(level);
+    setExpandSearch('');
+  }, []);
 
   // ── Drag & drop ────────────────────────────────────────────────────────────
   const handleDragStart = (e: React.DragEvent, id: string, sourceLevel: Level | 'unplaced') => {
@@ -412,27 +394,20 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
   };
 
   const handleDragOver = useCallback((e: React.DragEvent, level: string) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOverLevel(level);
+    e.preventDefault(); e.stopPropagation(); setDragOverLevel(level);
   }, []);
 
   const handleDragLeave = useCallback((e: React.DragEvent, level: string) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const { clientX, clientY } = e;
-    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) {
+    const r = e.currentTarget.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
       if (dragOverLevel === level) setDragOverLevel(null);
-    }
   }, [dragOverLevel]);
 
   const handleDrop = (e: React.DragEvent, targetLevel: Level) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOverLevel(null);
+    e.preventDefault(); e.stopPropagation(); setDragOverLevel(null);
     const participantId = e.dataTransfer.getData('participantId');
     const sourceLevel = e.dataTransfer.getData('sourceLevel') as Level | 'unplaced';
     if (sourceLevel === targetLevel) return;
-
     if (sourceLevel === 'unplaced') {
       const entry = unplaced.find(p => p.id === participantId);
       if (!entry) return;
@@ -454,18 +429,17 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     if (panel?.entry.id === participantId) setPanel(prev => prev ? { ...prev, level: targetLevel } : null);
   };
 
-  // ── Contact prompt (after drop from unplaced) ──────────────────────────────
+  // ── Contact prompt ─────────────────────────────────────────────────────────
   const handleContactPromptAssign = async () => {
     if (!contactPrompt) return;
     const contactId = contactPrompt.selectedId || null;
     if (contactId) {
       try {
         await updatePrimaryContact(contactPrompt.entry.id, nucleusId, contactId);
-        const updateEntry = (entry: NameEntry) =>
-          entry.id === contactPrompt.entry.id ? { ...entry, primaryContactId: contactId } : entry;
+        const upd = (e: NameEntry) => e.id === contactPrompt.entry.id ? { ...e, primaryContactId: contactId } : e;
         setCircles(prev => {
           const next = { ...prev };
-          for (const level of Object.keys(next) as Level[]) next[level] = next[level].map(updateEntry);
+          for (const l of Object.keys(next) as Level[]) next[l] = next[l].map(upd);
           return next;
         });
       } catch (err) {
@@ -488,13 +462,9 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     let restored = 1;
     try {
       const stored = localStorage.getItem(zoomStorageKey);
-      if (stored != null) {
-        const v = parseFloat(stored);
-        if (!isNaN(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) restored = v;
-      }
+      if (stored != null) { const v = parseFloat(stored); if (!isNaN(v) && v >= ZOOM_MIN && v <= ZOOM_MAX) restored = v; }
     } catch { /* ignore */ }
-    setZoom(restored);
-    setZoomReady(true);
+    setZoom(restored); setZoomReady(true);
   }, [zoomStorageKey]);
 
   useEffect(() => {
@@ -535,7 +505,20 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
 
   const allPlaced = useMemo(() => getAllPlaced(circles), [circles]);
 
-  // ── Computed clip paths (memoised so they don't recalculate on every render) ─
+  // ── Arc node data (zoom-aware badge vs dot mode) ───────────────────────────
+  const nodeData = useMemo(() =>
+    Object.fromEntries(ORDERED_LEVELS.map(level => {
+      const count = circles[level].length;
+      const capacity = arcCapacityAtScale(level, innerScale);
+      const mode: 'badges' | 'dots' = count <= capacity ? 'badges' : 'dots';
+      const positions = mode === 'badges'
+        ? layoutArcBadges(count, level)
+        : layoutArcDots(count, level);
+      return [level, { count, mode, positions, capacity }];
+    })) as Record<Level, { count: number; mode: 'badges' | 'dots'; positions: { x: number; y: number }[]; capacity: number }>,
+  [circles, innerScale]);
+
+  // Pre-computed drop-zone clip paths (stable — don't depend on zoom/data)
   const clipPaths = useMemo(() =>
     Object.fromEntries(ORDERED_LEVELS.map(level => {
       const { innerR, outerR } = ARC_BANDS[level];
@@ -543,25 +526,10 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     })) as Record<Level, string>,
   []);
 
-  // ── Node positions per tier ────────────────────────────────────────────────
-  const nodeData = useMemo(() =>
-    Object.fromEntries(ORDERED_LEVELS.map(level => {
-      const count = circles[level].length;
-      const capacity = arcCapacity(level);
-      // If overflow, show capacity-1 people + 1 overflow chip slot
-      const visibleCount = count <= capacity ? count : capacity - 1;
-      const overflow = count - visibleCount;
-      const positions = layoutArcNodes(overflow > 0 ? visibleCount + 1 : visibleCount, level);
-      return [level, { visibleCount, overflow, positions }];
-    })) as Record<Level, { visibleCount: number; overflow: number; positions: { x: number; y: number }[] }>,
-  [circles]);
-
-  // ── Render helpers ─────────────────────────────────────────────────────────
-  const renderAvatar = (entry: NameEntry, level: Level | 'unplaced', x: number, y: number) => {
+  // ── Badge node renderer ────────────────────────────────────────────────────
+  const renderBadge = (entry: NameEntry, level: Level | 'unplaced', x: number, y: number) => {
     const isHovered = hoveredId === entry.id;
     const avatarColor = level !== 'unplaced' ? LEVEL_COLORS[level].avatar : '#9ca3af';
-    const leftPct = (x / ARC_VB_W) * 100;
-    const topPct  = (y / ARC_VB_H) * 100;
     return (
       <div
         key={entry.id}
@@ -574,9 +542,9 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
         onMouseLeave={() => setHoveredId(null)}
         style={{
           position: 'absolute',
-          left: `${leftPct}%`,
-          top: `${topPct}%`,
-          width: `${NODE_CSS_PX}px`,
+          left: `${(x / ARC_VB_W) * 100}%`,
+          top:  `${(y / ARC_VB_H) * 100}%`,
+          width:  `${NODE_CSS_PX}px`,
           height: `${NODE_CSS_PX}px`,
           transform: `translate(-50%, -50%) scale(${(isHovered ? 1.18 : 1) / innerScale})`,
           zIndex: isHovered ? 30 : 20,
@@ -585,18 +553,16 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           pointerEvents: 'auto',
         }}
       >
-        <div
-          style={{
-            width: '100%', height: '100%', borderRadius: '50%',
-            backgroundColor: avatarColor,
-            backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined,
-            backgroundSize: 'cover', backgroundPosition: 'center',
-            border: '2.5px solid rgba(255,255,255,0.9)',
-            boxShadow: isHovered ? '0 4px 14px rgba(0,0,0,0.25)' : '0 2px 5px rgba(0,0,0,0.18)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            userSelect: 'none',
-          }}
-        >
+        <div style={{
+          width: '100%', height: '100%', borderRadius: '50%',
+          backgroundColor: avatarColor,
+          backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined,
+          backgroundSize: 'cover', backgroundPosition: 'center',
+          border: '2.5px solid rgba(255,255,255,0.9)',
+          boxShadow: isHovered ? '0 4px 14px rgba(0,0,0,0.25)' : '0 2px 5px rgba(0,0,0,0.18)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          userSelect: 'none',
+        }}>
           {!entry.photoUrl && (
             <span style={{ color: '#fff', fontSize: '12px', fontWeight: 700, lineHeight: 1, pointerEvents: 'none' }}>
               {getInitials(entry.name)}
@@ -666,12 +632,11 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     </div>
   );
 
-  // ── Person side-panel ─────────────────────────────────────────────────────
+  // ── Per-person side-panel ─────────────────────────────────────────────────
   const renderPanel = () => {
     if (!panel) return null;
     const { entry, level } = panel;
     const badge = LEVEL_BADGE[level];
-    const initials = getInitials(entry.name);
     const avatarColor = level !== 'unplaced' ? LEVEL_COLORS[level as Level].avatar : '#9ca3af';
     const personLevel = level !== 'unplaced' ? (level as Level) : null;
     const contacts = validContacts(allPlaced, entry.id, personLevel);
@@ -686,7 +651,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
             <div className="flex items-center gap-4">
               <div className="flex-shrink-0 w-16 h-16 rounded-full flex items-center justify-center text-white text-xl font-bold shadow-md overflow-hidden"
                 style={{ backgroundColor: avatarColor, backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined, backgroundSize: 'cover', backgroundPosition: 'center' }}>
-                {!entry.photoUrl && initials}
+                {!entry.photoUrl && getInitials(entry.name)}
               </div>
               <div>
                 <h2 className="text-xl font-bold text-gray-900 leading-tight">{entry.name}</h2>
@@ -710,9 +675,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
               </p>
             ) : contacts.length === 0 ? (
               <p className="text-sm text-gray-400 italic">
-                {personLevel === 'coordinating'
-                  ? "Core members can be anyone's primary contact."
-                  : 'No eligible contacts at this level or higher.'}
+                {personLevel === 'coordinating' ? "Core members can be anyone's primary contact." : 'No eligible contacts at this level or higher.'}
               </p>
             ) : (
               <>
@@ -773,9 +736,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           <div className="px-6 pb-6 pt-2 border-t border-gray-100">
             <button onClick={() => { closePanel(); guardedNavigate(`/individual/${entry.id}`); }}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-blue-500 text-blue-600 font-semibold hover:bg-blue-50 transition-colors">
-              <UserIcon className="w-4 h-4" />
-              View Full Profile
-              <ExternalLinkIcon className="w-4 h-4" />
+              <UserIcon className="w-4 h-4" />View Full Profile<ExternalLinkIcon className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -783,128 +744,119 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     );
   };
 
-  // ── Tier side-panel ───────────────────────────────────────────────────────
-  const renderTierPanel = () => {
-    if (!tierPanel) return null;
-    const level = tierPanel;
-    const badge = LEVEL_BADGE[level];
+  // ── Tier expand overlay ────────────────────────────────────────────────────
+  const renderExpandedOverlay = () => {
+    if (!expandedTier) return null;
+    const level = expandedTier;
+    const badge  = LEVEL_BADGE[level];
     const colors = LEVEL_COLORS[level];
     const members = circles[level];
-    const query = tierSearch.toLowerCase();
+    const query   = expandSearch.toLowerCase();
     const filtered = query ? members.filter(m => m.name.toLowerCase().includes(query)) : members;
-    const otherLevels = ORDERED_LEVELS.filter(l => l !== level);
 
     return (
-      <>
-        <div className="fixed inset-0 z-40" style={{ background: 'rgba(0,0,0,0.08)' }} onClick={() => setTierPanel(null)} />
-        <div className="fixed top-0 right-0 h-full z-50 flex flex-col bg-white shadow-2xl"
-          style={{ width: '380px', maxWidth: '100vw', animation: 'slideInRight 0.25s ease' }}>
-
-          {/* header */}
-          <div className="flex items-center justify-between px-6 py-5 border-b border-gray-100"
-            style={{ backgroundColor: colors.bg }}>
-            <div>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-widest"
-                style={{ backgroundColor: badge.bg, color: badge.text }}>{badge.label}</span>
-              <h2 className="text-2xl font-extrabold mt-1" style={{ color: LEVEL_LABEL_COLOR[level] }}>
-                {members.length} {members.length === 1 ? 'person' : 'people'}
-              </h2>
-              <p className="text-xs text-gray-500 mt-0.5">Click a name to view full profile</p>
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8"
+        style={{ backgroundColor: 'rgba(15,23,42,0.65)', backdropFilter: 'blur(4px)' }}
+        onClick={() => setExpandedTier(null)}
+      >
+        <div
+          className="flex flex-col rounded-2xl shadow-2xl overflow-hidden w-full"
+          style={{ maxWidth: '900px', maxHeight: '88vh', backgroundColor: 'rgba(255,255,255,0.98)' }}
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-5 border-b-2 flex-shrink-0"
+            style={{ backgroundColor: colors.bg, borderColor: colors.border }}>
+            <div className="flex items-center gap-4">
+              <div>
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-widest"
+                  style={{ backgroundColor: badge.bg, color: badge.text }}>{badge.label}</span>
+                <div className="flex items-baseline gap-2 mt-1">
+                  <span className="text-3xl font-extrabold leading-none" style={{ color: LEVEL_LABEL_COLOR[level] }}>
+                    {members.length}
+                  </span>
+                  <span className="text-sm font-medium text-gray-500">
+                    {members.length === 1 ? 'person' : 'people'}
+                  </span>
+                </div>
+              </div>
             </div>
-            <button onClick={() => setTierPanel(null)}
-              className="p-1.5 rounded-full text-gray-400 hover:text-gray-600 hover:bg-white/60 transition-colors flex-shrink-0">
+            <button
+              onClick={() => setExpandedTier(null)}
+              className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-black/10 transition-colors"
+            >
               <XIcon className="w-5 h-5" />
             </button>
           </div>
 
-          {/* search */}
-          <div className="px-4 py-3 border-b border-gray-100">
+          {/* Search */}
+          <div className="px-5 py-3 border-b border-gray-100 flex-shrink-0">
             <div className="relative">
               <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
               <input
-                value={tierSearch}
-                onChange={e => setTierSearch(e.target.value)}
+                value={expandSearch}
+                onChange={e => setExpandSearch(e.target.value)}
                 placeholder={`Search ${badge.label} members…`}
-                className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-xl bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                autoFocus
+                className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-200 rounded-xl bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
           </div>
 
-          {/* list */}
-          <div className="flex-1 overflow-y-auto divide-y divide-gray-50">
+          {/* Avatar grid */}
+          <div className="flex-1 overflow-y-auto p-5">
             {filtered.length === 0 ? (
-              <p className="text-sm text-gray-400 italic px-6 py-8 text-center">
+              <p className="text-sm text-gray-400 italic text-center py-12">
                 {query ? 'No matches found.' : 'No one in this tier yet.'}
               </p>
             ) : (
-              filtered.map(entry => {
-                const avatarColor = LEVEL_COLORS[level].avatar;
-                return (
-                  <div key={entry.id} className="flex items-center gap-3 px-4 py-3 hover:bg-gray-50 group transition-colors">
-                    {/* avatar */}
+              <div
+                className="grid gap-2"
+                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))' }}
+              >
+                {filtered.map(entry => {
+                  const avatarColor = colors.avatar;
+                  return (
                     <div
-                      className="flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm cursor-pointer overflow-hidden shadow-sm"
-                      style={{
-                        backgroundColor: avatarColor,
-                        backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined,
-                        backgroundSize: 'cover', backgroundPosition: 'center',
-                      }}
-                      onClick={() => { setTierPanel(null); openPanel(entry, level); }}
+                      key={entry.id}
+                      className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl cursor-pointer hover:bg-gray-100 active:bg-gray-200 transition-colors select-none"
+                      onClick={() => { setExpandedTier(null); openPanel(entry, level); }}
                     >
-                      {!entry.photoUrl && getInitials(entry.name)}
-                    </div>
-
-                    {/* name */}
-                    <span
-                      className="flex-1 text-sm font-medium text-gray-800 cursor-pointer hover:text-blue-600 transition-colors truncate"
-                      onClick={() => { setTierPanel(null); openPanel(entry, level); }}
-                    >
-                      {entry.name}
-                    </span>
-
-                    {/* move-to-tier control */}
-                    {!readOnly && (
-                      <div className="relative flex-shrink-0">
-                        <select
-                          defaultValue=""
-                          onChange={e => {
-                            if (e.target.value) {
-                              movePersonToTier(entry.id, level, e.target.value as Level);
-                              // keep panel open on current tier so user sees the updated list
-                            }
-                            e.target.value = '';
-                          }}
-                          className="appearance-none text-xs pl-2 pr-6 py-1.5 border border-gray-200 rounded-lg text-gray-600 bg-white cursor-pointer hover:border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-400"
-                          title="Move to another tier"
-                        >
-                          <option value="" disabled>Move…</option>
-                          {otherLevels.map(l => (
-                            <option key={l} value={l}>{LEVEL_DISPLAY[l]}</option>
-                          ))}
-                        </select>
-                        <ChevronDownIcon className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
+                      <div
+                        className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden shadow-sm flex-shrink-0"
+                        style={{
+                          backgroundColor: avatarColor,
+                          backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined,
+                          backgroundSize: 'cover', backgroundPosition: 'center',
+                        }}
+                      >
+                        {!entry.photoUrl && getInitials(entry.name)}
                       </div>
-                    )}
-                  </div>
-                );
-              })
+                      <span className="text-xs text-center font-medium text-gray-700 leading-tight w-full"
+                        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {entry.name}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
 
-          {/* footer hint */}
-          {!readOnly && (
-            <div className="px-6 py-3 border-t border-gray-100 bg-gray-50">
-              <p className="text-xs text-gray-400 text-center">
-                Use "Move…" to reassign someone to a different tier. Changes are saved with the main Save button.
-              </p>
-            </div>
-          )}
+          {/* Footer hint */}
+          <div className="px-5 py-3 border-t border-gray-100 flex-shrink-0 bg-gray-50/80">
+            <p className="text-xs text-gray-400 text-center">
+              Click any person to view their full profile
+              {!readOnly ? ' · Drag from the visualization to reassign tiers' : ''}
+            </p>
+          </div>
         </div>
-      </>
+      </div>
     );
   };
 
-  // ── Contact prompt ────────────────────────────────────────────────────────
+  // ── Contact prompt ─────────────────────────────────────────────────────────
   const renderContactPrompt = () => {
     if (!contactPrompt) return null;
     const { entry, targetLevel, selectedId } = contactPrompt;
@@ -924,14 +876,14 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           </div>
           <h3 className="text-sm font-semibold text-gray-700 mb-1">Assign a primary contact</h3>
           <p className="text-xs text-gray-500 mb-3">
-            Who is {entry.name.split(' ')[0]}'s primary connection in this nucleus? This is optional but encouraged.
+            Who is {entry.name.split(' ')[0]}'s primary connection? Optional but encouraged.
           </p>
           {candidates.length === 0 ? (
-            <p className="text-sm text-gray-400 italic mb-4">No eligible contacts yet. You can assign one later from the person's profile panel.</p>
+            <p className="text-sm text-gray-400 italic mb-4">No eligible contacts yet. Assign later from their profile.</p>
           ) : (
             <div className="relative mb-4">
               <select value={selectedId} onChange={e => setContactPrompt(prev => prev ? { ...prev, selectedId: e.target.value } : null)}
-                className="w-full appearance-none pl-3 pr-8 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                className="w-full appearance-none pl-3 pr-8 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-800 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option value="">— Skip for now —</option>
                 {candidates.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -940,9 +892,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           )}
           <div className="flex gap-2">
             <button onClick={() => setContactPrompt(null)}
-              className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-600 font-medium rounded-xl hover:bg-gray-50 transition-colors text-sm">
-              Skip
-            </button>
+              className="flex-1 px-4 py-2.5 border border-gray-200 text-gray-600 font-medium rounded-xl hover:bg-gray-50 transition-colors text-sm">Skip</button>
             <button onClick={handleContactPromptAssign}
               className="flex-1 px-4 py-2.5 bg-blue-600 text-white font-medium rounded-xl hover:bg-blue-700 transition-all text-sm shadow-sm">
               {selectedId ? 'Assign' : 'Done'}
@@ -957,20 +907,17 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
   return (
     <>
       <style>{`
-        @keyframes slideInRight {
-          from { transform: translateX(100%); }
-          to   { transform: translateX(0); }
-        }
+        @keyframes slideInRight { from { transform: translateX(100%); } to { transform: translateX(0); } }
       `}</style>
 
       <div className="flex flex-col gap-8">
         <p className="text-xs text-gray-400 text-center -mb-4">
           {readOnly
-            ? 'Hover for name · Click a person for details · Click a tier band to see all members · Scroll to zoom'
-            : 'Hover for name · Click a person for details · Click a tier band to see all members · Drag to assign · Scroll to zoom'}
+            ? 'Hover a badge for name · Click a badge or tier band for details · Scroll to zoom'
+            : 'Hover a badge for name · Click a badge or tier band for details · Drag to assign · Scroll to zoom'}
         </p>
 
-        {/* Arc visualization container */}
+        {/* Arc visualization */}
         <div
           ref={vizContainerRef}
           className="relative mx-auto overflow-hidden rounded-2xl select-none"
@@ -993,16 +940,16 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
               willChange: 'transform',
             }}
           >
-            {/* SVG: arc band backgrounds + tier labels */}
+            {/* ── SVG layer: arc bands, dots, labels ── */}
             <svg
               viewBox={`0 0 ${ARC_VB_W} ${ARC_VB_H}`}
               className="absolute inset-0 w-full h-full z-0 pointer-events-none"
               style={{ overflow: 'visible' }}
             >
-              {/* Render outermost first so inner bands overlap correctly */}
+              {/* Arc band fills (outermost first) */}
               {[...ORDERED_LEVELS].reverse().map(level => {
                 const { innerR, outerR } = ARC_BANDS[level];
-                const isActive = dragOverLevel === level || tierPanel === level;
+                const isActive = dragOverLevel === level || expandedTier === level;
                 return (
                   <path
                     key={level}
@@ -1015,62 +962,82 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
                 );
               })}
 
-              {/* Tier labels at the 12-o'clock position of each band */}
-              {ORDERED_LEVELS.map(level => {
-                const { innerR, outerR } = ARC_BANDS[level];
-                const midR = (innerR + outerR) / 2;
-                // Label sits at θ = -π/2 (straight up from center)
-                const labelX = ARC_CX;
-                const labelY = ARC_CY - midR;
+              {/* Subtle separator arcs at band boundaries */}
+              {ORDERED_LEVELS.slice(1).map(level => {
+                const { innerR } = ARC_BANDS[level];
+                const x1 = ARC_CX + innerR * Math.cos(ARC_START), y1 = ARC_CY + innerR * Math.sin(ARC_START);
+                const x2 = ARC_CX + innerR * Math.cos(ARC_END),   y2 = ARC_CY + innerR * Math.sin(ARC_END);
                 return (
-                  <text
-                    key={level}
-                    x={labelX}
-                    y={labelY + 5}
-                    textAnchor="middle"
-                    fontSize="11"
-                    fontWeight="700"
-                    letterSpacing="1.2"
-                    fill={LEVEL_LABEL_COLOR[level]}
-                    style={{ textTransform: 'uppercase', userSelect: 'none' }}
-                  >
-                    {LEVEL_DISPLAY[level].toUpperCase()} ({circles[level].length})
-                  </text>
+                  <path key={`sep-${level}`}
+                    d={`M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${innerR} ${innerR} 0 0 0 ${x2.toFixed(2)} ${y2.toFixed(2)}`}
+                    fill="none" stroke="rgba(0,0,0,0.08)" strokeWidth="1" />
                 );
               })}
 
-              {/* Subtle radial guide lines at band boundaries */}
+              {/* Dots for tiers in dot mode */}
               {ORDERED_LEVELS.map(level => {
-                const { innerR } = ARC_BANDS[level];
-                if (innerR === ARC_BANDS.coordinating.innerR) return null; // skip innermost
+                const { mode, positions } = nodeData[level];
+                if (mode !== 'dots') return null;
+                const color = LEVEL_COLORS[level].avatar;
                 return (
-                  <path
-                    key={`sep-${level}`}
-                    d={`M ${ARC_CX + innerR * Math.cos(ARC_START)} ${ARC_CY + innerR * Math.sin(ARC_START)} A ${innerR} ${innerR} 0 0 0 ${ARC_CX + innerR * Math.cos(ARC_END)} ${ARC_CY + innerR * Math.sin(ARC_END)}`}
-                    fill="none"
-                    stroke="rgba(0,0,0,0.08)"
-                    strokeWidth="1"
-                  />
+                  <g key={`dots-${level}`}>
+                    {positions.map((pos, i) => (
+                      <circle key={i} cx={pos.x.toFixed(2)} cy={pos.y.toFixed(2)}
+                        r={DOT_R_SVG} fill={color} opacity={0.72} />
+                    ))}
+                  </g>
+                );
+              })}
+
+              {/* Tier labels: prominent count + name at 12-o'clock of each band */}
+              {ORDERED_LEVELS.map(level => {
+                const { innerR, outerR } = ARC_BANDS[level];
+                // Position the label group in the upper third of the band at 12-o'clock
+                const labelCenterR = outerR - (outerR - innerR) * 0.28;
+                const lx = ARC_CX;
+                const ly = ARC_CY - labelCenterR;
+                const color = LEVEL_LABEL_COLOR[level];
+                const isDotMode = nodeData[level].mode === 'dots';
+                return (
+                  <g key={`label-${level}`}>
+                    {/* Tier name (small, above count) */}
+                    <text x={lx} y={ly - 8} textAnchor="middle"
+                      fontSize="8" fontWeight="700" letterSpacing="1.4"
+                      fill={color} opacity={0.7} style={{ userSelect: 'none' }}>
+                      {LEVEL_DISPLAY[level].toUpperCase()}
+                    </text>
+                    {/* Count (large, bold) */}
+                    <text x={lx} y={ly + 10} textAnchor="middle"
+                      fontSize="20" fontWeight="800"
+                      fill={color} style={{ userSelect: 'none' }}>
+                      {circles[level].length}
+                    </text>
+                    {/* "tap to expand" hint in dot mode */}
+                    {isDotMode && (
+                      <text x={lx} y={ly + 21} textAnchor="middle"
+                        fontSize="7" fill={color} opacity={0.45} style={{ userSelect: 'none' }}>
+                        tap to expand ↓
+                      </text>
+                    )}
+                  </g>
                 );
               })}
             </svg>
 
-            {/* Drop-zone overlay: arc-shaped clip-path per tier (outermost first so
-                inner zones sit on top and capture drops correctly) */}
+            {/* ── Drop-zone + tier-click overlay (arc-shaped, outermost first) ── */}
             <div className="absolute inset-0 z-10">
               {[...ORDERED_LEVELS].reverse().map(level => (
                 <div
                   key={level}
-                  className="absolute inset-0 transition-all duration-200"
+                  className="absolute inset-0 transition-colors duration-200"
                   style={{
                     clipPath: clipPaths[level],
                     cursor: 'pointer',
                     ...(dragOverLevel === level ? {
                       backgroundColor: LEVEL_COLORS[level].highlight,
-                      outline: `2px dashed ${LEVEL_COLORS[level].border}`,
                     } : {}),
                   }}
-                  onClick={() => openTierPanel(level)}
+                  onClick={() => openExpandedTier(level)}
                   onDragOver={readOnly ? undefined : e => handleDragOver(e, level)}
                   onDragLeave={readOnly ? undefined : e => handleDragLeave(e, level)}
                   onDrop={readOnly ? undefined : e => handleDrop(e, level)}
@@ -1078,60 +1045,15 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
               ))}
             </div>
 
-            {/* Avatar + overflow chip layer */}
+            {/* ── Badge avatar layer (only for tiers in badge mode) ── */}
             <div className="absolute inset-0 z-20" style={{ pointerEvents: 'none' }}>
               {ORDERED_LEVELS.map(level => {
-                const { visibleCount, overflow, positions } = nodeData[level];
-                const entries = circles[level];
-                return (
-                  <React.Fragment key={level}>
-                    {entries.slice(0, visibleCount).map((entry, i) => {
-                      const pos = positions[i];
-                      if (!pos) return null;
-                      return renderAvatar(entry, level, pos.x, pos.y);
-                    })}
-                    {overflow > 0 && (() => {
-                      const chipPos = positions[visibleCount];
-                      if (!chipPos) return null;
-                      const leftPct = (chipPos.x / ARC_VB_W) * 100;
-                      const topPct  = (chipPos.y / ARC_VB_H) * 100;
-                      return (
-                        <div
-                          key={`overflow-${level}`}
-                          data-node="true"
-                          onClick={e => { e.stopPropagation(); openTierPanel(level); }}
-                          style={{
-                            position: 'absolute',
-                            left: `${leftPct}%`,
-                            top: `${topPct}%`,
-                            transform: `translate(-50%, -50%) scale(${1 / innerScale})`,
-                            zIndex: 25,
-                            pointerEvents: 'auto',
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <div style={{
-                            height: `${NODE_CSS_PX}px`,
-                            paddingLeft: '10px',
-                            paddingRight: '10px',
-                            borderRadius: '999px',
-                            backgroundColor: LEVEL_COLORS[level].avatar,
-                            border: '2.5px solid rgba(255,255,255,0.9)',
-                            boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            whiteSpace: 'nowrap',
-                          }}>
-                            <span style={{ color: '#fff', fontSize: '12px', fontWeight: 700, lineHeight: 1 }}>
-                              +{overflow} more
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </React.Fragment>
-                );
+                const { mode, positions } = nodeData[level];
+                if (mode !== 'badges') return null;
+                return circles[level].map((entry, i) => {
+                  const pos = positions[i];
+                  return pos ? renderBadge(entry, level, pos.x, pos.y) : null;
+                });
               })}
             </div>
           </div>
@@ -1144,36 +1066,34 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           >
             <button type="button" onClick={zoomIn} disabled={zoom >= ZOOM_MAX - 1e-3}
               aria-label="Zoom in" title="Zoom in"
-              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 transition-colors">
               <ZoomInIcon className="w-4 h-4" />
             </button>
             <button type="button" onClick={zoomOut} disabled={zoom <= ZOOM_MIN + 1e-3}
               aria-label="Zoom out" title="Zoom out"
-              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 transition-colors">
               <ZoomOutIcon className="w-4 h-4" />
             </button>
             <button type="button" onClick={resetView} disabled={zoom === 1 && pan.x === 0 && pan.y === 0}
               aria-label="Reset view" title="Reset view"
-              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              className="w-8 h-8 flex items-center justify-center rounded-full text-gray-600 hover:bg-gray-100 disabled:opacity-40 transition-colors">
               <Maximize2Icon className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Unplaced / new participants area */}
+        {/* Unplaced / new participants */}
         <div
           className={`rounded-2xl border-2 border-dashed px-6 py-5 transition-all duration-200 ${
             dragOverUnplaced ? 'border-blue-400 bg-blue-50' : 'border-gray-200 bg-gray-50'
           }`}
           onDragOver={readOnly ? undefined : e => { e.preventDefault(); setDragOverUnplaced(true); }}
           onDragLeave={readOnly ? undefined : e => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            if (e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom)
-              setDragOverUnplaced(false);
+            const r = e.currentTarget.getBoundingClientRect();
+            if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) setDragOverUnplaced(false);
           }}
           onDrop={readOnly ? undefined : e => {
-            e.preventDefault();
-            setDragOverUnplaced(false);
+            e.preventDefault(); setDragOverUnplaced(false);
             const participantId = e.dataTransfer.getData('participantId');
             const sourceLevel = e.dataTransfer.getData('sourceLevel') as Level | 'unplaced';
             if (sourceLevel === 'unplaced') return;
@@ -1195,9 +1115,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
               unplaced.map(entry => {
                 const isHovered = hoveredId === entry.id;
                 return (
-                  <div
-                    key={entry.id}
-                    aria-label={entry.name}
+                  <div key={entry.id} aria-label={entry.name}
                     draggable={!readOnly}
                     onDragStart={readOnly ? undefined : e => handleDragStart(e, entry.id, 'unplaced')}
                     onClick={() => openPanel(entry, 'unplaced')}
@@ -1208,8 +1126,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
                       border: isHovered ? '1.5px solid #9ca3af' : '1.5px solid #e5e7eb',
                       boxShadow: isHovered ? '0 2px 8px rgba(0,0,0,0.12)' : '0 1px 3px rgba(0,0,0,0.07)',
                       transform: isHovered ? 'translateY(-1px)' : 'none',
-                    }}
-                  >
+                    }}>
                     <div className="w-6 h-6 rounded-full flex items-center justify-center text-white flex-shrink-0"
                       style={{ backgroundColor: '#9ca3af', fontSize: '10px', fontWeight: 700 }}>
                       {getInitials(entry.name)}
@@ -1222,13 +1139,11 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           </div>
         </div>
 
-        {/* Save button */}
+        {/* Save */}
         {!readOnly && (
           <div className="flex justify-center">
-            <button
-              onClick={handleSave}
-              className="px-8 py-2.5 bg-blue-600 text-white font-medium rounded-full hover:bg-blue-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center gap-2"
-            >
+            <button onClick={handleSave}
+              className="px-8 py-2.5 bg-blue-600 text-white font-medium rounded-full hover:bg-blue-700 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 flex items-center justify-center gap-2">
               {saved ? <><CheckIcon className="w-4 h-4" /> Saved Successfully</> : 'Save Engagement Levels'}
             </button>
           </div>
@@ -1236,7 +1151,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
       </div>
 
       {renderPanel()}
-      {renderTierPanel()}
+      {renderExpandedOverlay()}
       {renderContactPrompt()}
     </>
   );
