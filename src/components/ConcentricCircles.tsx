@@ -285,6 +285,7 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
   // Full-screen tier expand overlay
   const [expandedTier, setExpandedTier] = useState<Level | null>(null);
   const [expandSearch, setExpandSearch] = useState('');
+  const [overlayDragTarget, setOverlayDragTarget] = useState<Level | null>(null);
 
   // "Assign primary contact" prompt after drop from unplaced
   const [contactPrompt, setContactPrompt] = useState<{
@@ -378,6 +379,19 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
       setPanelContactSaving(false);
     }
   };
+
+  // ── Tier move (used from overlay drag-drop) ───────────────────────────────
+  const movePersonToTier = useCallback((personId: string, fromLevel: Level, toLevel: Level) => {
+    setCircles(prev => {
+      const entry = prev[fromLevel].find(p => p.id === personId);
+      if (!entry) return prev;
+      return {
+        ...prev,
+        [fromLevel]: prev[fromLevel].filter(p => p.id !== personId),
+        [toLevel]: [...prev[toLevel], entry],
+      };
+    });
+  }, []);
 
   // ── Tier expand overlay ────────────────────────────────────────────────────
   const openExpandedTier = useCallback((level: Level) => {
@@ -744,6 +758,37 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     );
   };
 
+  // ── Mini arc SVG: 4 nested arcs, target tier highlighted ─────────────────
+  const TierMiniArc = ({ targetLevel }: { targetLevel: Level }) => {
+    const cx = 26, cy = 34;
+    const miniStart = -(Math.PI - 0.09), miniEnd = -0.09;
+    const miniRings: Record<Level, [number, number]> = {
+      coordinating: [7,  12],
+      supporting:   [14, 19],
+      participating:[21, 26],
+      aware:        [28, 33],
+    };
+    const bandPath = (r1: number, r2: number) => {
+      const ox1 = cx + r2 * Math.cos(miniStart), oy1 = cy + r2 * Math.sin(miniStart);
+      const ox2 = cx + r2 * Math.cos(miniEnd),   oy2 = cy + r2 * Math.sin(miniEnd);
+      const ix1 = cx + r1 * Math.cos(miniEnd),   iy1 = cy + r1 * Math.sin(miniEnd);
+      const ix2 = cx + r1 * Math.cos(miniStart), iy2 = cy + r1 * Math.sin(miniStart);
+      return `M ${ox1.toFixed(1)} ${oy1.toFixed(1)} A ${r2} ${r2} 0 0 0 ${ox2.toFixed(1)} ${oy2.toFixed(1)} L ${ix1.toFixed(1)} ${iy1.toFixed(1)} A ${r1} ${r1} 0 0 1 ${ix2.toFixed(1)} ${iy2.toFixed(1)} Z`;
+    };
+    return (
+      <svg viewBox="0 0 52 36" width={42} height={29} aria-hidden>
+        {ORDERED_LEVELS.map(l => (
+          <path
+            key={l}
+            d={bandPath(...miniRings[l])}
+            fill={l === targetLevel ? LEVEL_COLORS[l].avatar : '#d1d5db'}
+            opacity={l === targetLevel ? 1 : 0.35}
+          />
+        ))}
+      </svg>
+    );
+  };
+
   // ── Tier expand overlay ────────────────────────────────────────────────────
   const renderExpandedOverlay = () => {
     if (!expandedTier) return null;
@@ -753,6 +798,21 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
     const members = circles[level];
     const query   = expandSearch.toLowerCase();
     const filtered = query ? members.filter(m => m.name.toLowerCase().includes(query)) : members;
+    const otherLevels = ORDERED_LEVELS.filter(l => l !== level);
+
+    const handleOverlayDragStart = (e: React.DragEvent, personId: string) => {
+      e.dataTransfer.setData('overlayPersonId', personId);
+      e.dataTransfer.setData('overlaySourceLevel', level);
+      e.dataTransfer.effectAllowed = 'move';
+    };
+
+    const handleOverlayDrop = (e: React.DragEvent, targetLevel: Level) => {
+      e.preventDefault();
+      setOverlayDragTarget(null);
+      const personId = e.dataTransfer.getData('overlayPersonId');
+      const srcLevel = e.dataTransfer.getData('overlaySourceLevel') as Level;
+      if (personId && srcLevel !== targetLevel) movePersonToTier(personId, srcLevel, targetLevel);
+    };
 
     return (
       <div
@@ -768,24 +828,20 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
           {/* Header */}
           <div className="flex items-center justify-between px-6 py-5 border-b-2 flex-shrink-0"
             style={{ backgroundColor: colors.bg, borderColor: colors.border }}>
-            <div className="flex items-center gap-4">
-              <div>
-                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-widest"
-                  style={{ backgroundColor: badge.bg, color: badge.text }}>{badge.label}</span>
-                <div className="flex items-baseline gap-2 mt-1">
-                  <span className="text-3xl font-extrabold leading-none" style={{ color: LEVEL_LABEL_COLOR[level] }}>
-                    {members.length}
-                  </span>
-                  <span className="text-sm font-medium text-gray-500">
-                    {members.length === 1 ? 'person' : 'people'}
-                  </span>
-                </div>
+            <div>
+              <span className="px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-widest"
+                style={{ backgroundColor: badge.bg, color: badge.text }}>{badge.label}</span>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span className="text-3xl font-extrabold leading-none" style={{ color: LEVEL_LABEL_COLOR[level] }}>
+                  {members.length}
+                </span>
+                <span className="text-sm font-medium text-gray-500">
+                  {members.length === 1 ? 'person' : 'people'}
+                </span>
               </div>
             </div>
-            <button
-              onClick={() => setExpandedTier(null)}
-              className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-black/10 transition-colors"
-            >
+            <button onClick={() => setExpandedTier(null)}
+              className="p-2 rounded-full text-gray-400 hover:text-gray-700 hover:bg-black/10 transition-colors">
               <XIcon className="w-5 h-5" />
             </button>
           </div>
@@ -811,46 +867,80 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
                 {query ? 'No matches found.' : 'No one in this tier yet.'}
               </p>
             ) : (
-              <div
-                className="grid gap-2"
-                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))' }}
-              >
-                {filtered.map(entry => {
-                  const avatarColor = colors.avatar;
+              <div className="grid gap-2"
+                style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(88px, 1fr))' }}>
+                {filtered.map(entry => (
+                  <div
+                    key={entry.id}
+                    draggable={!readOnly}
+                    onDragStart={readOnly ? undefined : e => handleOverlayDragStart(e, entry.id)}
+                    className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl cursor-pointer hover:bg-gray-100 active:bg-gray-200 transition-colors select-none"
+                    onClick={() => { setExpandedTier(null); openPanel(entry, level); }}
+                  >
+                    <div
+                      className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden shadow-sm flex-shrink-0"
+                      style={{
+                        backgroundColor: colors.avatar,
+                        backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined,
+                        backgroundSize: 'cover', backgroundPosition: 'center',
+                      }}
+                    >
+                      {!entry.photoUrl && getInitials(entry.name)}
+                    </div>
+                    <span className="text-xs text-center font-medium text-gray-700 leading-tight w-full"
+                      style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                      {entry.name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Tier reassignment drop zones (edit mode only) */}
+          {!readOnly && (
+            <div className="flex-shrink-0 border-t border-gray-100 bg-gray-50/80 px-5 py-4">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+                Drag a badge here to move to a different tier
+              </p>
+              <div className="flex gap-3">
+                {otherLevels.map(targetLevel => {
+                  const isTarget = overlayDragTarget === targetLevel;
                   return (
                     <div
-                      key={entry.id}
-                      className="flex flex-col items-center gap-1.5 p-2.5 rounded-xl cursor-pointer hover:bg-gray-100 active:bg-gray-200 transition-colors select-none"
-                      onClick={() => { setExpandedTier(null); openPanel(entry, level); }}
+                      key={targetLevel}
+                      className="flex-1 flex flex-col items-center gap-1.5 py-3 px-2 rounded-xl border-2 transition-all duration-150 cursor-default"
+                      style={{
+                        borderColor: isTarget ? LEVEL_COLORS[targetLevel].border : 'transparent',
+                        backgroundColor: isTarget ? LEVEL_COLORS[targetLevel].highlight : LEVEL_COLORS[targetLevel].bg,
+                        boxShadow: isTarget ? `0 0 0 2px ${LEVEL_COLORS[targetLevel].border}` : 'none',
+                      }}
+                      onDragOver={e => { e.preventDefault(); setOverlayDragTarget(targetLevel); }}
+                      onDragLeave={e => {
+                        const r = e.currentTarget.getBoundingClientRect();
+                        if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
+                          setOverlayDragTarget(null);
+                      }}
+                      onDrop={e => handleOverlayDrop(e, targetLevel)}
                     >
-                      <div
-                        className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-sm overflow-hidden shadow-sm flex-shrink-0"
-                        style={{
-                          backgroundColor: avatarColor,
-                          backgroundImage: entry.photoUrl ? `url(${entry.photoUrl})` : undefined,
-                          backgroundSize: 'cover', backgroundPosition: 'center',
-                        }}
-                      >
-                        {!entry.photoUrl && getInitials(entry.name)}
-                      </div>
-                      <span className="text-xs text-center font-medium text-gray-700 leading-tight w-full"
-                        style={{ display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                        {entry.name}
+                      <TierMiniArc targetLevel={targetLevel} />
+                      <span className="text-xs font-bold uppercase tracking-wide"
+                        style={{ color: LEVEL_LABEL_COLOR[targetLevel] }}>
+                        {LEVEL_DISPLAY[targetLevel]}
                       </span>
                     </div>
                   );
                 })}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Footer hint */}
-          <div className="px-5 py-3 border-t border-gray-100 flex-shrink-0 bg-gray-50/80">
-            <p className="text-xs text-gray-400 text-center">
-              Click any person to view their full profile
-              {!readOnly ? ' · Drag from the visualization to reassign tiers' : ''}
-            </p>
-          </div>
+          {readOnly && (
+            <div className="px-5 py-3 border-t border-gray-100 flex-shrink-0 bg-gray-50/80">
+              <p className="text-xs text-gray-400 text-center">Click any person to view their full profile</p>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -935,7 +1025,10 @@ export function ConcentricCircles({ nucleusId, compact, canEdit = true }: Concen
             className="absolute inset-0"
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${innerScale})`,
-              transformOrigin: '50% 50%',
+              // Anchor zoom at the arc base (ARC_CY / ARC_VB_H ≈ 97.4%).
+              // Zooming in scales content upward from the bottom anchor so arc
+              // endpoints never push below the container floor.
+              transformOrigin: `50% ${((ARC_CY / ARC_VB_H) * 100).toFixed(1)}%`,
               transition: isPanning ? 'none' : 'transform 0.18s ease-out',
               willChange: 'transform',
             }}
