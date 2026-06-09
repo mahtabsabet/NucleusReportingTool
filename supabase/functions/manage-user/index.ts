@@ -470,6 +470,81 @@ Deno.serve(async (req) => {
       return json({ success: true });
     }
 
+    // ── add-nucleus ──────────────────────────────────────────────
+    // Adds a second (or further) nucleus_collaborator row for a user who is
+    // already a nucleus collaborator, without touching their existing rows.
+    if (action === 'add-nucleus') {
+      const { targetUserId, nucleusId: newNucleusId } = body;
+      if (!targetUserId) return json({ error: 'targetUserId required' }, 400);
+      if (targetUserId === caller.id) return json({ error: 'Cannot change your own permissions' }, 403);
+      if (!newNucleusId) return json({ error: 'nucleusId required' }, 400);
+
+      const allowed = ROLE_ASSIGNERS['nucleus_collaborator'];
+      const callerRoles2: string[] = [];
+      if (callerIsSuperAdmin) callerRoles2.push('super_admin');
+      if (callerIsAdmin) callerRoles2.push('admin');
+      let myClusterIds2: string[] = [];
+      if (!callerIsAdmin) {
+        const { data: callerPerms2 } = await supabaseAdmin
+          .from('user_permissions')
+          .select('role, cluster_id, nucleus_id')
+          .eq('user_id', caller.id);
+        const perms2 = (callerPerms2 ?? []) as any[];
+        myClusterIds2 = perms2
+          .filter(p => p.role === 'cluster_coordinator' && p.cluster_id)
+          .map(p => p.cluster_id);
+        if (myClusterIds2.length > 0) callerRoles2.push('cluster_coordinator');
+      }
+      if (!allowed.some(r => callerRoles2.includes(r))) {
+        return json({ error: `You are not allowed to assign the 'nucleus_collaborator' role.` }, 403);
+      }
+
+      // Verify the target is already a nucleus collaborator.
+      const { data: existingPerms } = await supabaseAdmin
+        .from('user_permissions')
+        .select('id, nucleus_id')
+        .eq('user_id', targetUserId)
+        .eq('role', 'nucleus_collaborator');
+      if (!existingPerms || existingPerms.length === 0) {
+        return json({ error: 'User is not a Nucleus Coordinator.' }, 400);
+      }
+
+      // Prevent duplicate assignment.
+      const alreadyAssigned = (existingPerms as any[]).some(p => p.nucleus_id === newNucleusId);
+      if (alreadyAssigned) {
+        return json({ error: 'User is already a Nucleus Coordinator for that nucleus.' }, 400);
+      }
+
+      // Scope check for non-admin callers: the nucleus must be in their cluster.
+      if (!callerIsAdmin) {
+        const { data: n2 } = await supabaseAdmin
+          .from('nuclei').select('cluster_id').eq('id', newNucleusId).single();
+        const ncid2 = (n2 as any)?.cluster_id;
+        if (!ncid2 || !myClusterIds2.includes(ncid2)) {
+          return json({ error: 'Nucleus is not in your scope.' }, 403);
+        }
+      }
+
+      const { data: { user: targetUser2 }, error: userErr2 } = await supabaseAdmin.auth.admin.getUserById(targetUserId);
+      if (userErr2 || !targetUser2) return json({ error: 'User not found' }, 404);
+
+      const { error: insertErr2 } = await supabaseAdmin
+        .from('user_permissions')
+        .insert({ user_id: targetUserId, role: 'nucleus_collaborator', nucleus_id: newNucleusId });
+      if (insertErr2) return json({ error: insertErr2.message }, 400);
+
+      try {
+        await supabaseAdmin.from('event_log').insert({
+          type: 'user_role_changed',
+          user_id: caller.id,
+          description: `Added nucleus ${newNucleusId} to nucleus_collaborator ${targetUser2.email ?? targetUserId}`,
+          details: { targetUserId, newNucleusId },
+        });
+      } catch { /* ignore */ }
+
+      return json({ success: true });
+    }
+
     return json({ error: 'Unknown action' }, 400);
   } catch (err) {
     return json({ error: String(err) }, 500);
