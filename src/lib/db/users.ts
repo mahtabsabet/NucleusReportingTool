@@ -331,6 +331,10 @@ export interface AdminResetPasswordParams {
   temporaryPassword?: string;
 }
 
+export async function addNucleusToCollaborator(targetUserId: string, nucleusId: string): Promise<void> {
+  await invokeEdge('manage-user', { action: 'add-nucleus', targetUserId, nucleusId });
+}
+
 export async function adminResetUserPassword(params: AdminResetPasswordParams): Promise<void> {
   await invokeEdge('manage-user', {
     action: 'reset-password',

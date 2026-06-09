@@ -17,12 +17,14 @@ import {
   EyeIcon,
   EyeOffIcon,
   ShieldCheckIcon,
+  PlusIcon,
 } from 'lucide-react';
 import {
   fetchManagedUsers,
   fetchUserEmails,
   deleteUser,
   changeUserRole,
+  addNucleusToCollaborator,
   adminResetUserPassword,
   getCallerContext,
   toUserSummary,
@@ -96,13 +98,14 @@ interface UserCardProps {
   callerCtx: CallerContext;
   onDelete: (user: ManagedUser) => void;
   onChangeRole: (user: ManagedUser) => void;
+  onAddNucleus: (user: ManagedUser) => void;
   onResetPassword: (user: ManagedUser) => void;
   onResetPrivacyAck: (user: ManagedUser) => void;
   onRequestDelete: (user: ManagedUser) => void;
 }
 
 function UserCard({
-  user, callerCtx, onDelete, onChangeRole, onResetPassword, onResetPrivacyAck, onRequestDelete,
+  user, callerCtx, onDelete, onChangeRole, onAddNucleus, onResetPassword, onResetPrivacyAck, onRequestDelete,
 }: UserCardProps) {
   const summary = toUserSummary(user);
   const directDelete = canDeleteUserDirectly(callerCtx, summary);
@@ -116,6 +119,15 @@ function UserCard({
     && !summary.isSuperAdmin
     && (!summary.isAdmin || callerCtx.isSuperAdmin)
     && roleOptionsForChange(callerCtx, user).length > 0;
+  // Show "Add nucleus" for existing nucleus collaborators when the caller
+  // can assign the nucleus_collaborator role (admins + cluster coordinators).
+  const canAddNucleus =
+    callerCtx.userId !== user.id
+    && !summary.isSuperAdmin
+    && !summary.isAdmin
+    && user.permissions.some(p => p.role === 'nucleus_collaborator')
+    && (callerCtx.isSuperAdmin || callerCtx.isAdmin
+        || callerCtx.grants.some(g => g.role === 'cluster_coordinator'));
   const directReset = canResetUserPasswordDirectly(callerCtx, summary);
   // Admins / Super Admins can force a user to re-acknowledge the policy.
   // Useful after handoff of a test account, or when an admin wants a
@@ -150,6 +162,15 @@ function UserCard({
                 title="Change role"
               >
                 <PencilIcon className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {canAddNucleus && (
+              <button
+                onClick={() => onAddNucleus(user)}
+                className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors"
+                title="Add another nucleus"
+              >
+                <PlusIcon className="w-3.5 h-3.5" />
               </button>
             )}
             {directReset && (
@@ -886,6 +907,119 @@ function RequestUserActionModal({ user, action, callerCtx, onClose, onSubmitted 
   );
 }
 
+interface AddNucleusModalProps {
+  user: ManagedUser;
+  callerCtx: CallerContext;
+  onClose: () => void;
+  onAdded: () => void;
+}
+
+function AddNucleusModal({ user, callerCtx, onClose, onAdded }: AddNucleusModalProps) {
+  const [selectedClusterId, setSelectedClusterId] = useState('');
+  const [selectedNucleusId, setSelectedNucleusId] = useState('');
+  const [clusters, setClusters] = useState<ClusterRow[]>([]);
+  const [nuclei, setNuclei] = useState<NucleusRow[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const assignedNucleusIds = new Set(user.permissions.map(p => p.nucleusId).filter(Boolean));
+
+  useEffect(() => {
+    fetchClusters()
+      .then(setClusters)
+      .catch(() => setError('Failed to load clusters'));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedClusterId) { setNuclei([]); return; }
+    fetchNuclei(selectedClusterId)
+      .then(setNuclei)
+      .catch(() => setError('Failed to load nuclei'));
+  }, [selectedClusterId]);
+
+  async function handleConfirm() {
+    setError(null);
+    setLoading(true);
+    try {
+      await addNucleusToCollaborator(user.id, selectedNucleusId);
+      onAdded();
+    } catch (err: any) {
+      setError(err.message ?? 'Failed to add nucleus');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const availableNuclei = nuclei.filter(n => !assignedNucleusIds.has(n.id));
+
+  return (
+    <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <PlusIcon className="w-5 h-5 text-emerald-700" />
+          </div>
+          <h2 className="text-xl font-bold text-gray-900">Add Nucleus</h2>
+        </div>
+        <p className="text-sm text-gray-600 mb-4">
+          Assign <strong>{user.name}</strong> as Nucleus Coordinator for an additional nucleus.
+        </p>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Cluster</label>
+          <select
+            value={selectedClusterId}
+            onChange={e => { setSelectedClusterId(e.target.value); setSelectedNucleusId(''); }}
+            className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none"
+          >
+            <option value="">Select a cluster…</option>
+            {clusters.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-1.5">Nucleus</label>
+          <select
+            value={selectedNucleusId}
+            onChange={e => setSelectedNucleusId(e.target.value)}
+            disabled={!selectedClusterId}
+            className="w-full rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:ring-2 focus:ring-emerald-400 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <option value="">{selectedClusterId ? (availableNuclei.length === 0 && nuclei.length > 0 ? 'All nuclei already assigned' : 'Select a nucleus…') : 'Select a cluster first…'}</option>
+            {availableNuclei.map(n => (
+              <option key={n.id} value={n.id}>{n.name}</option>
+            ))}
+          </select>
+        </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+        <div className="flex gap-3 pt-2 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            disabled={loading}
+            className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!selectedNucleusId || loading}
+            className="flex-1 px-4 py-2.5 bg-emerald-600 text-white font-medium rounded-xl hover:bg-emerald-700 shadow-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {loading ? 'Adding…' : 'Add Nucleus'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Pending-requests strip shown to reviewers (Admins / Super Admins / CCs
 // for their cluster). This is intentionally minimal — full review tools
 // live in the upcoming Data Review / Hygiene interface.
@@ -983,6 +1117,7 @@ export function UserManagement() {
   const [showCreate, setShowCreate] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<ManagedUser | null>(null);
   const [pendingChangeRole, setPendingChangeRole] = useState<ManagedUser | null>(null);
+  const [pendingAddNucleus, setPendingAddNucleus] = useState<ManagedUser | null>(null);
   const [pendingReset, setPendingReset] = useState<ManagedUser | null>(null);
   const [pendingPrivacyReset, setPendingPrivacyReset] = useState<ManagedUser | null>(null);
   const [resetSuccessName, setResetSuccessName] = useState<string | null>(null);
@@ -1123,6 +1258,7 @@ export function UserManagement() {
                     callerCtx={callerCtx}
                     onDelete={u => setPendingDelete(u)}
                     onChangeRole={u => setPendingChangeRole(u)}
+                    onAddNucleus={u => setPendingAddNucleus(u)}
                     onResetPassword={u => setPendingReset(u)}
                     onResetPrivacyAck={u => setPendingPrivacyReset(u)}
                     onRequestDelete={u => setPendingRequest({ user: u, action: 'delete' })}
@@ -1156,6 +1292,15 @@ export function UserManagement() {
           callerCtx={callerCtx}
           onClose={() => setPendingChangeRole(null)}
           onChanged={() => { setPendingChangeRole(null); load(); }}
+        />
+      )}
+
+      {pendingAddNucleus && callerCtx && (
+        <AddNucleusModal
+          user={pendingAddNucleus}
+          callerCtx={callerCtx}
+          onClose={() => setPendingAddNucleus(null)}
+          onAdded={() => { setPendingAddNucleus(null); load(); }}
         />
       )}
 
