@@ -26,6 +26,7 @@ import {
 import { ConcentricCircles } from './ConcentricCircles';
 import { CompressedTimelineStrip } from './CompressedTimelineStrip';
 import { InNucleusNetworkView } from './InNucleusNetworkView';
+import { MilestoneThreeStrip } from './MilestoneThree';
 import { GlobalSearch } from './GlobalSearch';
 import { AccountMenu } from './AccountMenu';
 import { CurriculumProgressSummary } from './CurriculumProgressSummary';
@@ -855,6 +856,11 @@ export function NucleusDashboard() {
             <CompressedTimelineStrip
               nucleusId={id!}
               onOpen={() => navigate(`/nucleus/${id}/timeline`)}
+            />
+
+            <MilestoneThreeStrip
+              nucleusId={id!}
+              onOpen={() => navigate(`/nucleus/${id}/milestone-three`)}
             />
 
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">

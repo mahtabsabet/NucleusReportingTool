@@ -1549,3 +1549,92 @@ insert into courses (name, short_name, "order", stream, allows_whole_completion,
   ('Spirit of Faith',                  'Spirit of Faith',                  13, 'jysep', true, true),
   ('Power of the Holy Spirit',         'Power of the Holy Spirit',         14, 'jysep', true, true),
   ('Rays of Light',                    'Rays of Light',                    15, 'jysep', true, true);
+
+
+-- ============================================================
+-- Nucleus Milestone Three progress
+-- (see migrations/20260705_nucleus_milestone_three.sql)
+-- ============================================================
+
+create table if not exists nucleus_milestone_three_scores (
+  nucleus_id  uuid not null references nuclei(id) on delete cascade,
+  feature_key text not null,
+  score       smallint not null check (score between 0 and 10),
+  note        text,
+  updated_by  uuid references profiles(id) on delete set null,
+  updated_at  timestamptz not null default now(),
+  primary key (nucleus_id, feature_key)
+);
+
+create index if not exists nucleus_milestone_three_scores_nucleus_idx
+  on nucleus_milestone_three_scores (nucleus_id);
+
+create table if not exists nucleus_milestone_three (
+  nucleus_id   uuid primary key references nuclei(id) on delete cascade,
+  overall_note text,
+  updated_by   uuid references profiles(id) on delete set null,
+  updated_at   timestamptz not null default now()
+);
+
+alter table nucleus_milestone_three_scores enable row level security;
+alter table nucleus_milestone_three        enable row level security;
+
+create policy "Read milestone-three scores in accessible nuclei"
+  on nucleus_milestone_three_scores
+  for select using (is_admin() or user_has_nucleus_access(nucleus_id));
+
+create policy "Nucleus editors manage milestone-three scores"
+  on nucleus_milestone_three_scores
+  for all using (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and (
+          up.nucleus_id = nucleus_milestone_three_scores.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_three_scores.nucleus_id)
+          or up.activity_id in (select id from activities where nucleus_id = nucleus_milestone_three_scores.nucleus_id)
+        )
+    )
+  ) with check (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and (
+          up.nucleus_id = nucleus_milestone_three_scores.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_three_scores.nucleus_id)
+          or up.activity_id in (select id from activities where nucleus_id = nucleus_milestone_three_scores.nucleus_id)
+        )
+    )
+  );
+
+create policy "Read milestone-three note in accessible nuclei"
+  on nucleus_milestone_three
+  for select using (is_admin() or user_has_nucleus_access(nucleus_id));
+
+create policy "Nucleus editors manage milestone-three note"
+  on nucleus_milestone_three
+  for all using (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and (
+          up.nucleus_id = nucleus_milestone_three.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_three.nucleus_id)
+          or up.activity_id in (select id from activities where nucleus_id = nucleus_milestone_three.nucleus_id)
+        )
+    )
+  ) with check (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and (
+          up.nucleus_id = nucleus_milestone_three.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_three.nucleus_id)
+          or up.activity_id in (select id from activities where nucleus_id = nucleus_milestone_three.nucleus_id)
+        )
+    )
+  );
