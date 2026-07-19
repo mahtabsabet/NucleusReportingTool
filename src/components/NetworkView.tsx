@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -11,6 +11,7 @@ import {
   Position,
   BaseEdge,
   EdgeLabelRenderer,
+  type ReactFlowInstance,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useNavigate } from 'react-router-dom';
@@ -33,24 +34,45 @@ interface NetworkViewProps {
 }
 
 // Card geometry.
-const NUCLEUS_W = 176;
+const NUCLEUS_W = 180;
 const NUCLEUS_H = 78;
 
 // Progress-axis geometry. Nuclei are positioned left→right by their
 // Milestone Three composite (0→10). Those with no scores yet sit in a
 // dedicated "not yet assessed" column to the left of the axis origin.
-const LEFT_PAD = 40;
+// The axis is sized to the *container* at render time (see computeGeom)
+// so cards stay at a readable size and the view sits near zoom 1 —
+// rather than a fixed wide canvas that fitView had to shrink to fit.
 const TOP_PAD = 56;
-const UNASSESSED_W = 170;
-const ZONE_GAP = 120;
-const SCORED_AXIS_W = 880;
+const OUTER_PAD = 40;
+const UNASSESSED_W = 150;
+const ZONE_GAP = 72;
 const H_GAP = 26;                        // min horizontal gap between cards in a row
-const ROW_H = NUCLEUS_H + 46;
-const AXIS_X0 = LEFT_PAD + UNASSESSED_W + ZONE_GAP; // x-center at composite 0
-const UNASSESSED_CX = LEFT_PAD + UNASSESSED_W / 2;
+const ROW_H = NUCLEUS_H + 40;
 
-function axisCenterX(composite: number): number {
-  return AXIS_X0 + (composite / MILESTONE_THREE_MAX) * SCORED_AXIS_W;
+interface Geom {
+  axisX0: number;       // x-center at composite 0
+  scoredW: number;      // pixel span from composite 0 to 10
+  unassessedCx: number; // x-center of the "not yet assessed" column
+  leftZoneW: number;    // width reserved for that column (0 when none)
+  totalW: number;
+}
+
+// Lay the axis out to fill the available container width. Cards are inset
+// by half their width at each end so the extremes (0 and 10) don't clip.
+function computeGeom(containerW: number, hasUnassessed: boolean): Geom {
+  const usableW = Math.max(560, containerW - OUTER_PAD * 2);
+  const leftZoneW = hasUnassessed ? UNASSESSED_W : 0;
+  const gap = hasUnassessed ? ZONE_GAP : 0;
+  const axisX0 = OUTER_PAD + leftZoneW + gap + NUCLEUS_W / 2;
+  const axisRightCx = OUTER_PAD + usableW - NUCLEUS_W / 2;
+  const scoredW = Math.max(240, axisRightCx - axisX0);
+  const unassessedCx = OUTER_PAD + leftZoneW / 2;
+  return { axisX0, scoredW, unassessedCx, leftZoneW, totalW: OUTER_PAD + usableW };
+}
+
+function axisCenterX(geom: Geom, composite: number): number {
+  return geom.axisX0 + (composite / MILESTONE_THREE_MAX) * geom.scoredW;
 }
 
 function totalPeople(n: NucleusShape): number {
@@ -465,6 +487,23 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [selectedBand, setSelectedBand] = useState<SelectedBand | null>(null);
 
+  // Container size drives the axis width so the layout fills the screen
+  // and cards render at a readable scale rather than being shrunk by fitView.
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const rfRef = useRef<ReactFlowInstance | null>(null);
+  const [containerW, setContainerW] = useState(1000);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width;
+      if (w && Math.abs(w - containerW) > 1) setContainerW(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [containerW]);
+
   useEffect(() => {
     const ids = nuclei.map((n) => n.id);
     if (ids.length === 0) { setCrossPeople([]); setComposites(new Map()); return; }
@@ -481,23 +520,37 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     [composites],
   );
 
+  const hasUnassessed = useMemo(
+    () => nuclei.some((n) => compositeOf(n.id) === null),
+    [nuclei, compositeOf],
+  );
+
+  const geom = useMemo(
+    () => computeGeom(containerW, hasUnassessed),
+    [containerW, hasUnassessed],
+  );
+
   // Positions along the progress axis (assessed) or in the left column
   // (unassessed).
-  const { nucleusPos, rows, hasUnassessed } = useMemo(() => {
+  const { nucleusPos, rows } = useMemo(() => {
     const items = nuclei.map((n) => {
       const c = compositeOf(n.id);
       return {
         id: n.id,
         name: n.name,
-        centerX: c === null ? UNASSESSED_CX : axisCenterX(c),
+        centerX: c === null ? geom.unassessedCx : axisCenterX(geom, c),
       };
     });
-    const { pos, rows } = packPositions(items);
-    const hasUnassessed = nuclei.some((n) => compositeOf(n.id) === null);
-    return { nucleusPos: pos, rows, hasUnassessed };
-  }, [nuclei, compositeOf]);
+    return packPositions(items);
+  }, [nuclei, compositeOf, geom]);
 
   const contentHeight = TOP_PAD + Math.max(1, rows) * ROW_H;
+
+  // Re-frame when the layout or container changes so the axis stays fit
+  // to the viewport near zoom 1.
+  useEffect(() => {
+    rfRef.current?.fitView({ padding: 0.05, maxZoom: 1, duration: 200 });
+  }, [containerW, rows, nuclei.length, hasUnassessed]);
 
   // Pairwise connection bands (one band per unordered nucleus pair) with routed paths.
   const bands = useMemo(() => {
@@ -568,8 +621,8 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     nodes.push({
       id: 'axis',
       type: 'axis',
-      position: { x: AXIS_X0, y: contentHeight + 4 },
-      data: { width: SCORED_AXIS_W },
+      position: { x: geom.axisX0, y: contentHeight + 4 },
+      data: { width: geom.scoredW },
       draggable: false,
       selectable: false,
       zIndex: -1,
@@ -578,8 +631,8 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       nodes.push({
         id: 'zone-unassessed',
         type: 'zoneLabel',
-        position: { x: LEFT_PAD, y: TOP_PAD - 30 },
-        data: { width: UNASSESSED_W, label: 'Not yet assessed' },
+        position: { x: OUTER_PAD, y: TOP_PAD - 30 },
+        data: { width: geom.leftZoneW, label: 'Not yet assessed' },
         draggable: false,
         selectable: false,
         zIndex: -1,
@@ -648,7 +701,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     });
 
     return { nodes, edges };
-  }, [nuclei, bands, nucleusPos, compositeOf, highlightSet, hoveredNucleus, contentHeight, hasUnassessed]);
+  }, [nuclei, bands, nucleusPos, compositeOf, highlightSet, hoveredNucleus, contentHeight, hasUnassessed, geom]);
 
   const onNodeClick = useCallback(
     (_e: React.MouseEvent, node: Node) => {
@@ -667,7 +720,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const onEdgeMouseLeave = useCallback(() => setHoveredEdge(null), []);
 
   return (
-    <div className="w-full h-full bg-slate-50/50 relative network-view-root">
+    <div ref={wrapRef} className="w-full h-full bg-slate-50/50 relative network-view-root">
       <style>{`
         .network-view-root .react-flow__edges,
         .network-view-root .react-flow__edgelabel-renderer {
@@ -677,6 +730,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       <ReactFlow
         nodes={nodes}
         edges={edges}
+        onInit={(inst) => { rfRef.current = inst; }}
         onNodeClick={onNodeClick}
         onNodeMouseEnter={onNodeMouseEnter}
         onNodeMouseLeave={onNodeMouseLeave}
@@ -688,7 +742,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
         nodesConnectable={false}
         elementsSelectable={false}
         fitView
-        fitViewOptions={{ padding: 0.15 }}
+        fitViewOptions={{ padding: 0.05, maxZoom: 1 }}
         minZoom={0.2}
         maxZoom={1.75}
         proOptions={{ hideAttribution: true }}
