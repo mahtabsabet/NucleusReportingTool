@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -491,18 +491,24 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   // and cards render at a readable scale rather than being shrunk by fitView.
   const wrapRef = useRef<HTMLDivElement>(null);
   const rfRef = useRef<ReactFlowInstance | null>(null);
-  const [containerW, setContainerW] = useState(1000);
+  const [containerW, setContainerW] = useState(0);
+
+  const measure = useCallback(() => {
+    const w = wrapRef.current?.offsetWidth;
+    if (w) setContainerW((prev) => (Math.abs(w - prev) > 1 ? w : prev));
+  }, []);
+
+  // Measure before paint so the first frame already uses the real width
+  // (avoids a wrong-width flash and a needless re-fit).
+  useLayoutEffect(() => { measure(); }, [measure]);
 
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    const ro = new ResizeObserver((entries) => {
-      const w = entries[0]?.contentRect.width;
-      if (w && Math.abs(w - containerW) > 1) setContainerW(w);
-    });
+    const ro = new ResizeObserver(() => measure());
     ro.observe(el);
     return () => ro.disconnect();
-  }, [containerW]);
+  }, [measure]);
 
   useEffect(() => {
     const ids = nuclei.map((n) => n.id);
@@ -547,9 +553,19 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const contentHeight = TOP_PAD + Math.max(1, rows) * ROW_H;
 
   // Re-frame when the layout or container changes so the axis stays fit
-  // to the viewport near zoom 1.
+  // to the viewport near zoom 1. The <ReactFlow fitView> prop handles the
+  // initial frame correctly (after React Flow measures the nodes), so we
+  // skip the first run here — calling fitView before measurement frames a
+  // degenerate/blank viewport. Subsequent runs defer a frame so any
+  // just-changed nodes are measured first.
+  const didInitialFit = useRef(false);
   useEffect(() => {
-    rfRef.current?.fitView({ padding: 0.05, maxZoom: 1, duration: 200 });
+    if (!didInitialFit.current) { didInitialFit.current = true; return; }
+    if (nuclei.length === 0) return;
+    const raf = requestAnimationFrame(() =>
+      rfRef.current?.fitView({ padding: 0.05, maxZoom: 1, duration: 200 }),
+    );
+    return () => cancelAnimationFrame(raf);
   }, [containerW, rows, nuclei.length, hasUnassessed]);
 
   // Pairwise connection bands (one band per unordered nucleus pair) with routed paths.

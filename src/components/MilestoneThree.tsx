@@ -15,6 +15,7 @@ import {
   MILESTONE_THREE_MAX,
   computeComposite,
   milestoneLevel,
+  progressColor,
   type MilestoneThreeFeature,
 } from '../lib/milestoneThree';
 import {
@@ -32,13 +33,6 @@ interface FeatureState {
   value: number;
   scored: boolean;
   note: string;
-}
-
-// Which anchor descriptor (0 / 5 / 10) a value sits closest to.
-function nearestAnchor(value: number): 'none' | 'emerging' | 'established' {
-  if (value < 2.5) return 'none';
-  if (value < 7.5) return 'emerging';
-  return 'established';
 }
 
 // ── Composite meter shared by the page banner and the dashboard strip ──
@@ -417,13 +411,12 @@ function FeatureCard({
   onChange: (patch: Partial<FeatureState>) => void;
 }) {
   if (!state) return null;
-  const level = milestoneLevel(state.scored ? state.value : null);
-  const anchor = nearestAnchor(state.value);
+  const barColor = state.scored ? progressColor(state.value) : '#94a3b8';
 
-  const anchorRow: { key: 'none' | 'emerging' | 'established'; label: string; text: string }[] = [
-    { key: 'none', label: '0', text: feature.anchors.none },
-    { key: 'emerging', label: '5', text: feature.anchors.emerging },
-    { key: 'established', label: '10', text: feature.anchors.established },
+  const anchorRow: { label: string; text: string }[] = [
+    { label: '0', text: feature.anchors.none },
+    { label: '5', text: feature.anchors.emerging },
+    { label: '10', text: feature.anchors.established },
   ];
 
   return (
@@ -435,7 +428,7 @@ function FeatureCard({
         </div>
         <div className="flex-shrink-0 text-right">
           {state.scored ? (
-            <span className={`text-sm font-bold ${level.text}`}>
+            <span className="text-sm font-bold" style={{ color: barColor }}>
               {state.value}/10
             </span>
           ) : (
@@ -455,28 +448,33 @@ function FeatureCard({
           disabled={!canEdit}
           onChange={e => onChange({ value: Number(e.target.value), scored: true })}
           className={`w-full cursor-pointer disabled:cursor-not-allowed ${state.scored ? '' : 'opacity-50'}`}
-          style={{ accentColor: state.scored ? level.color : '#94a3b8' }}
+          style={{ accentColor: barColor }}
           aria-label={feature.label}
         />
+        {/* Signpost ticks aligned to the anchors below */}
+        <div className="relative h-2 mt-0.5 px-[2px]">
+          {[0, 5, 10].map(n => (
+            <div
+              key={n}
+              className="absolute top-0"
+              style={{ left: `${(n / MILESTONE_THREE_MAX) * 100}%`, transform: 'translateX(-50%)' }}
+            >
+              <div className="w-px h-2 bg-gray-300" />
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Anchor descriptors */}
-      <div className="grid grid-cols-3 gap-2 mt-2">
-        {anchorRow.map(a => {
-          const active = state.scored && anchor === a.key;
-          return (
-            <div
-              key={a.key}
-              className={`text-[11px] leading-snug rounded-lg px-2 py-1.5 border ${
-                active
-                  ? `${level.bg} ${level.border} ${level.text} font-medium`
-                  : 'bg-gray-50 border-gray-100 text-gray-400'
-              }`}
-            >
-              <span className="font-bold">{a.label}</span> — {a.text}
-            </div>
-          );
-        })}
+      {/* Anchor descriptors — static signposts (0 / 5 / 10), always legible */}
+      <div className="grid grid-cols-3 gap-2 mt-1">
+        {anchorRow.map(a => (
+          <div
+            key={a.label}
+            className="text-[11px] leading-snug rounded-lg px-2 py-1.5 border bg-gray-50 border-gray-100 text-gray-600"
+          >
+            <span className="font-bold text-gray-800">{a.label}</span> — {a.text}
+          </div>
+        ))}
       </div>
 
       {/* Controls + note */}

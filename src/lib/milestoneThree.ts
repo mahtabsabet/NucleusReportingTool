@@ -166,3 +166,32 @@ export function milestoneLevel(composite: number | null): MilestoneLevel {
   if (composite < 7.5) return LEVELS.emerging;
   return LEVELS.established;
 }
+
+// Continuous colour ramp for a 0–10 score, interpolating smoothly through
+// the same stops as the named levels (amber → emerald → blue → violet) so
+// dragging a slider produces a gradual colour shift rather than stepping
+// between the four discrete level colours. The axis gradient in the
+// cluster view uses the same stops.
+const RAMP_STOPS: Array<[number, [number, number, number]]> = [
+  [0, [245, 158, 11]],   // amber
+  [4, [16, 185, 129]],   // emerald
+  [7, [59, 130, 246]],   // blue
+  [10, [124, 58, 237]],  // violet
+];
+
+export function progressColor(value: number): string {
+  const v = Math.max(0, Math.min(MILESTONE_THREE_MAX, value));
+  let lo = RAMP_STOPS[0];
+  let hi = RAMP_STOPS[RAMP_STOPS.length - 1];
+  for (let i = 0; i < RAMP_STOPS.length - 1; i++) {
+    if (v >= RAMP_STOPS[i][0] && v <= RAMP_STOPS[i + 1][0]) {
+      lo = RAMP_STOPS[i];
+      hi = RAMP_STOPS[i + 1];
+      break;
+    }
+  }
+  const span = hi[0] - lo[0];
+  const t = span === 0 ? 0 : (v - lo[0]) / span;
+  const ch = (i: number) => Math.round(lo[1][i] + (hi[1][i] - lo[1][i]) * t);
+  return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
+}
