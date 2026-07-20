@@ -15,10 +15,10 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useNavigate } from 'react-router-dom';
-import { XIcon } from 'lucide-react';
+import { XIcon, InfoIcon } from 'lucide-react';
 import { fetchCrossNucleusPersons, type CrossNucleusPerson } from '../lib/db/reports';
 import { fetchMilestoneCompositesForNuclei, type NucleusComposite } from '../lib/db/milestoneThree';
-import { MILESTONE_THREE_MAX, milestoneLevel } from '../lib/milestoneThree';
+import { MILESTONE_THREE_MAX, milestoneLevel, progressColor } from '../lib/milestoneThree';
 
 // ---------- Types & layout constants ----------
 
@@ -33,22 +33,21 @@ interface NetworkViewProps {
   clusterId: string | null;
 }
 
-// Card geometry.
-const NUCLEUS_W = 180;
-const NUCLEUS_H = 78;
-
-// Progress-axis geometry. Nuclei are positioned left→right by their
-// Milestone Three composite (0→10). Those with no scores yet sit in a
-// dedicated "not yet assessed" column to the left of the axis origin.
-// The axis is sized to the *container* at render time (see computeGeom)
-// so cards stay at a readable size and the view sits near zoom 1 —
-// rather than a fixed wide canvas that fitView had to shrink to fit.
-const TOP_PAD = 56;
-const OUTER_PAD = 40;
-const UNASSESSED_W = 150;
-const ZONE_GAP = 72;
-const H_GAP = 26;                        // min horizontal gap between cards in a row
-const ROW_H = NUCLEUS_H + 40;
+// Small "token" geometry. The view is glanceable — like the map, it shows
+// how many nuclei there are and roughly how their progress is distributed,
+// with details revealed on hover — so each nucleus is a compact pill
+// (colour dot + abbreviated name), not a full card.
+const TOKEN_W = 120;
+const TOKEN_H = 26;
+const TOP_PAD = 44;
+const OUTER_PAD = 36;
+const H_GAP = 10;                 // min horizontal gap between tokens
+const V_GAP = 8;                  // min vertical gap between tokens
+const CELL_W = TOKEN_W + H_GAP;
+const CELL_H = TOKEN_H + V_GAP;
+const UNASSESSED_COLS = 2;
+const UNASSESSED_W = CELL_W * UNASSESSED_COLS;
+const ZONE_GAP = 56;
 
 interface Geom {
   axisX0: number;       // x-center at composite 0
@@ -58,15 +57,15 @@ interface Geom {
   totalW: number;
 }
 
-// Lay the axis out to fill the available container width. Cards are inset
-// by half their width at each end so the extremes (0 and 10) don't clip.
+// Lay the axis out to fill the available container width so tokens sit at
+// a readable size (fitView stays near zoom 1) instead of being shrunk.
 function computeGeom(containerW: number, hasUnassessed: boolean): Geom {
-  const usableW = Math.max(560, containerW - OUTER_PAD * 2);
+  const usableW = Math.max(480, containerW - OUTER_PAD * 2);
   const leftZoneW = hasUnassessed ? UNASSESSED_W : 0;
   const gap = hasUnassessed ? ZONE_GAP : 0;
-  const axisX0 = OUTER_PAD + leftZoneW + gap + NUCLEUS_W / 2;
-  const axisRightCx = OUTER_PAD + usableW - NUCLEUS_W / 2;
-  const scoredW = Math.max(240, axisRightCx - axisX0);
+  const axisX0 = OUTER_PAD + leftZoneW + gap + TOKEN_W / 2;
+  const axisRightCx = OUTER_PAD + usableW - TOKEN_W / 2;
+  const scoredW = Math.max(200, axisRightCx - axisX0);
   const unassessedCx = OUTER_PAD + leftZoneW / 2;
   return { axisX0, scoredW, unassessedCx, leftZoneW, totalW: OUTER_PAD + usableW };
 }
@@ -107,47 +106,49 @@ const STRENGTH_STYLE: Record<Strength, { stroke: string; width: number; pillBg: 
 
 // ---------- Custom nodes ----------
 
-const NucleusCardNode = ({ data, selected }: NodeProps) => {
+// A nucleus as a compact pill: a progress-coloured dot + abbreviated name.
+// Hovering it lifts the token and shows a small tooltip with the full name,
+// composite score, level, and people count.
+const NucleusTokenNode = ({ data }: NodeProps) => {
   const composite = data.composite as number | null;
-  const level = milestoneLevel(composite);
+  const color = composite === null ? '#94a3b8' : progressColor(composite);
   const dimmed = data.dimmed as boolean;
+  const focused = data.focused as boolean;
   const highlighted = data.highlighted as boolean;
   const peopleCount = data.peopleCount as number;
-  const ringClass = highlighted || selected ? 'shadow-xl ring-2 ring-offset-1' : '';
-  const scaleStyle = highlighted
-    ? { transform: 'scale(1.12)', zIndex: 50 }
-    : { transform: 'scale(1)', zIndex: 'auto' as const };
-  const pct = composite === null ? 0 : (composite / MILESTONE_THREE_MAX) * 100;
+  const levelLabel = data.levelLabel as string;
   return (
     <div
-      className={`relative bg-white border-2 rounded-xl shadow-sm transition-all duration-150 ${ringClass} ${dimmed ? 'opacity-30' : 'opacity-100'}`}
-      style={{
-        width: NUCLEUS_W,
-        height: NUCLEUS_H,
-        transformOrigin: 'center center',
-        borderColor: level.color,
-        ...(highlighted || selected ? { boxShadow: `0 0 0 3px ${level.color}33` } : {}),
-        ...scaleStyle,
-      }}
+      className={`relative transition-transform duration-150 ${dimmed ? 'opacity-30' : 'opacity-100'}`}
+      style={{ transform: focused ? 'scale(1.15)' : 'scale(1)', transformOrigin: 'center', zIndex: focused ? 60 : 'auto' }}
     >
       <Handle type="target" position={Position.Top} className="opacity-0" />
       <Handle type="source" position={Position.Bottom} className="opacity-0" />
       <Handle type="target" position={Position.Left} className="opacity-0" />
       <Handle type="source" position={Position.Right} className="opacity-0" />
-      <div className="flex flex-col justify-center px-3 py-2 h-full gap-1">
-        <div className="font-semibold text-gray-900 text-sm leading-tight truncate">{data.label as string}</div>
-        <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden">
-          <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: level.color }} />
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] font-bold" style={{ color: level.color }}>
-            {composite === null ? level.label : `${composite.toFixed(1)} · ${level.label}`}
-          </span>
-          <span className="text-[10px] font-medium text-gray-400">
-            {peopleCount} {peopleCount === 1 ? 'person' : 'people'}
-          </span>
-        </div>
+      <div
+        className={`flex items-center gap-1.5 rounded-full bg-white border pl-1.5 pr-2.5 ${highlighted || focused ? 'shadow-md' : 'shadow-sm'}`}
+        style={{
+          width: TOKEN_W,
+          height: TOKEN_H,
+          borderColor: color,
+          ...(focused ? { boxShadow: `0 0 0 3px ${color}33` } : {}),
+        }}
+      >
+        <span className="flex-shrink-0 rounded-full" style={{ width: 10, height: 10, background: color }} />
+        <span className="text-[11px] font-semibold text-gray-800 truncate">{data.label as string}</span>
       </div>
+      {focused && (
+        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-max max-w-[220px] bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 z-[70] pointer-events-none">
+          <div className="text-sm font-bold text-gray-900 leading-tight">{data.fullName as string}</div>
+          <div className="text-xs font-semibold mt-0.5" style={{ color }}>
+            {composite === null ? levelLabel : `${composite.toFixed(1)} / 10 · ${levelLabel}`}
+          </div>
+          <div className="text-[11px] text-gray-500 mt-0.5">
+            {peopleCount} {peopleCount === 1 ? 'person' : 'people'}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -193,7 +194,7 @@ const ZoneLabelNode = ({ data }: NodeProps) => (
   </div>
 );
 
-const nodeTypes = { nucleusCard: NucleusCardNode, axis: AxisNode, zoneLabel: ZoneLabelNode };
+const nodeTypes = { nucleus: NucleusTokenNode, axis: AxisNode, zoneLabel: ZoneLabelNode };
 
 // ---------- Avatar helpers ----------
 
@@ -226,7 +227,7 @@ function Avatar({
   );
 }
 
-// ---------- Routing helpers (curve edges around obstacle cards) ----------
+// ---------- Routing helpers (curve edges around obstacle tokens) ----------
 
 interface Rect { x: number; y: number; w: number; h: number }
 
@@ -269,8 +270,6 @@ function quadraticIntersectsRect(sx: number, sy: number, cx: number, cy: number,
   return false;
 }
 
-// Move a point at the rect's center toward (toX, toY) until it hits the rect's edge,
-// so that lines start/end on the card boundary rather than its center.
 function rectEdgePoint(r: Rect, toX: number, toY: number): { x: number; y: number } {
   const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
   const dx = toX - cx, dy = toY - cy;
@@ -285,11 +284,9 @@ interface BandRoute {
   path: string;
   labelX: number;
   labelY: number;
-  crossedIds: string[]; // ids of obstacle cards the rendered curve still passes over
+  crossedIds: string[];
 }
 
-// Compute a curved path from source-card to target-card, bending around obstacle cards
-// when the straight line would pass through them. Falls back to a straight line if clear.
 function routeBandPath(
   source: Rect,
   target: Rect,
@@ -314,11 +311,10 @@ function routeBandPath(
 
   const dx = tx - sx, dy = ty - sy;
   const len = Math.hypot(dx, dy) || 1;
-  const nx = -dy / len; // perpendicular unit
+  const nx = -dy / len;
   const ny = dx / len;
   const mx = (sx + tx) / 2, my = (sy + ty) / 2;
 
-  // Try both perpendicular directions and pick the one that clears more obstacles.
   const candidates: { offset: number; cx: number; cy: number; crossed: { id: string; rect: Rect }[] }[] = [];
   for (const sign of [1, -1]) {
     let mag = 0;
@@ -370,7 +366,9 @@ function ConnectionBandEdge(props: EdgeProps) {
   const { id, data } = props;
   const d = data as unknown as BandData;
   const style = STRENGTH_STYLE[d.strength];
-  const baseOpacity = d.obstructed ? 0.12 : d.dimmed ? 0.15 : d.highlighted ? 1 : 0.85;
+  // Connections are quiet until you focus a token — at a glance the view is
+  // about the distribution of nuclei, not a web of lines.
+  const baseOpacity = d.obstructed ? 0.1 : d.highlighted ? 1 : d.dimmed ? 0.08 : 0.35;
 
   const focused = d.highlighted;
   const strokeWidth = focused ? style.width + 3 : style.width;
@@ -401,46 +399,45 @@ function ConnectionBandEdge(props: EdgeProps) {
           pointerEvents: 'none',
         }}
       />
-      <EdgeLabelRenderer>
-        <div
-          style={{
-            position: 'absolute',
-            transform: `translate(-50%, -50%) translate(${d.labelX}px, ${d.labelY}px) scale(${labelScale})`,
-            transformOrigin: 'center center',
-            opacity: d.obstructed ? 0.15 : d.dimmed ? 0.35 : 1,
-            transition: 'opacity 150ms ease, transform 150ms ease',
-          }}
-          className="pointer-events-auto select-none nodrag nopan"
-        >
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); d.onSelect(); }}
-            className={`flex items-center gap-0.5 ${style.pillBg} ${style.pillBorder} border rounded-full pl-1 pr-1.5 py-0.5 shadow-sm hover:shadow-md transition-shadow`}
+      {/* People pills only render for the focused connection, to keep the
+          at-a-glance view uncluttered. */}
+      {focused && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${d.labelX}px, ${d.labelY}px) scale(${labelScale})`,
+              transformOrigin: 'center center',
+            }}
+            className="pointer-events-auto select-none nodrag nopan"
           >
-            <div className="flex -space-x-1.5">
-              {visible.map((p) => (
-                <Avatar key={p.id} name={p.name} photoUrl={p.photoUrl} size={avatarSize} />
-              ))}
-            </div>
-            {overflow > 0 && (
-              <span
-                className="ml-1 inline-flex items-center justify-center px-1.5 rounded-full bg-white border border-gray-200 font-bold text-gray-700"
-                style={{ minWidth: avatarSize, height: avatarSize, fontSize: Math.max(10, avatarSize * 0.4) }}
-              >
-                +{overflow}
-              </span>
-            )}
-          </button>
-          {showNames && (
-            <div
-              className="text-gray-700 text-center mt-1 font-medium whitespace-nowrap"
-              style={{ fontSize: focused ? 12 : 10 }}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); d.onSelect(); }}
+              className={`flex items-center gap-0.5 ${style.pillBg} ${style.pillBorder} border rounded-full pl-1 pr-1.5 py-0.5 shadow-sm hover:shadow-md transition-shadow`}
             >
-              {visible.map((p) => shortName(p.name)).join(' • ')}
-            </div>
-          )}
-        </div>
-      </EdgeLabelRenderer>
+              <div className="flex -space-x-1.5">
+                {visible.map((p) => (
+                  <Avatar key={p.id} name={p.name} photoUrl={p.photoUrl} size={avatarSize} />
+                ))}
+              </div>
+              {overflow > 0 && (
+                <span
+                  className="ml-1 inline-flex items-center justify-center px-1.5 rounded-full bg-white border border-gray-200 font-bold text-gray-700"
+                  style={{ minWidth: avatarSize, height: avatarSize, fontSize: Math.max(10, avatarSize * 0.4) }}
+                >
+                  +{overflow}
+                </span>
+              )}
+            </button>
+            {showNames && (
+              <div className="text-gray-700 text-center mt-1 font-medium whitespace-nowrap" style={{ fontSize: 12 }}>
+                {visible.map((p) => shortName(p.name)).join(' • ')}
+              </div>
+            )}
+          </div>
+        </EdgeLabelRenderer>
+      )}
     </>
   );
 }
@@ -449,24 +446,57 @@ const edgeTypes = { connectionBand: ConnectionBandEdge };
 
 // ---------- Layout ----------
 
-// Greedy row packing: place cards left→right by their axis center-x,
-// dropping each into the first row where it won't horizontally overlap
-// the previous card. Cards with similar progress therefore stack
-// vertically instead of colliding — a progress scatter, not lanes.
-function packPositions(
-  items: { id: string; centerX: number; name: string }[],
-): { pos: Map<string, { x: number; y: number }>; rows: number } {
-  const sorted = [...items].sort((a, b) => a.centerX - b.centerX || a.name.localeCompare(b.name));
-  const rowRight: number[] = [];
-  const pos = new Map<string, { x: number; y: number }>();
-  for (const it of sorted) {
-    const left = it.centerX - NUCLEUS_W / 2 - H_GAP;
-    let row = rowRight.findIndex((r) => r <= left);
-    if (row === -1) { row = rowRight.length; rowRight.push(0); }
-    rowRight[row] = it.centerX + NUCLEUS_W / 2;
-    pos.set(it.id, { x: it.centerX - NUCLEUS_W / 2, y: TOP_PAD + row * ROW_H });
+interface TokenItem { id: string; name: string; composite: number | null }
+
+// Position tokens: assessed nuclei form a beeswarm along the progress axis
+// (offset vertically only where they'd collide, so piles at similar scores
+// fan out into a distribution), and unassessed nuclei fill a compact grid
+// in the left column. Returns top-left positions plus the content height.
+function layoutTokens(items: TokenItem[], geom: Geom): { pos: Map<string, { x: number; y: number }>; height: number } {
+  const assessed = items
+    .filter((i) => i.composite !== null)
+    .map((i) => ({ id: i.id, cx: axisCenterX(geom, i.composite as number) }))
+    .sort((a, b) => a.cx - b.cx);
+  const unassessed = items.filter((i) => i.composite === null);
+
+  const centers = new Map<string, { x: number; y: number }>();
+  const placed: { x: number; y: number }[] = [];
+  const collides = (x: number, y: number) =>
+    placed.some((p) => Math.abs(p.x - x) < CELL_W && Math.abs(p.y - y) < CELL_H);
+
+  // Beeswarm the assessed tokens around a centre line (y = 0).
+  for (const a of assessed) {
+    let y = 0;
+    let k = 1;
+    while (collides(a.cx, y)) {
+      const step = Math.ceil(k / 2) * CELL_H;
+      y = k % 2 === 1 ? step : -step;
+      k++;
+    }
+    placed.push({ x: a.cx, y });
+    centers.set(a.id, { x: a.cx, y });
   }
-  return { pos, rows: rowRight.length };
+
+  // Grid the unassessed tokens in the left column.
+  const cols = Math.max(1, Math.floor(geom.leftZoneW / CELL_W));
+  unassessed.forEach((u, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    centers.set(u.id, {
+      x: OUTER_PAD + col * CELL_W + TOKEN_W / 2,
+      y: row * CELL_H,
+    });
+  });
+
+  let minY = Infinity, maxY = -Infinity;
+  centers.forEach((c) => { if (c.y < minY) minY = c.y; if (c.y > maxY) maxY = c.y; });
+  if (!isFinite(minY)) { minY = 0; maxY = 0; }
+  const shift = TOP_PAD - minY;
+
+  const pos = new Map<string, { x: number; y: number }>();
+  centers.forEach((c, id) => pos.set(id, { x: c.x - TOKEN_W / 2, y: c.y + shift - TOKEN_H / 2 }));
+
+  return { pos, height: TOP_PAD + (maxY - minY) + TOKEN_H };
 }
 
 // ---------- Main view ----------
@@ -487,8 +517,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [selectedBand, setSelectedBand] = useState<SelectedBand | null>(null);
 
-  // Container size drives the axis width so the layout fills the screen
-  // and cards render at a readable scale rather than being shrunk by fitView.
+  // Container width drives the axis span so tokens render at readable size.
   const wrapRef = useRef<HTMLDivElement>(null);
   const rfRef = useRef<ReactFlowInstance | null>(null);
   const [containerW, setContainerW] = useState(0);
@@ -498,8 +527,6 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     if (w) setContainerW((prev) => (Math.abs(w - prev) > 1 ? w : prev));
   }, []);
 
-  // Measure before paint so the first frame already uses the real width
-  // (avoids a wrong-width flash and a needless re-fit).
   useLayoutEffect(() => { measure(); }, [measure]);
 
   useEffect(() => {
@@ -531,43 +558,26 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     [nuclei, compositeOf],
   );
 
-  const geom = useMemo(
-    () => computeGeom(containerW, hasUnassessed),
-    [containerW, hasUnassessed],
-  );
+  const geom = useMemo(() => computeGeom(containerW, hasUnassessed), [containerW, hasUnassessed]);
 
-  // Positions along the progress axis (assessed) or in the left column
-  // (unassessed).
-  const { nucleusPos, rows } = useMemo(() => {
-    const items = nuclei.map((n) => {
-      const c = compositeOf(n.id);
-      return {
-        id: n.id,
-        name: n.name,
-        centerX: c === null ? geom.unassessedCx : axisCenterX(geom, c),
-      };
-    });
-    const { pos, rows } = packPositions(items);
-    return { nucleusPos: pos, rows };
+  const { nucleusPos, contentHeight } = useMemo(() => {
+    const items = nuclei.map((n) => ({ id: n.id, name: n.name, composite: compositeOf(n.id) }));
+    const { pos, height } = layoutTokens(items, geom);
+    return { nucleusPos: pos, contentHeight: height };
   }, [nuclei, compositeOf, geom]);
 
-  const contentHeight = TOP_PAD + Math.max(1, rows) * ROW_H;
-
-  // Re-frame when the layout or container changes so the axis stays fit
-  // to the viewport near zoom 1. The <ReactFlow fitView> prop handles the
-  // initial frame correctly (after React Flow measures the nodes), so we
-  // skip the first run here — calling fitView before measurement frames a
-  // degenerate/blank viewport. Subsequent runs defer a frame so any
-  // just-changed nodes are measured first.
+  // Re-frame when the layout/container changes. The <ReactFlow fitView> prop
+  // handles the initial frame after measurement; skip the first run here so
+  // we never fitView before nodes are measured (which frames blank).
   const didInitialFit = useRef(false);
   useEffect(() => {
     if (!didInitialFit.current) { didInitialFit.current = true; return; }
     if (nuclei.length === 0) return;
     const raf = requestAnimationFrame(() =>
-      rfRef.current?.fitView({ padding: 0.05, maxZoom: 1, duration: 200 }),
+      rfRef.current?.fitView({ padding: 0.06, maxZoom: 1, duration: 200 }),
     );
     return () => cancelAnimationFrame(raf);
-  }, [containerW, rows, nuclei.length, hasUnassessed]);
+  }, [containerW, contentHeight, nuclei.length, hasUnassessed]);
 
   // Pairwise connection bands (one band per unordered nucleus pair) with routed paths.
   const bands = useMemo(() => {
@@ -592,7 +602,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
 
     const allRects = new Map<string, Rect>();
     nucleusPos.forEach((p, id) => {
-      allRects.set(id, { x: p.x, y: p.y, w: NUCLEUS_W, h: NUCLEUS_H });
+      allRects.set(id, { x: p.x, y: p.y, w: TOKEN_W, h: TOKEN_H });
     });
     return [...map.values()].map((b) => {
       const source = allRects.get(b.aId)!;
@@ -634,11 +644,10 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const { nodes, edges } = useMemo(() => {
     const nodes: Node[] = [];
 
-    // Progress-axis ruler along the bottom.
     nodes.push({
       id: 'axis',
       type: 'axis',
-      position: { x: geom.axisX0, y: contentHeight + 4 },
+      position: { x: geom.axisX0, y: contentHeight + 8 },
       data: { width: geom.scoredW },
       draggable: false,
       selectable: false,
@@ -648,7 +657,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       nodes.push({
         id: 'zone-unassessed',
         type: 'zoneLabel',
-        position: { x: OUTER_PAD, y: TOP_PAD - 30 },
+        position: { x: OUTER_PAD, y: TOP_PAD - 26 },
         data: { width: geom.leftZoneW, label: 'Not yet assessed' },
         draggable: false,
         selectable: false,
@@ -659,22 +668,26 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     nuclei.forEach((n) => {
       const p = nucleusPos.get(n.id);
       if (!p) return;
+      const composite = compositeOf(n.id);
       const dimmed = !!highlightSet && !highlightSet.nucleusIds.has(n.id);
       const highlighted = !!highlightSet && highlightSet.nucleusIds.has(n.id);
       nodes.push({
         id: n.id,
-        type: 'nucleusCard',
+        type: 'nucleus',
         position: p,
         data: {
-          label: n.name,
+          label: shortName(n.name),
+          fullName: n.name,
           peopleCount: totalPeople(n),
-          composite: compositeOf(n.id),
+          composite,
+          levelLabel: milestoneLevel(composite).label,
           dimmed,
           highlighted,
+          focused: hoveredNucleus === n.id,
           isNucleus: true,
         },
         draggable: false,
-        zIndex: 1,
+        zIndex: hoveredNucleus === n.id ? 60 : 1,
       });
     });
 
@@ -759,7 +772,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
         nodesConnectable={false}
         elementsSelectable={false}
         fitView
-        fitViewOptions={{ padding: 0.05, maxZoom: 1 }}
+        fitViewOptions={{ padding: 0.06, maxZoom: 1 }}
         minZoom={0.2}
         maxZoom={1.75}
         proOptions={{ hideAttribution: true }}
@@ -787,28 +800,39 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
 
 // ---------- Legend ----------
 
+// A compact chip that expands the full legend on hover — kept small so it
+// doesn't cover the tokens the way a persistent panel did.
 function Legend() {
   return (
-    <div className="absolute top-3 right-3 bg-white/95 border border-gray-200 rounded-xl shadow-sm p-3 text-xs w-[240px] pointer-events-none">
-      <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-1">MILESTONE THREE PROGRESS</div>
-      <p className="text-gray-500 leading-snug mb-2">
-        Cards sit left→right by how far the nucleus has developed the features of a Milestone Three cluster.
-      </p>
-      <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-2 mt-2">SHARED PEOPLE</div>
-      <ul className="space-y-1.5 text-gray-600">
-        <li className="flex items-center gap-2">
-          <span className="inline-block h-[3px] w-7 rounded-full" style={{ background: STRENGTH_STYLE.strong.stroke }} />
-          <span><b className="text-gray-800">Strong</b> (5+ shared)</span>
-        </li>
-        <li className="flex items-center gap-2">
-          <span className="inline-block h-[2px] w-7 rounded-full" style={{ background: STRENGTH_STYLE.moderate.stroke }} />
-          <span><b className="text-gray-800">Moderate</b> (2–4 shared)</span>
-        </li>
-        <li className="flex items-center gap-2">
-          <span className="inline-block h-[1.5px] w-7 rounded-full" style={{ background: STRENGTH_STYLE.light.stroke }} />
-          <span><b className="text-gray-800">Light</b> (1 shared)</span>
-        </li>
-      </ul>
+    <div className="absolute top-3 right-3 z-20 group">
+      <button
+        type="button"
+        className="flex items-center gap-1.5 bg-white/95 border border-gray-200 rounded-full shadow-sm px-3 py-1.5 text-[11px] font-bold text-gray-600 tracking-wider pointer-events-auto"
+      >
+        <InfoIcon className="w-3.5 h-3.5 text-gray-400" />
+        HOW TO READ
+      </button>
+      <div className="hidden group-hover:block absolute top-full right-0 mt-1.5 w-[250px] bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-xs">
+        <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-1">MILESTONE THREE PROGRESS</div>
+        <p className="text-gray-500 leading-snug mb-2">
+          Each nucleus sits left→right by how far it has developed the features of a Milestone Three cluster. Hover a token for detail, or to reveal shared people.
+        </p>
+        <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-2 mt-2">SHARED PEOPLE</div>
+        <ul className="space-y-1.5 text-gray-600">
+          <li className="flex items-center gap-2">
+            <span className="inline-block h-[3px] w-7 rounded-full" style={{ background: STRENGTH_STYLE.strong.stroke }} />
+            <span><b className="text-gray-800">Strong</b> (5+ shared)</span>
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="inline-block h-[2px] w-7 rounded-full" style={{ background: STRENGTH_STYLE.moderate.stroke }} />
+            <span><b className="text-gray-800">Moderate</b> (2–4 shared)</span>
+          </li>
+          <li className="flex items-center gap-2">
+            <span className="inline-block h-[1.5px] w-7 rounded-full" style={{ background: STRENGTH_STYLE.light.stroke }} />
+            <span><b className="text-gray-800">Light</b> (1 shared)</span>
+          </li>
+        </ul>
+      </div>
     </div>
   );
 }
