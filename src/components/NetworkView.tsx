@@ -107,48 +107,37 @@ const STRENGTH_STYLE: Record<Strength, { stroke: string; width: number; pillBg: 
 // ---------- Custom nodes ----------
 
 // A nucleus as a compact pill: a progress-coloured dot + abbreviated name.
-// Hovering it lifts the token and shows a small tooltip with the full name,
-// composite score, level, and people count.
+// The hover pop (scale + lift + tooltip) is driven entirely by CSS :hover
+// so it never triggers a React re-render — setting hover state and changing
+// z-index on hover reorders the DOM under the cursor and makes it flicker.
+// Only `dimmed` (when another token is focused) comes from React state.
 const NucleusTokenNode = ({ data }: NodeProps) => {
   const composite = data.composite as number | null;
   const color = composite === null ? '#94a3b8' : progressColor(composite);
-  const dimmed = data.dimmed as boolean;
-  const focused = data.focused as boolean;
-  const highlighted = data.highlighted as boolean;
   const peopleCount = data.peopleCount as number;
   const levelLabel = data.levelLabel as string;
   return (
-    <div
-      className={`relative transition-transform duration-150 ${dimmed ? 'opacity-30' : 'opacity-100'}`}
-      style={{ transform: focused ? 'scale(1.15)' : 'scale(1)', transformOrigin: 'center', zIndex: focused ? 60 : 'auto' }}
-    >
+    <div className="relative group">
       <Handle type="target" position={Position.Top} className="opacity-0" />
       <Handle type="source" position={Position.Bottom} className="opacity-0" />
       <Handle type="target" position={Position.Left} className="opacity-0" />
       <Handle type="source" position={Position.Right} className="opacity-0" />
       <div
-        className={`flex items-center gap-1.5 rounded-full bg-white border pl-1.5 pr-2.5 ${highlighted || focused ? 'shadow-md' : 'shadow-sm'}`}
-        style={{
-          width: TOKEN_W,
-          height: TOKEN_H,
-          borderColor: color,
-          ...(focused ? { boxShadow: `0 0 0 3px ${color}33` } : {}),
-        }}
+        className="flex items-center gap-1.5 rounded-full bg-white border pl-1.5 pr-2.5 shadow-sm transition-transform duration-150 group-hover:scale-110 group-hover:shadow-md"
+        style={{ width: TOKEN_W, height: TOKEN_H, borderColor: color }}
       >
         <span className="flex-shrink-0 rounded-full" style={{ width: 10, height: 10, background: color }} />
         <span className="text-[11px] font-semibold text-gray-800 truncate">{data.label as string}</span>
       </div>
-      {focused && (
-        <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-max max-w-[220px] bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 z-[70] pointer-events-none">
-          <div className="text-sm font-bold text-gray-900 leading-tight">{data.fullName as string}</div>
-          <div className="text-xs font-semibold mt-0.5" style={{ color }}>
-            {composite === null ? levelLabel : `${composite.toFixed(1)} / 10 · ${levelLabel}`}
-          </div>
-          <div className="text-[11px] text-gray-500 mt-0.5">
-            {peopleCount} {peopleCount === 1 ? 'person' : 'people'}
-          </div>
+      <div className="hidden group-hover:block absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 w-max max-w-[220px] bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 pointer-events-none">
+        <div className="text-sm font-bold text-gray-900 leading-tight">{data.fullName as string}</div>
+        <div className="text-xs font-semibold mt-0.5" style={{ color }}>
+          {composite === null ? levelLabel : `${composite.toFixed(1)} / 10 · ${levelLabel}`}
         </div>
-      )}
+        <div className="text-[11px] text-gray-500 mt-0.5">
+          {peopleCount} {peopleCount === 1 ? 'person' : 'people'}
+        </div>
+      </div>
     </div>
   );
 };
@@ -641,7 +630,11 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     return { nucleusIds, bandKeys };
   }, [hoveredNucleus, hoveredEdge, bands]);
 
-  const { nodes, edges } = useMemo(() => {
+  // Nodes are intentionally INDEPENDENT of hover state: rebuilding the
+  // nodes array on hover made React Flow re-render the tokens, which reset
+  // the hovered element and produced a flicker loop. Hover now only rebuilds
+  // the edges (below), so the token DOM — and its CSS :hover — stays put.
+  const nodes = useMemo(() => {
     const nodes: Node[] = [];
 
     nodes.push({
@@ -669,29 +662,28 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       const p = nucleusPos.get(n.id);
       if (!p) return;
       const composite = compositeOf(n.id);
-      const dimmed = !!highlightSet && !highlightSet.nucleusIds.has(n.id);
-      const highlighted = !!highlightSet && highlightSet.nucleusIds.has(n.id);
       nodes.push({
         id: n.id,
         type: 'nucleus',
         position: p,
+        className: 'rf-nucleus',
         data: {
           label: shortName(n.name),
           fullName: n.name,
           peopleCount: totalPeople(n),
           composite,
           levelLabel: milestoneLevel(composite).label,
-          dimmed,
-          highlighted,
-          focused: hoveredNucleus === n.id,
           isNucleus: true,
         },
         draggable: false,
-        zIndex: hoveredNucleus === n.id ? 60 : 1,
+        zIndex: 1,
       });
     });
 
-    const edges: Edge[] = bands.map((b) => {
+    return nodes;
+  }, [nuclei, nucleusPos, compositeOf, contentHeight, hasUnassessed, geom]);
+
+  const edges: Edge[] = useMemo(() => bands.map((b) => {
       const key = `${b.aId}__${b.bId}`;
       const strength = strengthFor(b.people.length);
       const dimmed = !!highlightSet && !highlightSet.bandKeys.has(key);
@@ -728,10 +720,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
         data: data as unknown as Record<string, unknown>,
         zIndex: 5,
       };
-    });
-
-    return { nodes, edges };
-  }, [nuclei, bands, nucleusPos, compositeOf, highlightSet, hoveredNucleus, contentHeight, hasUnassessed, geom]);
+    }), [bands, nuclei, highlightSet, hoveredNucleus]);
 
   const onNodeClick = useCallback(
     (_e: React.MouseEvent, node: Node) => {
@@ -755,6 +744,12 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
         .network-view-root .react-flow__edges,
         .network-view-root .react-flow__edgelabel-renderer {
           z-index: 10;
+        }
+        /* Lift a hovered token above its neighbours purely via CSS so the
+           tooltip is never clipped — no z-index change in React (which would
+           reorder the DOM and make hover flicker). */
+        .network-view-root .react-flow__node.rf-nucleus:hover {
+          z-index: 50 !important;
         }
       `}</style>
       <ReactFlow
