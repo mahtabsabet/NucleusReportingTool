@@ -547,7 +547,8 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
         centerX: c === null ? geom.unassessedCx : axisCenterX(geom, c),
       };
     });
-    return packPositions(items);
+    const { pos, rows } = packPositions(items);
+    return { nucleusPos: pos, rows };
   }, [nuclei, compositeOf, geom]);
 
   const contentHeight = TOP_PAD + Math.max(1, rows) * ROW_H;
