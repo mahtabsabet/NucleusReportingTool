@@ -119,6 +119,32 @@ export interface Database {
         Insert: Omit<Database['public']['Tables']['nucleus_enrollments']['Row'], 'id'> & { id?: string };
         Update: Partial<Database['public']['Tables']['nucleus_enrollments']['Insert']>;
       };
+      nucleus_milestone_three_scores: {
+        Row: {
+          nucleus_id: string;
+          feature_key: string;
+          score: number;
+          note: string | null;
+          updated_by: string | null;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['nucleus_milestone_three_scores']['Row'], 'updated_at'> & {
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['nucleus_milestone_three_scores']['Insert']>;
+      };
+      nucleus_milestone_three: {
+        Row: {
+          nucleus_id: string;
+          overall_note: string | null;
+          updated_by: string | null;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['nucleus_milestone_three']['Row'], 'updated_at'> & {
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['nucleus_milestone_three']['Insert']>;
+      };
       courses: {
         Row: {
           id: string;

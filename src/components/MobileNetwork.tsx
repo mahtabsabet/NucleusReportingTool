@@ -41,9 +41,9 @@ export function MobileNetwork() {
           <ArrowLeftIcon className="w-5 h-5" />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-gray-900 tracking-tight truncate">Network</h1>
+          <h1 className="text-lg font-bold text-gray-900 tracking-tight truncate">Progress &amp; connections</h1>
           <p className="text-xs font-medium text-gray-500 truncate">
-            {clusterName ? `${clusterName} cluster` : 'Cross-nucleus links'}
+            {clusterName ? `${clusterName} cluster` : 'Milestone Three progress & shared people'}
           </p>
         </div>
       </header>

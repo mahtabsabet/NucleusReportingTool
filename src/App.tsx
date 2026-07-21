@@ -27,6 +27,7 @@ import { MobileTimeline } from './components/MobileTimeline';
 import { MobileNetwork } from './components/MobileNetwork';
 import { TimelineWorkspace } from './components/TimelineWorkspace';
 import { NucleusTimeline } from './components/NucleusTimeline';
+import { MilestoneThreePage } from './components/MilestoneThree';
 import { LsaHouseholdMapView } from './components/lsa/LsaHouseholdMapView';
 import { useIsMobile } from './lib/useIsMobile';
 import { getCallerContext } from './lib/db/users';
@@ -242,6 +243,7 @@ function AppRoutes() {
           <Route path="/learning-hub" element={<ClusterLearningHub />} />
           <Route path="/nucleus/:id" element={<NucleusDashboard />} />
           <Route path="/nucleus/:id/timeline" element={<NucleusTimeline />} />
+          <Route path="/nucleus/:id/milestone-three" element={<MilestoneThreePage />} />
           <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
           <Route path="/individual/:id" element={<IndividualProfile />} />
           <Route path="*" element={<Navigate to={lsaTarget} replace />} />
@@ -267,6 +269,7 @@ function AppRoutes() {
           <Route path="/users" element={<UserManagement />} />
           <Route path="/nucleus/:id" element={<NucleusDashboard />} />
           <Route path="/nucleus/:id/timeline" element={<NucleusTimeline />} />
+          <Route path="/nucleus/:id/milestone-three" element={<MilestoneThreePage />} />
           <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
           <Route path="/nucleus/:nucleusId/growth-report" element={<GrowthReport />} />
           <Route path="/individual/:id" element={<IndividualProfile />} />
@@ -296,6 +299,7 @@ function AppRoutes() {
       <Route path="/guide" element={<UserGuide />} />
       <Route path="/nucleus/:id" element={<NucleusDashboard />} />
       <Route path="/nucleus/:id/timeline" element={<NucleusTimeline />} />
+      <Route path="/nucleus/:id/milestone-three" element={<MilestoneThreePage />} />
       <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
       <Route path="/individual/:id" element={<IndividualProfile />} />
       <Route path="/report/:type" element={<ActivityTypeReport />} />

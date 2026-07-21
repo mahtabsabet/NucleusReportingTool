@@ -323,10 +323,11 @@ export function ClusterMapView() {
             <>
               <button
                 onClick={() => setShowNetwork(!showNetwork)}
+                title="Nuclei progress & connections"
                 className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${showNetwork ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
                 <NetworkIcon
                   className={`w-4 h-4 sm:w-5 sm:h-5 ${showNetwork ? 'text-indigo-600' : 'text-gray-500'}`} />
-                <span className="hidden sm:inline">Network</span>
+                <span className="hidden sm:inline">Progress</span>
               </button>
 
               <button
