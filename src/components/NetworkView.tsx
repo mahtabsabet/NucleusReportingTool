@@ -142,8 +142,8 @@ const NucleusTokenNode = ({ data }: NodeProps) => {
   );
 };
 
-// The progress ruler along the bottom: a gradient track from "not
-// present" through to "established", with anchor ticks.
+// The progress ruler along the bottom: a 0→10 gradient track with numeric
+// ticks and a caption naming the scale.
 const AxisNode = ({ data }: NodeProps) => {
   const width = data.width as number;
   const ticks = [0, 2.5, 5, 7.5, 10];
@@ -155,7 +155,7 @@ const AxisNode = ({ data }: NodeProps) => {
           background: 'linear-gradient(90deg, #f59e0b 0%, #10b981 40%, #3b82f6 70%, #7c3aed 100%)',
         }}
       />
-      <div className="relative mt-1" style={{ height: 34 }}>
+      <div className="relative mt-1" style={{ height: 18 }}>
         {ticks.map((t) => (
           <div
             key={t}
@@ -166,9 +166,12 @@ const AxisNode = ({ data }: NodeProps) => {
             <span className="text-[10px] font-bold text-gray-500 mt-0.5">{t}</span>
           </div>
         ))}
-        <div className="absolute left-0 top-5 text-[10px] font-semibold text-amber-600">Not present</div>
-        <div className="absolute top-5 text-[10px] font-semibold text-blue-600" style={{ left: '50%', transform: 'translateX(-50%)' }}>Emerging</div>
-        <div className="absolute right-0 top-5 text-[10px] font-semibold text-violet-600">Established</div>
+      </div>
+      <div className="text-center text-[11px] font-semibold text-gray-600 mt-1 leading-snug">
+        Development of Milestone Three Cluster Features
+        <span className="block font-normal text-gray-400">
+          (cf. 31 December 2025 letter, paragraph 3)
+        </span>
       </div>
     </div>
   );
