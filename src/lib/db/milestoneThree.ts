@@ -1,7 +1,7 @@
 import { supabase } from '../supabase';
 import { actionPermission } from '../permissions';
 import { getCallerContext } from './users';
-import { computeComposite } from '../milestoneThree';
+import { computeComposite, type MilestoneStage } from '../milestoneThree';
 
 // A single feature score as stored for a nucleus.
 export interface MilestoneScore {
@@ -105,10 +105,11 @@ export async function saveNucleusMilestoneOverallNote(
   if (error) throw error;
 }
 
-// Whether the signed-in user may edit this nucleus's milestone-three
-// data — the same gate as editing the concentric circles, so the two
-// stay in lock-step.
-export async function canEditNucleusMilestoneThree(
+// Whether the signed-in user may edit this nucleus's milestone data —
+// the stage picker and, when applicable, the Milestone Three sliders.
+// Same gate as editing the concentric circles (cluster coordinators
+// and nucleus collaborators only), so the two stay in lock-step.
+export async function canEditNucleusMilestone(
   nucleusId: string,
 ): Promise<boolean> {
   const ctx = await getCallerContext();
@@ -123,6 +124,63 @@ export async function canEditNucleusMilestoneThree(
     clusterId: (nucleus as any).cluster_id,
     nucleusId,
   }) === 'direct';
+}
+
+// The nucleus's current milestone stage. Defaults to 0 when no row
+// exists yet (a nucleus that has never had its stage set).
+export async function fetchNucleusMilestoneStage(
+  nucleusId: string,
+): Promise<MilestoneStage> {
+  const { data, error } = await supabase
+    .from('nucleus_milestone_stage')
+    .select('stage')
+    .eq('nucleus_id', nucleusId)
+    .maybeSingle();
+  if (error) throw error;
+  return ((data as any)?.stage ?? 0) as MilestoneStage;
+}
+
+// Set the nucleus's milestone stage. Never touches the Milestone
+// Three scores/note tables — those are preserved regardless of the
+// current stage, so moving back to stage 3 restores them as-is.
+export async function saveNucleusMilestoneStage(
+  nucleusId: string,
+  stage: MilestoneStage,
+): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { error } = await supabase
+    .from('nucleus_milestone_stage')
+    .upsert(
+      {
+        nucleus_id: nucleusId,
+        stage,
+        updated_by: user?.id ?? null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'nucleus_id' },
+    );
+  if (error) throw error;
+}
+
+// Milestone stage per nucleus, for the cluster-level progress view.
+// Nuclei with no stored stage default to 0.
+export async function fetchMilestoneStagesForNuclei(
+  nucleusIds: string[],
+): Promise<Map<string, MilestoneStage>> {
+  const result = new Map<string, MilestoneStage>();
+  nucleusIds.forEach(id => result.set(id, 0));
+  if (nucleusIds.length === 0) return result;
+
+  const { data, error } = await supabase
+    .from('nucleus_milestone_stage')
+    .select('nucleus_id, stage')
+    .in('nucleus_id', nucleusIds);
+  if (error) throw error;
+
+  for (const row of (data ?? []) as any[]) {
+    result.set(row.nucleus_id, row.stage as MilestoneStage);
+  }
+  return result;
 }
 
 export interface NucleusComposite {

@@ -195,3 +195,52 @@ export function progressColor(value: number): string {
   const ch = (i: number) => Math.round(lo[1][i] + (hi[1][i] - lo[1][i]) * t);
   return `rgb(${ch(0)}, ${ch(1)}, ${ch(2)})`;
 }
+
+// ============================================================
+// Milestone stage
+//
+// Every nucleus is assigned an overall milestone stage, 0 through 3.
+// Stages 0-2 are plain descriptors — a nucleus either is or isn't at
+// that stage, with nothing further to record. Stage 3 is "Milestone
+// Three" above: it keeps the per-feature sliders and composite score.
+// ============================================================
+
+export type MilestoneStage = 0 | 1 | 2 | 3;
+
+export const MILESTONE_STAGES: MilestoneStage[] = [0, 1, 2, 3];
+
+export interface MilestoneStageDescriptor {
+  stage: MilestoneStage;
+  label: string;
+  /** Short description shown on the stage picker and dashboard strip. */
+  blurb: string;
+}
+
+// TODO: replace the placeholder blurbs for stages 0-2 with the actual
+// descriptor text once it's provided.
+export const MILESTONE_STAGE_DESCRIPTORS: Record<MilestoneStage, MilestoneStageDescriptor> = {
+  0: {
+    stage: 0,
+    label: 'Milestone 0',
+    blurb: 'Placeholder description for Milestone 0 — replace with the real descriptor text.',
+  },
+  1: {
+    stage: 1,
+    label: 'Milestone 1',
+    blurb: 'Placeholder description for Milestone 1 — replace with the real descriptor text.',
+  },
+  2: {
+    stage: 2,
+    label: 'Milestone 2',
+    blurb: 'Placeholder description for Milestone 2 — replace with the real descriptor text.',
+  },
+  3: {
+    stage: 3,
+    label: 'Milestone 3',
+    blurb: 'A nucleus consolidating the pattern of activity described by the eight capacities below, each scored on a 0-10 scale.',
+  },
+};
+
+export function milestoneStageDescriptor(stage: MilestoneStage): MilestoneStageDescriptor {
+  return MILESTONE_STAGE_DESCRIPTORS[stage];
+}

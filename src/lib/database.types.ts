@@ -145,6 +145,18 @@ export interface Database {
         };
         Update: Partial<Database['public']['Tables']['nucleus_milestone_three']['Insert']>;
       };
+      nucleus_milestone_stage: {
+        Row: {
+          nucleus_id: string;
+          stage: number;
+          updated_by: string | null;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['nucleus_milestone_stage']['Row'], 'updated_at'> & {
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['nucleus_milestone_stage']['Insert']>;
+      };
       courses: {
         Row: {
           id: string;

@@ -17,8 +17,8 @@ import '@xyflow/react/dist/style.css';
 import { useNavigate } from 'react-router-dom';
 import { XIcon, InfoIcon } from 'lucide-react';
 import { fetchCrossNucleusPersons, type CrossNucleusPerson } from '../lib/db/reports';
-import { fetchMilestoneCompositesForNuclei, type NucleusComposite } from '../lib/db/milestoneThree';
-import { MILESTONE_THREE_MAX, milestoneLevel, progressColor } from '../lib/milestoneThree';
+import { fetchMilestoneCompositesForNuclei, fetchMilestoneStagesForNuclei, type NucleusComposite } from '../lib/db/milestoneThree';
+import { MILESTONE_THREE_MAX, milestoneLevel, milestoneStageDescriptor, progressColor, type MilestoneStage } from '../lib/milestoneThree';
 
 // ---------- Types & layout constants ----------
 
@@ -48,26 +48,45 @@ const CELL_H = TOKEN_H + V_GAP;
 const UNASSESSED_COLS = 2;
 const UNASSESSED_W = CELL_W * UNASSESSED_COLS;
 const ZONE_GAP = 56;
+// Milestones 0/1/2 have no further differentiation, so each gets a
+// compact fixed-width grid column — the same shape as the "not yet
+// scored" column inside the Milestone 3 zone.
+const STAGE_ZONE_COLS = 2;
+const STAGE_ZONE_W = CELL_W * STAGE_ZONE_COLS;
+
+const STAGE_ZONE_LABEL = (stage: MilestoneStage) => milestoneStageDescriptor(stage).label;
 
 interface Geom {
-  axisX0: number;       // x-center at composite 0
-  scoredW: number;      // pixel span from composite 0 to 10
-  unassessedCx: number; // x-center of the "not yet assessed" column
-  leftZoneW: number;    // width reserved for that column (0 when none)
+  stageZoneX: [number, number, number]; // left x for the Milestone 0/1/2 zones
+  stage3X: number;        // left x of the Milestone 3 zone
+  axisX0: number;         // x-center at composite 0, inside the Milestone 3 zone
+  scoredW: number;        // pixel span from composite 0 to 10
+  unscoredCx: number;     // x-center of the "not yet scored" column inside Milestone 3
+  hasUnscored3: boolean;
   totalW: number;
 }
 
-// Lay the axis out to fill the available container width so tokens sit at
-// a readable size (fitView stays near zoom 1) instead of being shrunk.
-function computeGeom(containerW: number, hasUnassessed: boolean): Geom {
-  const usableW = Math.max(480, containerW - OUTER_PAD * 2);
-  const leftZoneW = hasUnassessed ? UNASSESSED_W : 0;
-  const gap = hasUnassessed ? ZONE_GAP : 0;
-  const axisX0 = OUTER_PAD + leftZoneW + gap + TOKEN_W / 2;
-  const axisRightCx = OUTER_PAD + usableW - TOKEN_W / 2;
+// Lay the four milestone zones out left→right to fill the available
+// container width so tokens sit at a readable size (fitView stays near
+// zoom 1) instead of being shrunk. Milestones 0/1/2 are fixed-width grid
+// columns; Milestone 3 gets the remaining width for its composite axis.
+function computeGeom(containerW: number, hasUnscored3: boolean): Geom {
+  const usableW = Math.max(760, containerW - OUTER_PAD * 2);
+  const stageStep = STAGE_ZONE_W + ZONE_GAP;
+  const stageZoneX: [number, number, number] = [
+    OUTER_PAD,
+    OUTER_PAD + stageStep,
+    OUTER_PAD + stageStep * 2,
+  ];
+  const stage3X = OUTER_PAD + stageStep * 3;
+  const unscoredW = hasUnscored3 ? UNASSESSED_W : 0;
+  const unscoredGap = hasUnscored3 ? ZONE_GAP : 0;
+  const axisX0 = stage3X + unscoredW + unscoredGap + TOKEN_W / 2;
+  const rightEdge = OUTER_PAD + usableW;
+  const axisRightCx = rightEdge - TOKEN_W / 2;
   const scoredW = Math.max(200, axisRightCx - axisX0);
-  const unassessedCx = OUTER_PAD + leftZoneW / 2;
-  return { axisX0, scoredW, unassessedCx, leftZoneW, totalW: OUTER_PAD + usableW };
+  const unscoredCx = stage3X + unscoredW / 2;
+  return { stageZoneX, stage3X, axisX0, scoredW, unscoredCx, hasUnscored3, totalW: rightEdge };
 }
 
 function axisCenterX(geom: Geom, composite: number): number {
@@ -111,9 +130,17 @@ const STRENGTH_STYLE: Record<Strength, { stroke: string; width: number; pillBg: 
 // so it never triggers a React re-render — setting hover state and changing
 // z-index on hover reorders the DOM under the cursor and makes it flicker.
 // Only `dimmed` (when another token is focused) comes from React state.
+// Milestones 0/1/2 have no composite score, so they get a flat colour
+// keyed to the stage itself; Milestone 3 keeps the continuous ramp
+// (see progressColor) driven by the composite of its feature scores.
+const STAGE_COLOR: Record<0 | 1 | 2, string> = { 0: '#94a3b8', 1: '#f59e0b', 2: '#3b82f6' };
+
 const NucleusTokenNode = ({ data }: NodeProps) => {
+  const stage = data.stage as MilestoneStage;
   const composite = data.composite as number | null;
-  const color = composite === null ? '#94a3b8' : progressColor(composite);
+  const color = stage === 3
+    ? (composite === null ? '#94a3b8' : progressColor(composite))
+    : STAGE_COLOR[stage as 0 | 1 | 2];
   const peopleCount = data.peopleCount as number;
   const levelLabel = data.levelLabel as string;
   return (
@@ -438,26 +465,29 @@ const edgeTypes = { connectionBand: ConnectionBandEdge };
 
 // ---------- Layout ----------
 
-interface TokenItem { id: string; name: string; composite: number | null }
+interface TokenItem { id: string; name: string; stage: MilestoneStage; composite: number | null }
 
-// Position tokens: assessed nuclei form a beeswarm along the progress axis
-// (offset vertically only where they'd collide, so piles at similar scores
-// fan out into a distribution), and unassessed nuclei fill a compact grid
-// in the left column. Returns top-left positions plus the content height.
+// Position tokens across the four milestone-stage zones. Within
+// Milestone 3, scored nuclei form a beeswarm along the composite axis
+// (offset vertically only where they'd collide, so piles at similar
+// scores fan out into a distribution) and unscored ones fill a compact
+// grid; Milestones 0/1/2 are each a simple grid, since there's nothing
+// further to differentiate. Returns top-left positions plus content height.
 function layoutTokens(items: TokenItem[], geom: Geom): { pos: Map<string, { x: number; y: number }>; height: number } {
-  const assessed = items
+  const stage3 = items.filter((i) => i.stage === 3);
+  const scored3 = stage3
     .filter((i) => i.composite !== null)
     .map((i) => ({ id: i.id, cx: axisCenterX(geom, i.composite as number) }))
     .sort((a, b) => a.cx - b.cx);
-  const unassessed = items.filter((i) => i.composite === null);
+  const unscored3 = stage3.filter((i) => i.composite === null);
 
   const centers = new Map<string, { x: number; y: number }>();
   const placed: { x: number; y: number }[] = [];
   const collides = (x: number, y: number) =>
     placed.some((p) => Math.abs(p.x - x) < CELL_W && Math.abs(p.y - y) < CELL_H);
 
-  // Beeswarm the assessed tokens around a centre line (y = 0).
-  for (const a of assessed) {
+  // Beeswarm the scored Milestone-3 tokens around a centre line (y = 0).
+  for (const a of scored3) {
     let y = 0;
     let k = 1;
     while (collides(a.cx, y)) {
@@ -469,14 +499,28 @@ function layoutTokens(items: TokenItem[], geom: Geom): { pos: Map<string, { x: n
     centers.set(a.id, { x: a.cx, y });
   }
 
-  // Grid the unassessed tokens in the left column.
-  const cols = Math.max(1, Math.floor(geom.leftZoneW / CELL_W));
-  unassessed.forEach((u, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
+  // Grid the unscored Milestone-3 tokens in their sub-column.
+  const unscoredCols = Math.max(1, Math.floor(UNASSESSED_W / CELL_W));
+  unscored3.forEach((u, i) => {
+    const col = i % unscoredCols;
+    const row = Math.floor(i / unscoredCols);
     centers.set(u.id, {
-      x: OUTER_PAD + col * CELL_W + TOKEN_W / 2,
+      x: geom.stage3X + col * CELL_W + TOKEN_W / 2,
       y: row * CELL_H,
+    });
+  });
+
+  // Grid the Milestone 0/1/2 tokens, one zone each.
+  ([0, 1, 2] as const).forEach((stage, zoneIdx) => {
+    const bucket = items.filter((i) => i.stage === stage);
+    const cols = Math.max(1, Math.floor(STAGE_ZONE_W / CELL_W));
+    bucket.forEach((u, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      centers.set(u.id, {
+        x: geom.stageZoneX[zoneIdx] + col * CELL_W + TOKEN_W / 2,
+        y: row * CELL_H,
+      });
     });
   });
 
@@ -505,6 +549,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const navigate = useNavigate();
   const [crossPeople, setCrossPeople] = useState<CrossNucleusPerson[]>([]);
   const [composites, setComposites] = useState<Map<string, NucleusComposite>>(new Map());
+  const [stages, setStages] = useState<Map<string, MilestoneStage>>(new Map());
   const [hoveredNucleus, setHoveredNucleus] = useState<string | null>(null);
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [selectedBand, setSelectedBand] = useState<SelectedBand | null>(null);
@@ -531,13 +576,16 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
 
   useEffect(() => {
     const ids = nuclei.map((n) => n.id);
-    if (ids.length === 0) { setCrossPeople([]); setComposites(new Map()); return; }
+    if (ids.length === 0) { setCrossPeople([]); setComposites(new Map()); setStages(new Map()); return; }
     fetchCrossNucleusPersons(ids)
       .then(setCrossPeople)
       .catch((err) => console.error('Failed to load cross-nucleus persons:', err));
     fetchMilestoneCompositesForNuclei(ids)
       .then(setComposites)
       .catch((err) => console.error('Failed to load milestone-three composites:', err));
+    fetchMilestoneStagesForNuclei(ids)
+      .then(setStages)
+      .catch((err) => console.error('Failed to load milestone stages:', err));
   }, [nuclei]);
 
   const compositeOf = useCallback(
@@ -545,18 +593,23 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     [composites],
   );
 
-  const hasUnassessed = useMemo(
-    () => nuclei.some((n) => compositeOf(n.id) === null),
-    [nuclei, compositeOf],
+  const stageOf = useCallback(
+    (id: string): MilestoneStage => stages.get(id) ?? 0,
+    [stages],
   );
 
-  const geom = useMemo(() => computeGeom(containerW, hasUnassessed), [containerW, hasUnassessed]);
+  const hasUnscored3 = useMemo(
+    () => nuclei.some((n) => stageOf(n.id) === 3 && compositeOf(n.id) === null),
+    [nuclei, stageOf, compositeOf],
+  );
+
+  const geom = useMemo(() => computeGeom(containerW, hasUnscored3), [containerW, hasUnscored3]);
 
   const { nucleusPos, contentHeight } = useMemo(() => {
-    const items = nuclei.map((n) => ({ id: n.id, name: n.name, composite: compositeOf(n.id) }));
+    const items = nuclei.map((n) => ({ id: n.id, name: n.name, stage: stageOf(n.id), composite: compositeOf(n.id) }));
     const { pos, height } = layoutTokens(items, geom);
     return { nucleusPos: pos, contentHeight: height };
-  }, [nuclei, compositeOf, geom]);
+  }, [nuclei, stageOf, compositeOf, geom]);
 
   // Re-frame when the layout/container changes. The <ReactFlow fitView> prop
   // handles the initial frame after measurement; skip the first run here so
@@ -569,7 +622,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       rfRef.current?.fitView({ padding: 0.06, maxZoom: 1, duration: 200 }),
     );
     return () => cancelAnimationFrame(raf);
-  }, [containerW, contentHeight, nuclei.length, hasUnassessed]);
+  }, [containerW, contentHeight, nuclei.length, hasUnscored3]);
 
   // Pairwise connection bands (one band per unordered nucleus pair) with routed paths.
   const bands = useMemo(() => {
@@ -640,6 +693,21 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const nodes = useMemo(() => {
     const nodes: Node[] = [];
 
+    // Zone headers for Milestones 0/1/2 — plain buckets, no further
+    // differentiation. Milestone 3's header is implied by the axis
+    // caption below its composite ruler.
+    ([0, 1, 2] as const).forEach((stage, zoneIdx) => {
+      nodes.push({
+        id: `zone-milestone-${stage}`,
+        type: 'zoneLabel',
+        position: { x: geom.stageZoneX[zoneIdx], y: TOP_PAD - 26 },
+        data: { width: STAGE_ZONE_W, label: STAGE_ZONE_LABEL(stage) },
+        draggable: false,
+        selectable: false,
+        zIndex: -1,
+      });
+    });
+
     nodes.push({
       id: 'axis',
       type: 'axis',
@@ -649,12 +717,12 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       selectable: false,
       zIndex: -1,
     });
-    if (hasUnassessed) {
+    if (geom.hasUnscored3) {
       nodes.push({
-        id: 'zone-unassessed',
+        id: 'zone-unscored-3',
         type: 'zoneLabel',
-        position: { x: OUTER_PAD, y: TOP_PAD - 26 },
-        data: { width: geom.leftZoneW, label: 'Not yet assessed' },
+        position: { x: geom.stage3X, y: TOP_PAD - 26 },
+        data: { width: UNASSESSED_W, label: 'Not yet scored' },
         draggable: false,
         selectable: false,
         zIndex: -1,
@@ -664,7 +732,9 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     nuclei.forEach((n) => {
       const p = nucleusPos.get(n.id);
       if (!p) return;
-      const composite = compositeOf(n.id);
+      const stage = stageOf(n.id);
+      const composite = stage === 3 ? compositeOf(n.id) : null;
+      const levelLabel = stage === 3 ? milestoneLevel(composite).label : milestoneStageDescriptor(stage).label;
       nodes.push({
         id: n.id,
         type: 'nucleus',
@@ -674,8 +744,9 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
           label: shortName(n.name),
           fullName: n.name,
           peopleCount: totalPeople(n),
+          stage,
           composite,
-          levelLabel: milestoneLevel(composite).label,
+          levelLabel,
           isNucleus: true,
         },
         draggable: false,
@@ -684,7 +755,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     });
 
     return nodes;
-  }, [nuclei, nucleusPos, compositeOf, contentHeight, hasUnassessed, geom]);
+  }, [nuclei, nucleusPos, stageOf, compositeOf, contentHeight, geom]);
 
   const edges: Edge[] = useMemo(() => bands.map((b) => {
       const key = `${b.aId}__${b.bId}`;
@@ -811,9 +882,9 @@ function Legend() {
         HOW TO READ
       </button>
       <div className="hidden group-hover:block absolute top-full right-0 mt-1.5 w-[250px] bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-xs">
-        <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-1">MILESTONE THREE PROGRESS</div>
+        <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-1">MILESTONE PROGRESS</div>
         <p className="text-gray-500 leading-snug mb-2">
-          Each nucleus sits left→right by how far it has developed the features of a Milestone Three cluster. Hover a token for detail, or to reveal shared people.
+          Nuclei are grouped by milestone stage (0–3). Within Milestone 3, a nucleus also sits left→right by how far it has developed the milestone's features. Hover a token for detail, or to reveal shared people.
         </p>
         <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-2 mt-2">SHARED PEOPLE</div>
         <ul className="space-y-1.5 text-gray-600">
