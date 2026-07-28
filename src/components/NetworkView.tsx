@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { XIcon, InfoIcon } from 'lucide-react';
 import { fetchCrossNucleusPersons, type CrossNucleusPerson } from '../lib/db/reports';
 import { fetchMilestoneCompositesForNuclei, fetchMilestoneStagesForNuclei, type NucleusComposite } from '../lib/db/milestoneThree';
-import { MILESTONE_THREE_MAX, milestoneLevel, milestoneStageDescriptor, progressColor, type MilestoneStage } from '../lib/milestoneThree';
+import { MILESTONE_STAGES, MILESTONE_THREE_MAX, milestoneLevel, milestoneStageDescriptor, progressColor, type MilestoneStage } from '../lib/milestoneThree';
 
 // ---------- Types & layout constants ----------
 
@@ -48,45 +48,32 @@ const CELL_H = TOKEN_H + V_GAP;
 const UNASSESSED_COLS = 2;
 const UNASSESSED_W = CELL_W * UNASSESSED_COLS;
 const ZONE_GAP = 56;
-// Milestones 0/1/2 have no further differentiation, so each gets a
-// compact fixed-width grid column — the same shape as the "not yet
-// scored" column inside the Milestone 3 zone.
-const STAGE_ZONE_COLS = 2;
-const STAGE_ZONE_W = CELL_W * STAGE_ZONE_COLS;
+// Vertical space between one milestone band and the next, and between
+// a band's header label and its first row of tokens.
+const BAND_GAP = 40;
+const HEADER_GAP = 26;
 
-const STAGE_ZONE_LABEL = (stage: MilestoneStage) => milestoneStageDescriptor(stage).label;
-
+// Milestones stack top→bottom (0 at top, 3 at bottom) so each band gets
+// the full container width — Milestones 0-2 use it for a wrapping grid
+// (no further differentiation), and Milestone 3 uses it for the 0-10
+// composite axis, exactly as before.
 interface Geom {
-  stageZoneX: [number, number, number]; // left x for the Milestone 0/1/2 zones
-  stage3X: number;        // left x of the Milestone 3 zone
-  axisX0: number;         // x-center at composite 0, inside the Milestone 3 zone
+  bandX0: number;         // left x shared by every band's content
+  bandContentW: number;   // width of that content area
+  axisX0: number;         // x-center at composite 0, inside the Milestone 3 band
   scoredW: number;        // pixel span from composite 0 to 10
-  unscoredCx: number;     // x-center of the "not yet scored" column inside Milestone 3
+  unscoredW: number;      // width of the "not yet scored" sub-column inside Milestone 3
   hasUnscored3: boolean;
-  totalW: number;
 }
 
-// Lay the four milestone zones out left→right to fill the available
-// container width so tokens sit at a readable size (fitView stays near
-// zoom 1) instead of being shrunk. Milestones 0/1/2 are fixed-width grid
-// columns; Milestone 3 gets the remaining width for its composite axis.
 function computeGeom(containerW: number, hasUnscored3: boolean): Geom {
-  const usableW = Math.max(760, containerW - OUTER_PAD * 2);
-  const stageStep = STAGE_ZONE_W + ZONE_GAP;
-  const stageZoneX: [number, number, number] = [
-    OUTER_PAD,
-    OUTER_PAD + stageStep,
-    OUTER_PAD + stageStep * 2,
-  ];
-  const stage3X = OUTER_PAD + stageStep * 3;
+  const usableW = Math.max(480, containerW - OUTER_PAD * 2);
   const unscoredW = hasUnscored3 ? UNASSESSED_W : 0;
   const unscoredGap = hasUnscored3 ? ZONE_GAP : 0;
-  const axisX0 = stage3X + unscoredW + unscoredGap + TOKEN_W / 2;
-  const rightEdge = OUTER_PAD + usableW;
-  const axisRightCx = rightEdge - TOKEN_W / 2;
+  const axisX0 = OUTER_PAD + unscoredW + unscoredGap + TOKEN_W / 2;
+  const axisRightCx = OUTER_PAD + usableW - TOKEN_W / 2;
   const scoredW = Math.max(200, axisRightCx - axisX0);
-  const unscoredCx = stage3X + unscoredW / 2;
-  return { stageZoneX, stage3X, axisX0, scoredW, unscoredCx, hasUnscored3, totalW: rightEdge };
+  return { bandX0: OUTER_PAD, bandContentW: usableW, axisX0, scoredW, unscoredW, hasUnscored3 };
 }
 
 function axisCenterX(geom: Geom, composite: number): number {
@@ -467,13 +454,47 @@ const edgeTypes = { connectionBand: ConnectionBandEdge };
 
 interface TokenItem { id: string; name: string; stage: MilestoneStage; composite: number | null }
 
-// Position tokens across the four milestone-stage zones. Within
-// Milestone 3, scored nuclei form a beeswarm along the composite axis
-// (offset vertically only where they'd collide, so piles at similar
-// scores fan out into a distribution) and unscored ones fill a compact
-// grid; Milestones 0/1/2 are each a simple grid, since there's nothing
-// further to differentiate. Returns top-left positions plus content height.
-function layoutTokens(items: TokenItem[], geom: Geom): { pos: Map<string, { x: number; y: number }>; height: number } {
+interface BandLayout {
+  pos: Map<string, { x: number; y: number }>;
+  height: number;
+  // Top y of each band's token content (for header placement), stage 0-3.
+  bandTops: [number, number, number, number];
+}
+
+// Position tokens in four vertically-stacked bands, one per milestone
+// stage (0 at top, 3 at bottom), each spanning the full content width.
+// Milestones 0-2 wrap their tokens into a grid across that width, since
+// there's nothing further to differentiate. Milestone 3 keeps its
+// horizontal composite beeswarm — scored nuclei offset vertically only
+// where they'd collide, so piles at similar scores fan out — plus a
+// grid sub-column for nuclei not yet scored. Returns top-left positions,
+// overall content height, and each band's top y (for header labels).
+function layoutTokens(items: TokenItem[], geom: Geom): BandLayout {
+  const centers = new Map<string, { x: number; y: number }>();
+  const bandTops: number[] = [];
+  let cursorY = TOP_PAD;
+
+  const gridCols = Math.max(1, Math.floor(geom.bandContentW / CELL_W));
+  for (const stage of [0, 1, 2] as const) {
+    bandTops.push(cursorY);
+    const bucket = items.filter((i) => i.stage === stage);
+    const rows = Math.max(1, Math.ceil(bucket.length / gridCols) || 1);
+    bucket.forEach((u, i) => {
+      const col = i % gridCols;
+      const row = Math.floor(i / gridCols);
+      centers.set(u.id, {
+        x: geom.bandX0 + col * CELL_W + TOKEN_W / 2,
+        y: cursorY + row * CELL_H + TOKEN_H / 2,
+      });
+    });
+    cursorY += rows * CELL_H + BAND_GAP;
+  }
+
+  // Milestone 3: lay out locally around a y = 0 centre line (so the
+  // beeswarm can go both up and down), then shift the whole band down
+  // so its topmost token lands at the current cursor — same trick the
+  // single-zone layout used to use for the whole canvas.
+  bandTops.push(cursorY);
   const stage3 = items.filter((i) => i.stage === 3);
   const scored3 = stage3
     .filter((i) => i.composite !== null)
@@ -481,12 +502,10 @@ function layoutTokens(items: TokenItem[], geom: Geom): { pos: Map<string, { x: n
     .sort((a, b) => a.cx - b.cx);
   const unscored3 = stage3.filter((i) => i.composite === null);
 
-  const centers = new Map<string, { x: number; y: number }>();
+  const local = new Map<string, { x: number; y: number }>();
   const placed: { x: number; y: number }[] = [];
   const collides = (x: number, y: number) =>
     placed.some((p) => Math.abs(p.x - x) < CELL_W && Math.abs(p.y - y) < CELL_H);
-
-  // Beeswarm the scored Milestone-3 tokens around a centre line (y = 0).
   for (const a of scored3) {
     let y = 0;
     let k = 1;
@@ -496,43 +515,26 @@ function layoutTokens(items: TokenItem[], geom: Geom): { pos: Map<string, { x: n
       k++;
     }
     placed.push({ x: a.cx, y });
-    centers.set(a.id, { x: a.cx, y });
+    local.set(a.id, { x: a.cx, y });
   }
-
-  // Grid the unscored Milestone-3 tokens in their sub-column.
-  const unscoredCols = Math.max(1, Math.floor(UNASSESSED_W / CELL_W));
+  const unscoredCols = Math.max(1, Math.floor(geom.unscoredW / CELL_W));
   unscored3.forEach((u, i) => {
     const col = i % unscoredCols;
     const row = Math.floor(i / unscoredCols);
-    centers.set(u.id, {
-      x: geom.stage3X + col * CELL_W + TOKEN_W / 2,
-      y: row * CELL_H,
-    });
+    local.set(u.id, { x: geom.bandX0 + col * CELL_W + TOKEN_W / 2, y: row * CELL_H });
   });
 
-  // Grid the Milestone 0/1/2 tokens, one zone each.
-  ([0, 1, 2] as const).forEach((stage, zoneIdx) => {
-    const bucket = items.filter((i) => i.stage === stage);
-    const cols = Math.max(1, Math.floor(STAGE_ZONE_W / CELL_W));
-    bucket.forEach((u, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      centers.set(u.id, {
-        x: geom.stageZoneX[zoneIdx] + col * CELL_W + TOKEN_W / 2,
-        y: row * CELL_H,
-      });
-    });
-  });
-
-  let minY = Infinity, maxY = -Infinity;
-  centers.forEach((c) => { if (c.y < minY) minY = c.y; if (c.y > maxY) maxY = c.y; });
-  if (!isFinite(minY)) { minY = 0; maxY = 0; }
-  const shift = TOP_PAD - minY;
+  let localMinY = Infinity, localMaxY = -Infinity;
+  local.forEach((c) => { if (c.y < localMinY) localMinY = c.y; if (c.y > localMaxY) localMaxY = c.y; });
+  if (!isFinite(localMinY)) { localMinY = 0; localMaxY = 0; }
+  const band3Shift = cursorY + TOKEN_H / 2 - localMinY;
+  local.forEach((c, id) => centers.set(id, { x: c.x, y: c.y + band3Shift }));
+  cursorY += (localMaxY - localMinY) + TOKEN_H;
 
   const pos = new Map<string, { x: number; y: number }>();
-  centers.forEach((c, id) => pos.set(id, { x: c.x - TOKEN_W / 2, y: c.y + shift - TOKEN_H / 2 }));
+  centers.forEach((c, id) => pos.set(id, { x: c.x - TOKEN_W / 2, y: c.y - TOKEN_H / 2 }));
 
-  return { pos, height: TOP_PAD + (maxY - minY) + TOKEN_H };
+  return { pos, height: cursorY, bandTops: bandTops as [number, number, number, number] };
 }
 
 // ---------- Main view ----------
@@ -605,10 +607,10 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
 
   const geom = useMemo(() => computeGeom(containerW, hasUnscored3), [containerW, hasUnscored3]);
 
-  const { nucleusPos, contentHeight } = useMemo(() => {
+  const { nucleusPos, contentHeight, bandTops } = useMemo(() => {
     const items = nuclei.map((n) => ({ id: n.id, name: n.name, stage: stageOf(n.id), composite: compositeOf(n.id) }));
-    const { pos, height } = layoutTokens(items, geom);
-    return { nucleusPos: pos, contentHeight: height };
+    const { pos, height, bandTops } = layoutTokens(items, geom);
+    return { nucleusPos: pos, contentHeight: height, bandTops };
   }, [nuclei, stageOf, compositeOf, geom]);
 
   // Re-frame when the layout/container changes. The <ReactFlow fitView> prop
@@ -693,15 +695,15 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const nodes = useMemo(() => {
     const nodes: Node[] = [];
 
-    // Zone headers for Milestones 0/1/2 — plain buckets, no further
-    // differentiation. Milestone 3's header is implied by the axis
-    // caption below its composite ruler.
-    ([0, 1, 2] as const).forEach((stage, zoneIdx) => {
+    // One header per milestone band. A token's own tooltip already says
+    // "Not yet assessed" for an unscored Milestone-3 nucleus, so there's
+    // no separate sub-label for that column.
+    MILESTONE_STAGES.forEach((stage) => {
       nodes.push({
-        id: `zone-milestone-${stage}`,
+        id: `band-milestone-${stage}`,
         type: 'zoneLabel',
-        position: { x: geom.stageZoneX[zoneIdx], y: TOP_PAD - 26 },
-        data: { width: STAGE_ZONE_W, label: STAGE_ZONE_LABEL(stage) },
+        position: { x: geom.bandX0, y: bandTops[stage] - HEADER_GAP },
+        data: { width: geom.bandContentW, label: milestoneStageDescriptor(stage).label },
         draggable: false,
         selectable: false,
         zIndex: -1,
@@ -717,17 +719,6 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       selectable: false,
       zIndex: -1,
     });
-    if (geom.hasUnscored3) {
-      nodes.push({
-        id: 'zone-unscored-3',
-        type: 'zoneLabel',
-        position: { x: geom.stage3X, y: TOP_PAD - 26 },
-        data: { width: UNASSESSED_W, label: 'Not yet scored' },
-        draggable: false,
-        selectable: false,
-        zIndex: -1,
-      });
-    }
 
     nuclei.forEach((n) => {
       const p = nucleusPos.get(n.id);
@@ -755,7 +746,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     });
 
     return nodes;
-  }, [nuclei, nucleusPos, stageOf, compositeOf, contentHeight, geom]);
+  }, [nuclei, nucleusPos, stageOf, compositeOf, contentHeight, bandTops, geom]);
 
   const edges: Edge[] = useMemo(() => bands.map((b) => {
       const key = `${b.aId}__${b.bId}`;
