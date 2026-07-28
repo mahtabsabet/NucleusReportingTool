@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, Navigate } from 'react-router-dom';
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -7,15 +7,20 @@ import {
   SaveIcon,
   Loader2Icon,
   InfoIcon,
+  CheckIcon,
+  AlertTriangleIcon,
 } from 'lucide-react';
 import { GlobalSearch } from './GlobalSearch';
 import { fetchNucleus } from '../lib/db/nucleus';
 import {
   MILESTONE_THREE_FEATURES,
   MILESTONE_THREE_MAX,
+  MILESTONE_STAGES,
   computeComposite,
   milestoneLevel,
+  milestoneStageDescriptor,
   progressColor,
+  type MilestoneStage,
   type MilestoneThreeFeature,
 } from '../lib/milestoneThree';
 import {
@@ -23,7 +28,9 @@ import {
   saveNucleusMilestoneScore,
   clearNucleusMilestoneScore,
   saveNucleusMilestoneOverallNote,
-  canEditNucleusMilestoneThree,
+  canEditNucleusMilestone,
+  fetchNucleusMilestoneStage,
+  saveNucleusMilestoneStage,
 } from '../lib/db/milestoneThree';
 
 // Local per-feature editing state. `scored: false` means "not yet
@@ -59,30 +66,37 @@ function CompositeMeter({ composite }: { composite: number | null }) {
 
 // ============================================================
 // Dashboard strip — a compact, full-width band that lives above the
-// module grid (mirroring CompressedTimelineStrip). Shows the composite
-// and eight per-feature ticks, and opens the editor on click.
+// module grid (mirroring CompressedTimelineStrip). Shows the current
+// milestone stage; when the nucleus is at Milestone 3 it also shows
+// the composite and eight per-feature ticks. Opens the editor on click.
 // ============================================================
 
-export function MilestoneThreeStrip({
+export function MilestoneStrip({
   nucleusId,
   onOpen,
 }: {
   nucleusId: string;
   onOpen: () => void;
 }) {
+  const [stage, setStage] = useState<MilestoneStage>(0);
   const [scores, setScores] = useState<Map<string, number>>(new Map());
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    fetchNucleusMilestoneThree(nucleusId)
-      .then(data => {
+    fetchNucleusMilestoneStage(nucleusId)
+      .then(async s => {
         if (!alive) return;
-        setScores(new Map(data.scores.map(s => [s.featureKey, s.score])));
+        setStage(s);
+        if (s === 3) {
+          const data = await fetchNucleusMilestoneThree(nucleusId);
+          if (!alive) return;
+          setScores(new Map(data.scores.map(f => [f.featureKey, f.score])));
+        }
         setLoaded(true);
       })
       .catch(err => {
-        console.error('Failed to load milestone-three scores:', err);
+        console.error('Failed to load milestone data:', err);
         if (alive) setLoaded(true);
       });
     return () => { alive = false; };
@@ -93,6 +107,7 @@ export function MilestoneThreeStrip({
     [scores],
   );
   const level = milestoneLevel(composite);
+  const descriptor = milestoneStageDescriptor(stage);
 
   return (
     <button
@@ -101,39 +116,50 @@ export function MilestoneThreeStrip({
       className="w-full flex items-center gap-4 bg-white/95 border border-gray-200/80 rounded-2xl px-4 sm:px-5 py-3 shadow-sm hover:shadow-md hover:border-gray-300 transition-all text-left"
     >
       <div className="flex items-center gap-2.5 flex-shrink-0">
-        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${level.bg} ${level.text}`}>
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${stage === 3 ? level.bg : 'bg-slate-100'} ${stage === 3 ? level.text : 'text-slate-500'}`}>
           <TargetIcon className="w-5 h-5" />
         </div>
         <div className="leading-tight">
           <div className="text-[11px] font-bold tracking-wider text-gray-500 uppercase">
-            Milestone Three
+            Milestone
           </div>
-          <div className={`text-sm font-bold ${level.text}`}>
-            {composite === null ? level.label : `${level.label} · ${composite.toFixed(1)}/10`}
-          </div>
+          {stage === 3 ? (
+            <div className={`text-sm font-bold ${level.text}`}>
+              {composite === null ? `${descriptor.label} · ${level.label}` : `${descriptor.label} · ${composite.toFixed(1)}/10`}
+            </div>
+          ) : (
+            <div className="text-sm font-bold text-slate-700">{descriptor.label}</div>
+          )}
         </div>
       </div>
 
-      {/* Per-feature ticks */}
-      <div className="hidden sm:flex items-end gap-1 flex-1 min-w-0 h-8">
-        {MILESTONE_THREE_FEATURES.map(f => {
-          const s = scores.get(f.key);
-          const featureLevel = milestoneLevel(s ?? null);
-          const h = s === undefined ? 20 : 20 + (s / MILESTONE_THREE_MAX) * 80;
-          return (
-            <div
-              key={f.key}
-              title={`${f.label}: ${s === undefined ? 'not yet scored' : `${s}/10`}`}
-              className="flex-1 min-w-0 rounded-sm"
-              style={{
-                height: `${h}%`,
-                backgroundColor: s === undefined ? '#e2e8f0' : featureLevel.color,
-                opacity: s === undefined ? 0.7 : 1,
-              }}
-            />
-          );
-        })}
-      </div>
+      {/* Per-feature ticks — only meaningful at Milestone 3 */}
+      {stage === 3 && (
+        <div className="hidden sm:flex items-end gap-1 flex-1 min-w-0 h-8">
+          {MILESTONE_THREE_FEATURES.map(f => {
+            const s = scores.get(f.key);
+            const featureLevel = milestoneLevel(s ?? null);
+            const h = s === undefined ? 20 : 20 + (s / MILESTONE_THREE_MAX) * 80;
+            return (
+              <div
+                key={f.key}
+                title={`${f.label}: ${s === undefined ? 'not yet scored' : `${s}/10`}`}
+                className="flex-1 min-w-0 rounded-sm"
+                style={{
+                  height: `${h}%`,
+                  backgroundColor: s === undefined ? '#e2e8f0' : featureLevel.color,
+                  opacity: s === undefined ? 0.7 : 1,
+                }}
+              />
+            );
+          })}
+        </div>
+      )}
+      {stage !== 3 && (
+        <div className="hidden sm:block flex-1 min-w-0 text-xs text-gray-500 truncate">
+          {descriptor.blurb}
+        </div>
+      )}
 
       <div className="flex items-center gap-1 flex-shrink-0 text-gray-400">
         <span className="hidden md:inline text-xs font-semibold text-gray-500">
@@ -146,10 +172,56 @@ export function MilestoneThreeStrip({
 }
 
 // ============================================================
+// Stage picker — four options, sliders only apply to Milestone 3.
+// ============================================================
+
+function StagePicker({
+  stage,
+  canEdit,
+  onSelect,
+}: {
+  stage: MilestoneStage;
+  canEdit: boolean;
+  onSelect: (next: MilestoneStage) => void;
+}) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {MILESTONE_STAGES.map(s => {
+        const d = milestoneStageDescriptor(s);
+        const active = s === stage;
+        return (
+          <button
+            key={s}
+            type="button"
+            disabled={!canEdit || active}
+            onClick={() => onSelect(s)}
+            className={`text-left rounded-2xl border p-4 transition-all ${
+              active
+                ? 'border-blue-400 bg-blue-50 shadow-sm'
+                : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
+            } ${!canEdit && !active ? 'opacity-60 cursor-not-allowed' : ''} ${canEdit && !active ? 'cursor-pointer' : ''}`}
+          >
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <span className={`text-sm font-bold ${active ? 'text-blue-700' : 'text-gray-900'}`}>{d.label}</span>
+              {active && (
+                <span className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center">
+                  <CheckIcon className="w-3.5 h-3.5" />
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-500 leading-snug">{d.blurb}</p>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ============================================================
 // Full-page editor
 // ============================================================
 
-export function MilestoneThreePage() {
+export function MilestonePage() {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
   const nucleusId = id!;
@@ -161,7 +233,13 @@ export function MilestoneThreePage() {
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  const [stage, setStage] = useState<MilestoneStage>(0);
+  const [stageSaving, setStageSaving] = useState(false);
+  const [pendingDowngrade, setPendingDowngrade] = useState<MilestoneStage | null>(null);
+
   // Editing state, keyed by feature key. Initialised from the DB.
+  // Only relevant while stage === 3, but kept loaded regardless so
+  // switching back to Milestone 3 doesn't need a re-fetch.
   const [features, setFeatures] = useState<Record<string, FeatureState>>({});
   const [overallNote, setOverallNote] = useState('');
   // Snapshot of what's persisted, so Save only writes what changed and
@@ -176,12 +254,14 @@ export function MilestoneThreePage() {
     setLoading(true);
     Promise.all([
       fetchNucleus(nucleusId),
+      fetchNucleusMilestoneStage(nucleusId),
       fetchNucleusMilestoneThree(nucleusId),
-      canEditNucleusMilestoneThree(nucleusId),
+      canEditNucleusMilestone(nucleusId),
     ])
-      .then(([nucleus, data, editable]) => {
+      .then(([nucleus, currentStage, data, editable]) => {
         if (!alive) return;
         setNucleusName(nucleus?.name ?? '');
+        setStage(currentStage);
         setCanEdit(editable);
         const byKey = new Map(data.scores.map(s => [s.featureKey, s]));
         const initial: Record<string, FeatureState> = {};
@@ -199,8 +279,8 @@ export function MilestoneThreePage() {
         });
       })
       .catch(err => {
-        console.error('Failed to load milestone-three data:', err);
-        if (alive) setError('Could not load Milestone Three data.');
+        console.error('Failed to load milestone data:', err);
+        if (alive) setError('Could not load Milestone data.');
       })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
@@ -261,14 +341,41 @@ export function MilestoneThreePage() {
       });
       setSavedAt(Date.now());
     } catch (err) {
-      console.error('Failed to save milestone-three data:', err);
+      console.error('Failed to save milestone data:', err);
       setError('Save failed. Please try again.');
     } finally {
       setSaving(false);
     }
   }
 
+  async function applyStage(next: MilestoneStage) {
+    setStageSaving(true);
+    setError(null);
+    try {
+      await saveNucleusMilestoneStage(nucleusId, next);
+      setStage(next);
+    } catch (err) {
+      console.error('Failed to save milestone stage:', err);
+      setError('Could not update the milestone stage. Please try again.');
+    } finally {
+      setStageSaving(false);
+    }
+  }
+
+  function handleSelectStage(next: MilestoneStage) {
+    if (next === stage) return;
+    // Downgrading away from Milestone 3 doesn't delete anything — the
+    // sliders below are just hidden until the nucleus returns to
+    // Milestone 3 — but it should still be a deliberate choice.
+    if (stage === 3 && next !== 3) {
+      setPendingDowngrade(next);
+      return;
+    }
+    applyStage(next);
+  }
+
   const level = milestoneLevel(composite);
+  const descriptor = milestoneStageDescriptor(stage);
 
   return (
     <div className="min-h-screen bg-nucleus-pattern font-sans">
@@ -287,16 +394,15 @@ export function MilestoneThreePage() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-inner ${level.bg} ${level.text}`}>
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center shadow-inner ${stage === 3 ? level.bg : 'bg-slate-100'} ${stage === 3 ? level.text : 'text-slate-500'}`}>
               <TargetIcon className="w-6 h-6" />
             </div>
             <div className="flex-1 min-w-0">
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">
-                Milestone Three
+                Milestone
               </h1>
               <p className="text-sm font-medium text-gray-500 mt-1">
-                {nucleusName ? `${nucleusName} · ` : ''}How far this nucleus has developed the
-                features of a Milestone Three cluster
+                {nucleusName ? `${nucleusName} · ` : ''}Currently at {descriptor.label}
               </p>
             </div>
           </div>
@@ -310,58 +416,76 @@ export function MilestoneThreePage() {
           </div>
         ) : (
           <>
-            {/* Composite banner */}
-            <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4 mb-3">
-                <div>
-                  <div className="text-[11px] font-bold tracking-wider text-gray-500 uppercase">
-                    Overall progress
-                  </div>
-                  <div className="text-xs text-gray-400 mt-0.5">
-                    Average of {scoredCount} of {MILESTONE_THREE_FEATURES.length} features scored
-                  </div>
-                </div>
-              </div>
-              <CompositeMeter composite={composite} />
-            </div>
-
             {!canEdit && (
               <div className="flex items-start gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm text-slate-600">
                 <InfoIcon className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span>You have view-only access. Nucleus collaborators can update these scores.</span>
+                <span>You have view-only access. Nucleus collaborators can update the milestone.</span>
               </div>
             )}
 
-            {/* Feature sliders */}
-            <div className="space-y-4">
-              {MILESTONE_THREE_FEATURES.map(f => (
-                <FeatureCard
-                  key={f.key}
-                  feature={f}
-                  state={features[f.key]}
-                  canEdit={canEdit}
-                  onChange={patch => updateFeature(f.key, patch)}
-                />
-              ))}
+            <div>
+              <div className="text-[11px] font-bold tracking-wider text-gray-500 uppercase mb-2">
+                Milestone stage
+              </div>
+              <StagePicker stage={stage} canEdit={canEdit && !stageSaving} onSelect={handleSelectStage} />
             </div>
 
-            {/* Holistic overall note */}
-            <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
-              <label className="block text-sm font-bold text-gray-900 mb-1">
-                Holistic note
-              </label>
-              <p className="text-xs text-gray-500 mb-3">
-                An overall, qualitative read on where this nucleus stands — beyond the individual scores.
-              </p>
-              <textarea
-                value={overallNote}
-                onChange={e => { setOverallNote(e.target.value); setSavedAt(null); }}
-                disabled={!canEdit}
-                rows={4}
-                placeholder={canEdit ? 'Add a holistic reflection…' : 'No note yet.'}
-                className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 resize-y"
-              />
-            </div>
+            {stage === 3 ? (
+              <>
+                {/* Composite banner */}
+                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                  <div className="flex items-center justify-between gap-4 mb-3">
+                    <div>
+                      <div className="text-[11px] font-bold tracking-wider text-gray-500 uppercase">
+                        Overall progress
+                      </div>
+                      <div className="text-xs text-gray-400 mt-0.5">
+                        Average of {scoredCount} of {MILESTONE_THREE_FEATURES.length} features scored
+                      </div>
+                    </div>
+                  </div>
+                  <CompositeMeter composite={composite} />
+                </div>
+
+                {/* Feature sliders */}
+                <div className="space-y-4">
+                  {MILESTONE_THREE_FEATURES.map(f => (
+                    <FeatureCard
+                      key={f.key}
+                      feature={f}
+                      state={features[f.key]}
+                      canEdit={canEdit}
+                      onChange={patch => updateFeature(f.key, patch)}
+                    />
+                  ))}
+                </div>
+
+                {/* Holistic overall note */}
+                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                  <label className="block text-sm font-bold text-gray-900 mb-1">
+                    Holistic note
+                  </label>
+                  <p className="text-xs text-gray-500 mb-3">
+                    An overall, qualitative read on where this nucleus stands — beyond the individual scores.
+                  </p>
+                  <textarea
+                    value={overallNote}
+                    onChange={e => { setOverallNote(e.target.value); setSavedAt(null); }}
+                    disabled={!canEdit}
+                    rows={4}
+                    placeholder={canEdit ? 'Add a holistic reflection…' : 'No note yet.'}
+                    className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-50 disabled:text-gray-500 resize-y"
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
+                <div className="text-[11px] font-bold tracking-wider text-gray-500 uppercase mb-1">
+                  {descriptor.label}
+                </div>
+                <p className="text-sm text-gray-700 leading-relaxed">{descriptor.blurb}</p>
+              </div>
+            )}
 
             {error && (
               <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
@@ -372,8 +496,9 @@ export function MilestoneThreePage() {
         )}
       </main>
 
-      {/* Sticky save bar */}
-      {canEdit && !loading && (
+      {/* Sticky save bar — only meaningful for the Milestone 3 sliders;
+          stage changes save immediately from the picker. */}
+      {canEdit && !loading && stage === 3 && (
         <div className="sticky bottom-0 bg-white/90 backdrop-blur-md border-t border-gray-200/80 px-4 sm:px-8 py-3 shadow-[0_-2px_8px_rgba(0,0,0,0.04)]">
           <div className="max-w-4xl mx-auto flex items-center justify-end gap-3">
             {savedAt && !dirty && (
@@ -393,8 +518,53 @@ export function MilestoneThreePage() {
           </div>
         </div>
       )}
+
+      {/* Downgrade confirmation — only shown moving away from Milestone 3 */}
+      {pendingDowngrade !== null && (
+        <div className="fixed inset-0 bg-gray-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-7">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-amber-100 rounded-full flex items-center justify-center flex-shrink-0">
+                <AlertTriangleIcon className="w-5 h-5 text-amber-600" />
+              </div>
+              <h2 className="text-xl font-bold text-gray-900">Move to {milestoneStageDescriptor(pendingDowngrade).label}?</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              This nucleus currently has Milestone 3 scores recorded. Moving to {milestoneStageDescriptor(pendingDowngrade).label.toLowerCase()} won't
+              delete them — the sliders will just be hidden until this nucleus returns to Milestone 3, at which point your scores will still be here.
+            </p>
+            <div className="flex gap-3 pt-2 border-t border-gray-100">
+              <button
+                onClick={() => setPendingDowngrade(null)}
+                disabled={stageSaving}
+                className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 font-medium rounded-xl hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const next = pendingDowngrade;
+                  setPendingDowngrade(null);
+                  if (next !== null) applyStage(next);
+                }}
+                disabled={stageSaving}
+                className="flex-1 px-4 py-2.5 bg-amber-600 text-white font-medium rounded-xl hover:bg-amber-700 shadow-sm hover:shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {stageSaving ? 'Saving…' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+// Redirects the old /nucleus/:id/milestone-three URL to the
+// generalized /nucleus/:id/milestone page.
+export function MilestoneThreeRedirect() {
+  const { id } = useParams<{ id?: string }>();
+  return <Navigate to={`/nucleus/${id}/milestone`} replace />;
 }
 
 // ── One feature: slider + anchors + note ──

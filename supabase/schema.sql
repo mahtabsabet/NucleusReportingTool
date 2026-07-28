@@ -1589,22 +1589,20 @@ create policy "Nucleus editors manage milestone-three scores"
     is_admin() or exists (
       select 1 from user_permissions up
       where up.user_id = auth.uid()
-        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
         and (
           up.nucleus_id = nucleus_milestone_three_scores.nucleus_id
           or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_three_scores.nucleus_id)
-          or up.activity_id in (select id from activities where nucleus_id = nucleus_milestone_three_scores.nucleus_id)
         )
     )
   ) with check (
     is_admin() or exists (
       select 1 from user_permissions up
       where up.user_id = auth.uid()
-        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
         and (
           up.nucleus_id = nucleus_milestone_three_scores.nucleus_id
           or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_three_scores.nucleus_id)
-          or up.activity_id in (select id from activities where nucleus_id = nucleus_milestone_three_scores.nucleus_id)
         )
     )
   );
@@ -1619,22 +1617,69 @@ create policy "Nucleus editors manage milestone-three note"
     is_admin() or exists (
       select 1 from user_permissions up
       where up.user_id = auth.uid()
-        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
         and (
           up.nucleus_id = nucleus_milestone_three.nucleus_id
           or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_three.nucleus_id)
-          or up.activity_id in (select id from activities where nucleus_id = nucleus_milestone_three.nucleus_id)
         )
     )
   ) with check (
     is_admin() or exists (
       select 1 from user_permissions up
       where up.user_id = auth.uid()
-        and up.role in ('cluster_coordinator', 'nucleus_collaborator', 'activity_lead')
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
         and (
           up.nucleus_id = nucleus_milestone_three.nucleus_id
           or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_three.nucleus_id)
-          or up.activity_id in (select id from activities where nucleus_id = nucleus_milestone_three.nucleus_id)
+        )
+    )
+  );
+
+-- ============================================================
+-- Nucleus Milestone stage
+--
+-- Generalizes "Milestone Three" into a Milestone interface: every
+-- nucleus carries a milestone stage (0-3). Stages 0-2 are plain
+-- descriptors; stage 3 keeps the per-feature sliders above. Data in
+-- nucleus_milestone_three_scores / nucleus_milestone_three is never
+-- deleted on downgrade, so returning to Milestone 3 later restores it.
+-- ============================================================
+
+create table if not exists nucleus_milestone_stage (
+  nucleus_id  uuid primary key references nuclei(id) on delete cascade,
+  stage       smallint not null default 0 check (stage between 0 and 3),
+  updated_by  uuid references profiles(id) on delete set null,
+  updated_at  timestamptz not null default now()
+);
+
+alter table nucleus_milestone_stage enable row level security;
+
+create policy "Read milestone stage in accessible nuclei"
+  on nucleus_milestone_stage
+  for select using (is_admin() or user_has_nucleus_access(nucleus_id));
+
+-- Write: cluster coordinators and nucleus collaborators only —
+-- Activity Leads cannot change a nucleus's milestone stage.
+create policy "Nucleus editors manage milestone stage"
+  on nucleus_milestone_stage
+  for all using (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+        and (
+          up.nucleus_id = nucleus_milestone_stage.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_stage.nucleus_id)
+        )
+    )
+  ) with check (
+    is_admin() or exists (
+      select 1 from user_permissions up
+      where up.user_id = auth.uid()
+        and up.role in ('cluster_coordinator', 'nucleus_collaborator')
+        and (
+          up.nucleus_id = nucleus_milestone_stage.nucleus_id
+          or up.cluster_id = (select cluster_id from nuclei where id = nucleus_milestone_stage.nucleus_id)
         )
     )
   );

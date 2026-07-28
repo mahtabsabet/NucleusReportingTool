@@ -17,8 +17,8 @@ import '@xyflow/react/dist/style.css';
 import { useNavigate } from 'react-router-dom';
 import { XIcon, InfoIcon } from 'lucide-react';
 import { fetchCrossNucleusPersons, type CrossNucleusPerson } from '../lib/db/reports';
-import { fetchMilestoneCompositesForNuclei, type NucleusComposite } from '../lib/db/milestoneThree';
-import { MILESTONE_THREE_MAX, milestoneLevel, progressColor } from '../lib/milestoneThree';
+import { fetchMilestoneCompositesForNuclei, fetchMilestoneStagesForNuclei, type NucleusComposite } from '../lib/db/milestoneThree';
+import { MILESTONE_STAGES, MILESTONE_THREE_MAX, milestoneLevel, milestoneStageDescriptor, progressColor, type MilestoneStage } from '../lib/milestoneThree';
 
 // ---------- Types & layout constants ----------
 
@@ -48,26 +48,32 @@ const CELL_H = TOKEN_H + V_GAP;
 const UNASSESSED_COLS = 2;
 const UNASSESSED_W = CELL_W * UNASSESSED_COLS;
 const ZONE_GAP = 56;
+// Vertical space between one milestone band and the next, and between
+// a band's header label and its first row of tokens.
+const BAND_GAP = 40;
+const HEADER_GAP = 26;
 
+// Milestones stack top→bottom (0 at top, 3 at bottom) so each band gets
+// the full container width — Milestones 0-2 use it for a wrapping grid
+// (no further differentiation), and Milestone 3 uses it for the 0-10
+// composite axis, exactly as before.
 interface Geom {
-  axisX0: number;       // x-center at composite 0
-  scoredW: number;      // pixel span from composite 0 to 10
-  unassessedCx: number; // x-center of the "not yet assessed" column
-  leftZoneW: number;    // width reserved for that column (0 when none)
-  totalW: number;
+  bandX0: number;         // left x shared by every band's content
+  bandContentW: number;   // width of that content area
+  axisX0: number;         // x-center at composite 0, inside the Milestone 3 band
+  scoredW: number;        // pixel span from composite 0 to 10
+  unscoredW: number;      // width of the "not yet scored" sub-column inside Milestone 3
+  hasUnscored3: boolean;
 }
 
-// Lay the axis out to fill the available container width so tokens sit at
-// a readable size (fitView stays near zoom 1) instead of being shrunk.
-function computeGeom(containerW: number, hasUnassessed: boolean): Geom {
+function computeGeom(containerW: number, hasUnscored3: boolean): Geom {
   const usableW = Math.max(480, containerW - OUTER_PAD * 2);
-  const leftZoneW = hasUnassessed ? UNASSESSED_W : 0;
-  const gap = hasUnassessed ? ZONE_GAP : 0;
-  const axisX0 = OUTER_PAD + leftZoneW + gap + TOKEN_W / 2;
+  const unscoredW = hasUnscored3 ? UNASSESSED_W : 0;
+  const unscoredGap = hasUnscored3 ? ZONE_GAP : 0;
+  const axisX0 = OUTER_PAD + unscoredW + unscoredGap + TOKEN_W / 2;
   const axisRightCx = OUTER_PAD + usableW - TOKEN_W / 2;
   const scoredW = Math.max(200, axisRightCx - axisX0);
-  const unassessedCx = OUTER_PAD + leftZoneW / 2;
-  return { axisX0, scoredW, unassessedCx, leftZoneW, totalW: OUTER_PAD + usableW };
+  return { bandX0: OUTER_PAD, bandContentW: usableW, axisX0, scoredW, unscoredW, hasUnscored3 };
 }
 
 function axisCenterX(geom: Geom, composite: number): number {
@@ -111,9 +117,17 @@ const STRENGTH_STYLE: Record<Strength, { stroke: string; width: number; pillBg: 
 // so it never triggers a React re-render — setting hover state and changing
 // z-index on hover reorders the DOM under the cursor and makes it flicker.
 // Only `dimmed` (when another token is focused) comes from React state.
+// Milestones 0/1/2 have no composite score, so they get a flat colour
+// keyed to the stage itself; Milestone 3 keeps the continuous ramp
+// (see progressColor) driven by the composite of its feature scores.
+const STAGE_COLOR: Record<0 | 1 | 2, string> = { 0: '#94a3b8', 1: '#f59e0b', 2: '#3b82f6' };
+
 const NucleusTokenNode = ({ data }: NodeProps) => {
+  const stage = data.stage as MilestoneStage;
   const composite = data.composite as number | null;
-  const color = composite === null ? '#94a3b8' : progressColor(composite);
+  const color = stage === 3
+    ? (composite === null ? '#94a3b8' : progressColor(composite))
+    : STAGE_COLOR[stage as 0 | 1 | 2];
   const peopleCount = data.peopleCount as number;
   const levelLabel = data.levelLabel as string;
   return (
@@ -438,26 +452,61 @@ const edgeTypes = { connectionBand: ConnectionBandEdge };
 
 // ---------- Layout ----------
 
-interface TokenItem { id: string; name: string; composite: number | null }
+interface TokenItem { id: string; name: string; stage: MilestoneStage; composite: number | null }
 
-// Position tokens: assessed nuclei form a beeswarm along the progress axis
-// (offset vertically only where they'd collide, so piles at similar scores
-// fan out into a distribution), and unassessed nuclei fill a compact grid
-// in the left column. Returns top-left positions plus the content height.
-function layoutTokens(items: TokenItem[], geom: Geom): { pos: Map<string, { x: number; y: number }>; height: number } {
-  const assessed = items
+interface BandLayout {
+  pos: Map<string, { x: number; y: number }>;
+  height: number;
+  // Top y of each band's token content (for header placement), stage 0-3.
+  bandTops: [number, number, number, number];
+}
+
+// Position tokens in four vertically-stacked bands, one per milestone
+// stage (0 at top, 3 at bottom), each spanning the full content width.
+// Milestones 0-2 wrap their tokens into a grid across that width, since
+// there's nothing further to differentiate. Milestone 3 keeps its
+// horizontal composite beeswarm — scored nuclei offset vertically only
+// where they'd collide, so piles at similar scores fan out — plus a
+// grid sub-column for nuclei not yet scored. Returns top-left positions,
+// overall content height, and each band's top y (for header labels).
+function layoutTokens(items: TokenItem[], geom: Geom): BandLayout {
+  const centers = new Map<string, { x: number; y: number }>();
+  const bandTops: number[] = [];
+  let cursorY = TOP_PAD;
+
+  const gridCols = Math.max(1, Math.floor(geom.bandContentW / CELL_W));
+  for (const stage of [0, 1, 2] as const) {
+    bandTops.push(cursorY);
+    const bucket = items.filter((i) => i.stage === stage);
+    const rows = Math.max(1, Math.ceil(bucket.length / gridCols) || 1);
+    bucket.forEach((u, i) => {
+      const col = i % gridCols;
+      const row = Math.floor(i / gridCols);
+      centers.set(u.id, {
+        x: geom.bandX0 + col * CELL_W + TOKEN_W / 2,
+        y: cursorY + row * CELL_H + TOKEN_H / 2,
+      });
+    });
+    cursorY += rows * CELL_H + BAND_GAP;
+  }
+
+  // Milestone 3: lay out locally around a y = 0 centre line (so the
+  // beeswarm can go both up and down), then shift the whole band down
+  // so its topmost token lands at the current cursor — same trick the
+  // single-zone layout used to use for the whole canvas.
+  bandTops.push(cursorY);
+  const stage3 = items.filter((i) => i.stage === 3);
+  const scored3 = stage3
     .filter((i) => i.composite !== null)
     .map((i) => ({ id: i.id, cx: axisCenterX(geom, i.composite as number) }))
     .sort((a, b) => a.cx - b.cx);
-  const unassessed = items.filter((i) => i.composite === null);
+  const unscored3 = stage3.filter((i) => i.composite === null);
 
-  const centers = new Map<string, { x: number; y: number }>();
+  const local = new Map<string, { x: number; y: number }>();
   const placed: { x: number; y: number }[] = [];
   const collides = (x: number, y: number) =>
     placed.some((p) => Math.abs(p.x - x) < CELL_W && Math.abs(p.y - y) < CELL_H);
-
-  // Beeswarm the assessed tokens around a centre line (y = 0).
-  for (const a of assessed) {
+  for (const a of scored3) {
     let y = 0;
     let k = 1;
     while (collides(a.cx, y)) {
@@ -466,29 +515,26 @@ function layoutTokens(items: TokenItem[], geom: Geom): { pos: Map<string, { x: n
       k++;
     }
     placed.push({ x: a.cx, y });
-    centers.set(a.id, { x: a.cx, y });
+    local.set(a.id, { x: a.cx, y });
   }
-
-  // Grid the unassessed tokens in the left column.
-  const cols = Math.max(1, Math.floor(geom.leftZoneW / CELL_W));
-  unassessed.forEach((u, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    centers.set(u.id, {
-      x: OUTER_PAD + col * CELL_W + TOKEN_W / 2,
-      y: row * CELL_H,
-    });
+  const unscoredCols = Math.max(1, Math.floor(geom.unscoredW / CELL_W));
+  unscored3.forEach((u, i) => {
+    const col = i % unscoredCols;
+    const row = Math.floor(i / unscoredCols);
+    local.set(u.id, { x: geom.bandX0 + col * CELL_W + TOKEN_W / 2, y: row * CELL_H });
   });
 
-  let minY = Infinity, maxY = -Infinity;
-  centers.forEach((c) => { if (c.y < minY) minY = c.y; if (c.y > maxY) maxY = c.y; });
-  if (!isFinite(minY)) { minY = 0; maxY = 0; }
-  const shift = TOP_PAD - minY;
+  let localMinY = Infinity, localMaxY = -Infinity;
+  local.forEach((c) => { if (c.y < localMinY) localMinY = c.y; if (c.y > localMaxY) localMaxY = c.y; });
+  if (!isFinite(localMinY)) { localMinY = 0; localMaxY = 0; }
+  const band3Shift = cursorY + TOKEN_H / 2 - localMinY;
+  local.forEach((c, id) => centers.set(id, { x: c.x, y: c.y + band3Shift }));
+  cursorY += (localMaxY - localMinY) + TOKEN_H;
 
   const pos = new Map<string, { x: number; y: number }>();
-  centers.forEach((c, id) => pos.set(id, { x: c.x - TOKEN_W / 2, y: c.y + shift - TOKEN_H / 2 }));
+  centers.forEach((c, id) => pos.set(id, { x: c.x - TOKEN_W / 2, y: c.y - TOKEN_H / 2 }));
 
-  return { pos, height: TOP_PAD + (maxY - minY) + TOKEN_H };
+  return { pos, height: cursorY, bandTops: bandTops as [number, number, number, number] };
 }
 
 // ---------- Main view ----------
@@ -505,6 +551,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const navigate = useNavigate();
   const [crossPeople, setCrossPeople] = useState<CrossNucleusPerson[]>([]);
   const [composites, setComposites] = useState<Map<string, NucleusComposite>>(new Map());
+  const [stages, setStages] = useState<Map<string, MilestoneStage>>(new Map());
   const [hoveredNucleus, setHoveredNucleus] = useState<string | null>(null);
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
   const [selectedBand, setSelectedBand] = useState<SelectedBand | null>(null);
@@ -531,13 +578,16 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
 
   useEffect(() => {
     const ids = nuclei.map((n) => n.id);
-    if (ids.length === 0) { setCrossPeople([]); setComposites(new Map()); return; }
+    if (ids.length === 0) { setCrossPeople([]); setComposites(new Map()); setStages(new Map()); return; }
     fetchCrossNucleusPersons(ids)
       .then(setCrossPeople)
       .catch((err) => console.error('Failed to load cross-nucleus persons:', err));
     fetchMilestoneCompositesForNuclei(ids)
       .then(setComposites)
       .catch((err) => console.error('Failed to load milestone-three composites:', err));
+    fetchMilestoneStagesForNuclei(ids)
+      .then(setStages)
+      .catch((err) => console.error('Failed to load milestone stages:', err));
   }, [nuclei]);
 
   const compositeOf = useCallback(
@@ -545,18 +595,23 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     [composites],
   );
 
-  const hasUnassessed = useMemo(
-    () => nuclei.some((n) => compositeOf(n.id) === null),
-    [nuclei, compositeOf],
+  const stageOf = useCallback(
+    (id: string): MilestoneStage => stages.get(id) ?? 0,
+    [stages],
   );
 
-  const geom = useMemo(() => computeGeom(containerW, hasUnassessed), [containerW, hasUnassessed]);
+  const hasUnscored3 = useMemo(
+    () => nuclei.some((n) => stageOf(n.id) === 3 && compositeOf(n.id) === null),
+    [nuclei, stageOf, compositeOf],
+  );
 
-  const { nucleusPos, contentHeight } = useMemo(() => {
-    const items = nuclei.map((n) => ({ id: n.id, name: n.name, composite: compositeOf(n.id) }));
-    const { pos, height } = layoutTokens(items, geom);
-    return { nucleusPos: pos, contentHeight: height };
-  }, [nuclei, compositeOf, geom]);
+  const geom = useMemo(() => computeGeom(containerW, hasUnscored3), [containerW, hasUnscored3]);
+
+  const { nucleusPos, contentHeight, bandTops } = useMemo(() => {
+    const items = nuclei.map((n) => ({ id: n.id, name: n.name, stage: stageOf(n.id), composite: compositeOf(n.id) }));
+    const { pos, height, bandTops } = layoutTokens(items, geom);
+    return { nucleusPos: pos, contentHeight: height, bandTops };
+  }, [nuclei, stageOf, compositeOf, geom]);
 
   // Re-frame when the layout/container changes. The <ReactFlow fitView> prop
   // handles the initial frame after measurement; skip the first run here so
@@ -569,7 +624,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       rfRef.current?.fitView({ padding: 0.06, maxZoom: 1, duration: 200 }),
     );
     return () => cancelAnimationFrame(raf);
-  }, [containerW, contentHeight, nuclei.length, hasUnassessed]);
+  }, [containerW, contentHeight, nuclei.length, hasUnscored3]);
 
   // Pairwise connection bands (one band per unordered nucleus pair) with routed paths.
   const bands = useMemo(() => {
@@ -640,6 +695,21 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
   const nodes = useMemo(() => {
     const nodes: Node[] = [];
 
+    // One header per milestone band. A token's own tooltip already says
+    // "Not yet assessed" for an unscored Milestone-3 nucleus, so there's
+    // no separate sub-label for that column.
+    MILESTONE_STAGES.forEach((stage) => {
+      nodes.push({
+        id: `band-milestone-${stage}`,
+        type: 'zoneLabel',
+        position: { x: geom.bandX0, y: bandTops[stage] - HEADER_GAP },
+        data: { width: geom.bandContentW, label: milestoneStageDescriptor(stage).label },
+        draggable: false,
+        selectable: false,
+        zIndex: -1,
+      });
+    });
+
     nodes.push({
       id: 'axis',
       type: 'axis',
@@ -649,22 +719,13 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
       selectable: false,
       zIndex: -1,
     });
-    if (hasUnassessed) {
-      nodes.push({
-        id: 'zone-unassessed',
-        type: 'zoneLabel',
-        position: { x: OUTER_PAD, y: TOP_PAD - 26 },
-        data: { width: geom.leftZoneW, label: 'Not yet assessed' },
-        draggable: false,
-        selectable: false,
-        zIndex: -1,
-      });
-    }
 
     nuclei.forEach((n) => {
       const p = nucleusPos.get(n.id);
       if (!p) return;
-      const composite = compositeOf(n.id);
+      const stage = stageOf(n.id);
+      const composite = stage === 3 ? compositeOf(n.id) : null;
+      const levelLabel = stage === 3 ? milestoneLevel(composite).label : milestoneStageDescriptor(stage).label;
       nodes.push({
         id: n.id,
         type: 'nucleus',
@@ -674,8 +735,9 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
           label: shortName(n.name),
           fullName: n.name,
           peopleCount: totalPeople(n),
+          stage,
           composite,
-          levelLabel: milestoneLevel(composite).label,
+          levelLabel,
           isNucleus: true,
         },
         draggable: false,
@@ -684,7 +746,7 @@ export function NetworkView({ nuclei }: NetworkViewProps) {
     });
 
     return nodes;
-  }, [nuclei, nucleusPos, compositeOf, contentHeight, hasUnassessed, geom]);
+  }, [nuclei, nucleusPos, stageOf, compositeOf, contentHeight, bandTops, geom]);
 
   const edges: Edge[] = useMemo(() => bands.map((b) => {
       const key = `${b.aId}__${b.bId}`;
@@ -811,9 +873,9 @@ function Legend() {
         HOW TO READ
       </button>
       <div className="hidden group-hover:block absolute top-full right-0 mt-1.5 w-[250px] bg-white border border-gray-200 rounded-xl shadow-lg p-3 text-xs">
-        <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-1">MILESTONE THREE PROGRESS</div>
+        <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-1">MILESTONE PROGRESS</div>
         <p className="text-gray-500 leading-snug mb-2">
-          Each nucleus sits left→right by how far it has developed the features of a Milestone Three cluster. Hover a token for detail, or to reveal shared people.
+          Nuclei are grouped by milestone stage (0–3). Within Milestone 3, a nucleus also sits left→right by how far it has developed the milestone's features. Hover a token for detail, or to reveal shared people.
         </p>
         <div className="font-bold text-gray-900 tracking-wider text-[11px] mb-2 mt-2">SHARED PEOPLE</div>
         <ul className="space-y-1.5 text-gray-600">
