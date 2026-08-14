@@ -40,6 +40,19 @@ begin
   -- Break the one self-referencing edge before the bulk deletes.
   update persons set merged_into_id = null where merged_into_id is not null;
 
+  -- journal_entries.activity_id is ON DELETE SET NULL (not cascade),
+  -- but a source='activity' row's check constraint requires activity_id
+  -- to stay non-null — so this must be deleted before activities, not
+  -- left to cascade from nuclei/clusters later.
+  delete from journal_entries;
+
+  -- Same shape of trap: household_members.linked_person_id is ON DELETE
+  -- SET NULL, but a row with no display_name relies on linked_person_id
+  -- being non-null to satisfy household_members_has_identity. Must be
+  -- deleted before persons, not left to cascade from clusters later
+  -- (only bites once real household data exists, i.e. on a re-run).
+  delete from household_members;
+
   delete from event_log;
   delete from user_permissions;
   delete from timeline_item_notes;
