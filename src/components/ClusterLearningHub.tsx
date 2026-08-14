@@ -41,6 +41,7 @@ import type {
 } from '../types';
 import { themePalette } from './ThemeTag';
 import { ConfirmDialog } from './ConfirmDialog';
+import { ClusterMeetingNotes } from './ClusterMeetingNotes';
 import { getCallerContext } from './../lib/db/users';
 import {
   isClusterCoordinator,
@@ -173,6 +174,8 @@ export function ClusterLearningHub() {
             see where each is being lived out in the cluster, and consult on what is emerging.
           </p>
         </header>
+
+        {clusterId && <ClusterMeetingNotes clusterId={clusterId} canEdit={canEdit} />}
 
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.6fr_1.1fr] gap-6">
           <ThemesColumn

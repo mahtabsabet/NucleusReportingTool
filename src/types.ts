@@ -197,6 +197,22 @@ export interface NucleusContribution {
   lastEntryAt?: Date;
 }
 
+// A general cluster-agency / inter-institutional meeting note —
+// not tied to a learning theme. Shown as a full-width, collapsed-
+// by-default list above the Hub's three columns.
+export interface ClusterMeetingNote {
+  id: string;
+  clusterId: string;
+  title: string;
+  body: string;
+  occurredAt: Date;
+  createdAt: Date;
+  authorId?: string;
+  authorName?: string;
+  editedAt?: Date;
+  editedByName?: string;
+}
+
 export type JournalEntrySource = 'activity' | 'nucleus' | 'cluster';
 
 export interface JournalEntry {
