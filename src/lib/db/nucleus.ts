@@ -500,7 +500,18 @@ export async function addPersonToActivity(params: {
   await supabase
     .from('nucleus_enrollments')
     .upsert(
-      { person_id: personId, nucleus_id: params.nucleusId, deleted_at: null },
+      {
+        person_id: personId,
+        nucleus_id: params.nucleusId,
+        deleted_at: null,
+        // Only stamp engagement_level on a fresh (or reactivated) row —
+        // an existing active enrollment's status must not be touched
+        // just because the person joined another activity in the same
+        // nucleus. Explicitly nulling it (rather than relying on the
+        // DB column default) keeps a person new to THIS nucleus out of
+        // whatever circle they may already occupy in a different one.
+        ...(isNewToNucleus ? { engagement_level: null } : {}),
+      },
       { onConflict: 'person_id,nucleus_id' }
     );
 
