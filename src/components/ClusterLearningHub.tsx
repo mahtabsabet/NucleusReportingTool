@@ -12,6 +12,8 @@ import {
   CompassIcon,
   HelpCircleIcon,
   XIcon,
+  PencilIcon,
+  Trash2Icon,
 } from 'lucide-react';
 import {
   listClusterThemes,
@@ -24,6 +26,8 @@ import {
   unarchiveClusterTheme,
   mergeClusterThemes,
   createSynthesisEntry,
+  updateSynthesisEntry,
+  deleteSynthesisEntry,
   pushThemeToNuclei,
   sendNoteToNucleus,
   listNucleiInCluster,
@@ -36,6 +40,7 @@ import type {
   NucleusContribution,
 } from '../types';
 import { themePalette } from './ThemeTag';
+import { ConfirmDialog } from './ConfirmDialog';
 import { getCallerContext } from './../lib/db/users';
 import {
   isClusterCoordinator,
@@ -218,6 +223,16 @@ export function ClusterLearningHub() {
             }}
             onCancel={() => setComposerOpen(false)}
             onSendNote={(body, attribution) => setSendNote({ body, attribution })}
+            onUpdateEntry={async (entryId, body) => {
+              if (!selectedTheme) return;
+              await updateSynthesisEntry(entryId, body);
+              setSynthesis(await listSynthesisEntries(selectedTheme.id));
+            }}
+            onDeleteEntry={async (entryId) => {
+              if (!selectedTheme) return;
+              await deleteSynthesisEntry(entryId);
+              setSynthesis(await listSynthesisEntries(selectedTheme.id));
+            }}
           />
         </div>
       </div>
@@ -690,7 +705,7 @@ const SYNTHESIS_PROMPTS = [
 
 function SynthesisColumn({
   theme, entries, canEdit, composerOpen,
-  onOpenComposer, onSubmit, onCancel, onSendNote,
+  onOpenComposer, onSubmit, onCancel, onSendNote, onUpdateEntry, onDeleteEntry,
 }: {
   theme: ClusterTheme | null;
   entries: JournalEntry[];
@@ -700,9 +715,15 @@ function SynthesisColumn({
   onSubmit: (body: string) => Promise<void>;
   onCancel: () => void;
   onSendNote: (body: string, attribution: string) => void;
+  onUpdateEntry: (entryId: string, body: string) => Promise<void>;
+  onDeleteEntry: (entryId: string) => Promise<void>;
 }) {
   const [body, setBody] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+  const [editConfirmFor, setEditConfirmFor] = useState<string | null>(null);
+  const [deleteConfirmFor, setDeleteConfirmFor] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Unsaved-changes guard: warn before leaving with an in-progress reflection.
   // (Cancel is a deliberate discard, so it is not guarded.)
@@ -720,6 +741,7 @@ function SynthesisColumn({
   }
 
   return (
+    <>
     <section className="bg-amber-50/40 border border-amber-900/15 rounded-2xl p-4 sm:p-5">
       <div className="flex items-baseline justify-between mb-3">
         <h2 className="text-[11px] uppercase tracking-[0.22em] text-amber-800/80 font-journal">
@@ -784,25 +806,157 @@ function SynthesisColumn({
           </p>
         )}
         {entries.map(e => (
-          <article key={e.id} className="group">
-            <div className="flex items-baseline gap-2 text-xs text-stone-500 font-journal italic mb-1">
-              <span>{e.occurredAt.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</span>
-              {e.authorName && <span>· {e.authorName}</span>}
-              {canEdit && e.body && (
-                <button
-                  onClick={() => onSendNote(e.body!, 'cluster synthesis')}
-                  title="Send this reflection to a nucleus that carries this theme"
-                  className="ml-auto opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 not-italic text-stone-500 hover:text-stone-800"
-                >
-                  <SendIcon className="w-3 h-3" /> Send to…
-                </button>
+          editingEntryId === e.id ? (
+            <SynthesisEntryEditor
+              key={e.id}
+              initialBody={e.body ?? ''}
+              onCancel={() => setEditingEntryId(null)}
+              onSubmit={async (newBody) => {
+                await onUpdateEntry(e.id, newBody);
+                setEditingEntryId(null);
+              }}
+            />
+          ) : (
+            <article key={e.id} className="group">
+              <div className="flex items-baseline gap-2 text-xs text-stone-500 font-journal italic mb-1">
+                <span>{e.occurredAt.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</span>
+                {e.authorName && <span>· {e.authorName}</span>}
+                {canEdit && (
+                  <div className="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {e.body && (
+                      <button
+                        onClick={() => onSendNote(e.body!, 'cluster synthesis')}
+                        title="Send this reflection to a nucleus that carries this theme"
+                        className="inline-flex items-center gap-1 not-italic text-stone-500 hover:text-stone-800"
+                      >
+                        <SendIcon className="w-3 h-3" /> Send to…
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setEditConfirmFor(e.id)}
+                      title="Edit reflection"
+                      className="p-0.5 text-stone-400 hover:text-stone-700"
+                    >
+                      <PencilIcon className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => setDeleteConfirmFor(e.id)}
+                      title="Delete reflection"
+                      className="p-0.5 text-stone-400 hover:text-rose-600"
+                    >
+                      <Trash2Icon className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+              <p className="font-journal text-stone-700 text-base leading-relaxed whitespace-pre-wrap">{e.body}</p>
+              {e.editedAt && (
+                <p className="font-journal italic text-[11px] text-stone-400 mt-1">
+                  Edited {e.editedAt.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                  {e.editedByName ? ` by ${e.editedByName}` : ''}
+                </p>
               )}
-            </div>
-            <p className="font-journal text-stone-700 text-base leading-relaxed whitespace-pre-wrap">{e.body}</p>
-          </article>
+            </article>
+          )
         ))}
       </div>
     </section>
+
+    <ConfirmDialog
+      open={!!editConfirmFor}
+      title="Edit this reflection?"
+      message={
+        <>
+          Edits overwrite the previous text and are visible to anyone who reads
+          the cluster synthesis. The reflection will be marked as edited and
+          stamped with your name. Continue?
+        </>
+      }
+      confirmLabel="Yes, edit"
+      onCancel={() => setEditConfirmFor(null)}
+      onConfirm={() => {
+        if (editConfirmFor) setEditingEntryId(editConfirmFor);
+        setEditConfirmFor(null);
+      }}
+    />
+
+    <ConfirmDialog
+      open={!!deleteConfirmFor}
+      title="Delete this reflection?"
+      message={
+        <>
+          This permanently removes the reflection for everyone. This cannot
+          be undone. Continue?
+        </>
+      }
+      confirmLabel={deleting ? 'Deleting…' : 'Yes, delete'}
+      onCancel={() => { if (!deleting) setDeleteConfirmFor(null); }}
+      onConfirm={async () => {
+        if (!deleteConfirmFor || deleting) return;
+        setDeleting(true);
+        try {
+          await onDeleteEntry(deleteConfirmFor);
+          setDeleteConfirmFor(null);
+        } finally {
+          setDeleting(false);
+        }
+      }}
+    />
+    </>
+  );
+}
+
+
+// ─── Synthesis reflection edit composer ─────────────────────
+
+function SynthesisEntryEditor({
+  initialBody, onCancel, onSubmit,
+}: {
+  initialBody: string;
+  onCancel: () => void;
+  onSubmit: (body: string) => Promise<void>;
+}) {
+  const [body, setBody] = useState(initialBody);
+  const [saving, setSaving] = useState(false);
+
+  // Unsaved-changes guard: warn before leaving with an in-progress edit.
+  // (Cancel is a deliberate discard, so it is not guarded.)
+  const dirty = body !== initialBody;
+  useUnsavedChanges(dirty);
+
+  return (
+    <div className="bg-white/80 border border-amber-900/20 rounded-xl p-3">
+      <div className="text-xs uppercase tracking-wider text-amber-700 font-semibold mb-2">
+        Editing reflection
+      </div>
+      <textarea
+        autoFocus
+        value={body}
+        onChange={e => setBody(e.target.value)}
+        rows={6}
+        className="w-full bg-transparent font-journal text-stone-800 text-base leading-relaxed focus:outline-none resize-y"
+      />
+      <div className="flex items-center gap-2 mt-2">
+        <button
+          disabled={!body.trim() || saving}
+          onClick={async () => {
+            if (!body.trim()) return;
+            setSaving(true);
+            try { await onSubmit(body); }
+            finally { setSaving(false); }
+          }}
+          className="px-3 py-1.5 bg-stone-800 text-amber-50 text-xs font-semibold rounded-lg disabled:opacity-50"
+        >
+          {saving ? 'Saving…' : 'Save changes'}
+        </button>
+        <button onClick={onCancel} className="px-2 py-1.5 text-xs text-stone-600 hover:text-stone-900">
+          Cancel
+        </button>
+        <span className="text-xs text-amber-700 italic font-journal ml-auto">
+          Editing will overwrite the previous text.
+        </span>
+      </div>
+    </div>
   );
 }
 

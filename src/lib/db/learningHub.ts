@@ -507,6 +507,33 @@ export async function createSynthesisEntry(
   return out;
 }
 
+// Edit an existing synthesis reflection. Stamps edited_at/edited_by.
+export async function updateSynthesisEntry(
+  entryId: string,
+  body: string,
+): Promise<void> {
+  const { data: { user } } = await supabase.auth.getUser();
+  const { error } = await supabase
+    .from('journal_entries')
+    .update({
+      body: body.trim(),
+      edited_at: new Date().toISOString(),
+      edited_by: user?.id ?? null,
+    })
+    .eq('id', entryId);
+  if (error) throw error;
+}
+
+// Delete a synthesis reflection outright. Gated by the "Delete own
+// entries or as curator" RLS policy's cluster branch.
+export async function deleteSynthesisEntry(entryId: string): Promise<void> {
+  const { error } = await supabase
+    .from('journal_entries')
+    .delete()
+    .eq('id', entryId);
+  if (error) throw error;
+}
+
 // Push a cluster theme down to selected nuclei. For each nucleus
 // that does NOT yet have a learning_theme linked to this cluster
 // theme, we create one (status='established') and — when the
