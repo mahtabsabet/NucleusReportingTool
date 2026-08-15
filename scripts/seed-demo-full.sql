@@ -88,42 +88,48 @@ declare
   harborview_id uuid;
 begin
 
+  -- Geographically placed in Alberta so the "Boundaries" map layer
+  -- (real cluster polygons, public/data/alberta-clusters.geojson)
+  -- has something to demo: Cedar Hollow sits inside the real
+  -- "Calgary" cluster polygon, Northgate inside "Edmonton" — each
+  -- nucleus/household below keeps its original relative offset
+  -- from the old (Ottawa-area) cluster center, just re-based here.
   insert into clusters (name, center_lat, center_lng, zoom)
-  values ('Cedar Hollow', 45.4215, -75.6972, 11)
+  values ('Cedar Hollow', 51.0387, -114.0509, 11)
   returning id into cedar_id;
 
   insert into clusters (name, center_lat, center_lng, zoom)
-  values ('Northgate', 45.5800, -75.4900, 11)
+  values ('Northgate', 53.5303, -113.5012, 11)
   returning id into northgate_id;
 
   -- ─── Nuclei ────────────────────────────────────────────────
 
   insert into nuclei (cluster_id, name, lat, lng, notes, banner_image_url)
-  values (cedar_id, 'Riverside', 45.4180, -75.6900,
+  values (cedar_id, 'Riverside', 51.0352, -114.0437,
     'The most established nucleus in Cedar Hollow — four active core activities and a steady rhythm of reflection.', null)
   returning id into riverside_id;
 
   insert into nuclei (cluster_id, name, lat, lng, notes)
-  values (cedar_id, 'Elmwood', 45.4300, -75.7100,
+  values (cedar_id, 'Elmwood', 51.0472, -114.0637,
     'Building momentum — a new children''s class just started and a junior youth group is finding its footing.')
   returning id into elmwood_id;
 
   insert into nuclei (cluster_id, name, lat, lng, notes)
-  values (cedar_id, 'Birchwood Commons', 45.4050, -75.6800,
+  values (cedar_id, 'Birchwood Commons', 51.0222, -114.0337,
     'A home-based devotional gathering is drawing in new families.')
   returning id into birchwood_id;
 
   insert into nuclei (cluster_id, name, lat, lng)
-  values (cedar_id, 'Sunview Heights', 45.4400, -75.6600)
+  values (cedar_id, 'Sunview Heights', 51.0572, -114.0137)
   returning id into sunview_id;
 
   insert into nuclei (cluster_id, name, lat, lng, notes)
-  values (northgate_id, 'Pinecrest', 45.5750, -75.4950,
+  values (northgate_id, 'Pinecrest', 53.5253, -113.5062,
     'Northgate''s furthest-along nucleus, though the cluster itself has no assigned coordinator yet.')
   returning id into pinecrest_id;
 
   insert into nuclei (cluster_id, name, lat, lng)
-  values (northgate_id, 'Harborview', 45.5900, -75.4700)
+  values (northgate_id, 'Harborview', 53.5403, -113.4812)
   returning id into harborview_id;
 
   -- ─── Capacity catalogs (one per cluster) ────────────────────
@@ -759,9 +765,9 @@ do $$ begin raise notice 'Cluster meeting notes seeded.'; end $$;
 insert into households (jurisdiction_id, display_name, address_line, lat, lng, notes)
 select j.id, x.display_name, x.address_line, x.lat, x.lng, x.notes
 from (values
-  ('Cedar Hollow', 'Osei Household', '14 Cedar Lane', 45.4185, -75.6910, 'Long-established Bahá''í family; frequent hosts.'),
-  ('Cedar Hollow', 'Fernandez-Delgado Household', '22 Maple Court', 45.4310, -75.7080, 'New to the neighborhood this year.'),
-  ('Northgate',    'Lindqvist Household', '8 Harbor Road', 45.5760, -75.4960, null)
+  ('Cedar Hollow', 'Osei Household', '14 Cedar Lane', 51.0357, -114.0447, 'Long-established Bahá''í family; frequent hosts.'),
+  ('Cedar Hollow', 'Fernandez-Delgado Household', '22 Maple Court', 51.0482, -114.0617, 'New to the neighborhood this year.'),
+  ('Northgate',    'Lindqvist Household', '8 Harbor Road', 53.5263, -113.5072, null)
 ) as x(cluster_name, display_name, address_line, lat, lng, notes)
 join clusters c on c.name = x.cluster_name
 join lsa_jurisdictions j on j.cluster_id = c.id;
