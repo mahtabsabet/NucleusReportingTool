@@ -329,8 +329,9 @@ export function IndividualProfile() {
       );
       const savedCapacities = await fetchPersonCapacities(id!);
 
+      // Minors: photos aren't collected, same as email/phone above.
       let savedPhotoUrl = photoUrl;
-      if (editPhotoFile) {
+      if (editPhotoFile && !willBeMinor) {
         savedPhotoUrl = await uploadProfilePhoto(id!, editPhotoFile);
         setPhotoUrl(savedPhotoUrl);
       }
@@ -626,7 +627,7 @@ export function IndividualProfile() {
                       <span>{initials}</span>
                     )}
                   </div>
-                  {editing && (
+                  {editing && !isMinorForAgeGroup(editAgeGroup, editMinorOverride) && (
                     <label className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl bg-black/40 cursor-pointer opacity-0 hover:opacity-100 transition-opacity">
                       <CameraIcon className="w-6 h-6 text-white mb-1" />
                       <span className="text-white text-xs font-semibold">
@@ -840,7 +841,7 @@ export function IndividualProfile() {
                     )}
                     {isMinorForAgeGroup(editAgeGroup, editMinorOverride) && (
                       <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 leading-snug">
-                        Minors: email and phone are not collected.
+                        Minors: email, phone, and profile photos are not collected.
                       </p>
                     )}
                   </div>

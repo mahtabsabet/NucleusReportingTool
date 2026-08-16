@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronLeftIcon,
@@ -9,22 +9,31 @@ import {
   LayoutDashboardIcon,
   ActivityIcon,
   UserIcon,
-  CalendarIcon,
-  BarChart3Icon,
-  MessageCircleIcon,
   ShieldCheckIcon,
   HomeIcon,
   SettingsIcon,
-  SmartphoneIcon,
-  ZapIcon,
   BookOpenIcon,
 } from 'lucide-react';
 import { GlobalSearch } from './GlobalSearch';
+import { getCallerContext } from '../lib/db/users';
+import {
+  type CallerContext,
+  isClusterCoordinator,
+  isNucleusCollaborator,
+  isLsaMember,
+} from '../lib/permissions';
 
 // ============================================================
 // Content model — one entry per feature area. Kept as plain data
 // (rather than inline JSX per section) so the filter box below can
 // search it directly without walking the DOM.
+//
+// `visibleTo` gates a section to the callers who can actually reach
+// the interface it describes — undefined means everyone signed in
+// can see it. Ordered lowest-permission-first: an activity host's
+// world (Getting around / Activities / People) comes before a
+// nucleus coordinator's (Nucleus), then a cluster coordinator's
+// (Cluster), then admin-only and LSA-only material last.
 // ============================================================
 
 interface GuideBullet {
@@ -40,13 +49,36 @@ interface GuideSection {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   accent: string;
+  visibleTo?: (ctx: CallerContext) => boolean;
   subsections: GuideSubsection[];
 }
 
 const b = (lead: string, text: string): GuideBullet => ({ lead, text });
 const plain = (text: string): GuideBullet => ({ text });
 
-const GUIDE_SECTIONS: GuideSection[] = [
+// Anyone who can see a nucleus dashboard at all: nucleus coordinators
+// and up (cluster coordinators, regional viewers, LSA members, and
+// admins all have at least read access to every nucleus in their scope).
+export const seesNucleusLevel = (ctx: CallerContext) =>
+  ctx.isAdmin || ctx.isSuperAdmin || ctx.isRegionalViewer
+  || isNucleusCollaborator(ctx) || isClusterCoordinator(ctx) || isLsaMember(ctx);
+
+// Anyone who can see a cluster landing page: cluster coordinators and
+// up. Nucleus coordinators and activity leads are pinned to their own
+// nucleus/activity and never reach this level.
+export const seesClusterLevel = (ctx: CallerContext) =>
+  ctx.isAdmin || ctx.isSuperAdmin || ctx.isRegionalViewer
+  || isClusterCoordinator(ctx) || isLsaMember(ctx);
+
+export const seesRolesAndPermissions = (ctx: CallerContext) =>
+  ctx.isAdmin || ctx.isSuperAdmin || ctx.isRegionalViewer;
+
+// LSA households are Super-Admin + LSA-member only — a plain Admin
+// cannot open this layer, so it's excluded here on purpose.
+export const seesLsaHouseholds = (ctx: CallerContext) =>
+  ctx.isSuperAdmin || isLsaMember(ctx);
+
+export const GUIDE_SECTIONS: GuideSection[] = [
   {
     id: 'getting-around',
     title: 'Getting around',
@@ -55,78 +87,8 @@ const GUIDE_SECTIONS: GuideSection[] = [
     subsections: [
       {
         bullets: [
-          b('Map', "The home screen — every nucleus in the organization, plotted as pins. The sidebar lists every cluster with its nucleus count; select one to zoom and filter, or choose 'All Clusters' for the full picture."),
-          b('Boundaries', 'A map toggle that overlays the real geographic cluster boundaries underneath the pins.'),
-          b('Progress', "A map toggle that groups nuclei by milestone stage and draws a line between any two nuclei that share a person — a quick way to see how nuclei connect, not just where they are."),
           b('Search', "The search bar at the top of most pages looks across people, activities, and nuclei at once. Use the arrow keys to move through results and Enter to jump straight to one."),
-          b('Account menu', 'Your avatar, top-right, on every page — change your profile photo, change your password, see your role, or log out.'),
-        ],
-      },
-    ],
-  },
-  {
-    id: 'clusters',
-    title: 'Clusters',
-    icon: UsersIcon,
-    accent: 'emerald',
-    subsections: [
-      {
-        heading: 'Cluster People',
-        bullets: [
-          plain('The full, searchable roster for a cluster. This is also where duplicate profiles get cleaned up.'),
-          b('Possible duplicates', "When the tool notices two profiles that look like the same person, an amber banner lists each set with a 'Review & merge' button."),
-          b('Merging manually', "Select exactly two people and a 'Merge…' button appears. Pick which profile to keep — everything else (nuclei, activities, course progress, attendance) moves onto it, and any missing email, phone, or photo gets filled in from the other."),
-        ],
-      },
-      {
-        heading: 'Capacity catalog',
-        bullets: [
-          plain("The cluster-wide list of capacities (Tutor, Animator, and so on). New capacities are actually created from a person's own profile — this screen is for cleanup afterward."),
-          b('Merge', 'Check two or more near-duplicates (like "Tutor" and "Book Tutor") and merge them into one wording — everyone holding either gets reconciled onto the survivor.'),
-        ],
-      },
-      {
-        bullets: [
-          b('New Nucleus', 'Places a new nucleus directly on the map.'),
-        ],
-      },
-    ],
-  },
-  {
-    id: 'nuclei',
-    title: 'Nuclei',
-    icon: LayoutDashboardIcon,
-    accent: 'amber',
-    subsections: [
-      {
-        heading: 'Nucleus Dashboard',
-        bullets: [
-          plain('Its activity list, milestone stage, and a Capacities module that answers "who here could tutor, or host their own gathering?" at a glance.'),
-        ],
-      },
-      {
-        heading: 'Concentric Circles',
-        bullets: [
-          plain('Drag a person between Aware, Participating, Supporting, and Core to update how engaged they are. Nothing is saved until you click Save Engagement Levels.'),
-          b('Primary contact', "Click a person's avatar to open their panel — one field there is Primary Contact, the person who introduced or connects them. This is what draws the connecting lines in the Network view below."),
-        ],
-      },
-      {
-        heading: 'Network view',
-        bullets: [
-          plain('A node graph of everyone in the nucleus, connected along those primary-contact lines — a good way to see how people actually relate to each other, not just which ring they sit in.'),
-        ],
-      },
-      {
-        heading: 'Milestones',
-        bullets: [
-          plain('Four stages, 0 through 3, picked with one click. Milestone 3 unlocks detailed scoring across eight growth features, each a 0–10 slider with a written description of what 0, 5, and 10 actually look like, plus an optional note — and one holistic reflection note below all eight.'),
-        ],
-      },
-      {
-        heading: 'Nucleus Journal',
-        bullets: [
-          plain("Free-form, nucleus-wide reflections, alongside the nucleus's own 'Objects of Learning' — click a theme to filter entries down to just that pattern."),
+          b('Account menu', 'Your avatar, top-right, on every page — change your profile photo, change your password, open this guide, see your role, or log out.'),
         ],
       },
     ],
@@ -175,7 +137,8 @@ const GUIDE_SECTIONS: GuideSection[] = [
     subsections: [
       {
         bullets: [
-          plain("A person's profile: identity (age group, profile status, relationship to the Faith — email and phone are hidden entirely for minors), capacities, curriculum, notes, and a photo."),
+          plain("A person's profile: identity (age group, profile status, relationship to the Faith), capacities, curriculum, notes, and a photo."),
+          b('Minors', "Email, phone, and profile photos aren't collected for anyone marked as a minor — those fields are hidden entirely."),
           b('Curriculum', "Ruhi books are tracked unit by unit — click a unit to cycle it through Not Started, In Progress, Partially Complete, and Completed. JYSEP texts are tracked as a whole course."),
           b('Deleting someone', "A type-their-name-to-confirm action. If you don't have delete rights yourself, you'll see Request Deletion instead, which goes to a reviewer."),
         ],
@@ -183,50 +146,98 @@ const GUIDE_SECTIONS: GuideSection[] = [
     ],
   },
   {
-    id: 'timeline',
-    title: 'Timeline',
-    icon: CalendarIcon,
-    accent: 'cyan',
+    id: 'nucleus',
+    title: 'Nucleus',
+    icon: LayoutDashboardIcon,
+    accent: 'amber',
+    visibleTo: seesNucleusLevel,
     subsections: [
       {
+        heading: 'Timeline',
         bullets: [
-          plain("Two scopes: a cluster timeline (every nucleus at once, or 'All Clusters') and each nucleus's own timeline."),
-          b('Auto-populated entries', "Recurring activities appear automatically, one marker per occurrence, for as long as they're active; short-duration activities show as a single span; sporadic activities don't appear, since they have no fixed schedule to plot. Clicking one of these takes you to the activity itself — that's also where you'd edit it."),
+          plain('A compressed preview sits on the dashboard — click it to open the full nucleus timeline.'),
+          b('Auto-populated entries', "Recurring activities appear automatically, one marker per occurrence, for as long as they're active; short-duration activities show as a single span; sporadic activities don't appear, since they have no fixed schedule to plot. Clicking one takes you to the activity itself — that's also where you'd edit it."),
           b('Add Event / Add Meeting', 'Manually add anything else — name, date(s), time, location, and, for meetings, attendees.'),
           b('Attachments', 'Click any manual item to attach a pasted text note, an uploaded document (PDF/DOC/DOCX), or a link.'),
-          b('Cycles', "The recurring institute-cycle ladder along the strip. Cluster coordinators can nudge a cycle's boundary by a day at a time from the cluster timeline — not from a nucleus timeline."),
+          b('Cycles', "The recurring institute-cycle ladder along the strip is read-only here — cycle boundaries can only be moved from the cluster timeline."),
           b('Zoom & pan', "Scroll to zoom, shift-scroll to pan, pinch and swipe on mobile, and 'Fit all' to reset to the full range."),
         ],
       },
-    ],
-  },
-  {
-    id: 'learning-hub',
-    title: 'Cluster Learning Hub',
-    icon: MessageCircleIcon,
-    accent: 'indigo',
-    subsections: [
       {
+        heading: 'Milestones',
         bullets: [
-          plain("Objects of Learning proposed at the nucleus level (starting as 'emerging,' then promoted to 'established') automatically link up to one cluster-wide version of the same theme by name."),
-          b('The Hub itself', "Three columns: the theme list (with a manual consolidation slider), which nuclei are contributing and their representative moments, and the cluster coordinator's own synthesis reflections tying the pattern together."),
-          b('Merge, archive, share', "Merge near-duplicate themes, archive one that's run its course (optionally posting a note back into every nucleus that had it), or Share with nuclei to push a theme — and an optional seed note — down to nuclei that don't have it yet."),
-          b('Cluster Meeting Notes', "A separate, general log above the three columns for inter-institutional meetings that aren't tied to a specific theme."),
+          plain('Four stages, 0 through 3, picked with one click. Milestone 3 unlocks detailed scoring across eight growth features, each a 0–10 slider with a written description of what 0, 5, and 10 actually look like, plus an optional note — and one holistic reflection note below all eight.'),
+        ],
+      },
+      {
+        heading: 'Core and Other Activities',
+        bullets: [
+          plain("The nucleus's activity list — schedule, roster, and status for each one. Open any activity from here to manage it."),
+        ],
+      },
+      {
+        heading: 'Overall Participation',
+        bullets: [
+          plain('The concentric circles — drag a person between Aware, Participating, Supporting, and Core to update how engaged they are. Nothing is saved until you click Save Engagement Levels.'),
+          b('Primary contact', "Click a person's avatar to open their panel — one field there is Primary Contact, the person who introduced or connects them. This is what draws the connecting lines in Network Overview below."),
+        ],
+      },
+      {
+        heading: 'Network Overview',
+        bullets: [
+          plain('A node graph of everyone in the nucleus, connected along those primary-contact lines — a good way to see how people actually relate to each other, not just which ring they sit in.'),
+        ],
+      },
+      {
+        heading: 'Capacities & Books',
+        bullets: [
+          plain('Educational progress and capacities for everyone in the nucleus — a quick answer to "who here could tutor, or host their own gathering?"'),
+        ],
+      },
+      {
+        heading: 'Nucleus Journal',
+        bullets: [
+          plain("Free-form, nucleus-wide reflections, alongside the nucleus's own 'Objects of Learning' — click a theme to filter entries down to just that pattern. These themes are what feed into the cluster-wide Learning Hub."),
+        ],
+      },
+      {
+        heading: 'Growth Report',
+        bullets: [
+          plain('Trends in participation and engagement over time, scoped to this nucleus — new activities, participants added, circle movements, and course completions, both as summary counts and a full chronological timeline.'),
         ],
       },
     ],
   },
   {
-    id: 'reports',
-    title: 'Reports',
-    icon: BarChart3Icon,
-    accent: 'sky',
+    id: 'cluster',
+    title: 'Cluster',
+    icon: UsersIcon,
+    accent: 'emerald',
+    visibleTo: seesClusterLevel,
     subsections: [
       {
+        heading: 'Map',
         bullets: [
-          b('Growth Report', 'Pick a date range (or 7/30/90 days, 1 year); shows new activities, participants added, circle movements, and course completions/starts, both as summary counts and a full chronological timeline.'),
-          b('Cluster Growth Profile', 'A formal, point-in-time snapshot — exportable as Excel or as a print-ready PDF.'),
-          b('Activity Type Reports', "One table each for Children's Classes, Junior Youth Groups, Study Circles, and Devotional Gatherings — who's teaching, animating, tutoring, or hosting, and how many participants."),
+          plain("Every nucleus in the cluster (or every cluster in the organization, before one is selected), plotted as pins. The sidebar lists each cluster with its nucleus count; select one to zoom and filter, or choose 'All Clusters' for the full picture."),
+          b('New Nucleus', 'Places a new nucleus directly on the map.'),
+        ],
+      },
+      {
+        heading: 'Top menu',
+        bullets: [
+          b('Progress', "Groups nuclei by milestone stage and draws a line between any two that share a person — a quick way to see how nuclei connect, not just where they are."),
+          b('Timeline', "Opens the cluster-wide timeline. It works the same as a nucleus timeline (see the Nucleus section) — it just shows every nucleus in the cluster at once, or 'All Clusters.' Cycle boundaries can only be adjusted from here, not from a nucleus timeline."),
+          b('Boundaries', "Overlays the real geographic cluster boundaries underneath the pins."),
+        ],
+      },
+      {
+        heading: 'Side menu',
+        bullets: [
+          b('Cluster Profile', "Curriculum progress and capacities aggregated across the whole cluster. A Manage button opens capacity cleanup — rename a capacity, or merge near-duplicates like 'Tutor' and 'Book Tutor' into one; everyone holding either gets reconciled onto the survivor."),
+          b('Growth Report', "The same trends as a nucleus Growth Report, rolled up across every nucleus in the cluster."),
+          b('Learning Hub', "Gathers every nucleus's Objects of Learning side by side, so when two nuclei are independently noticing the same pattern, that becomes visible instead of staying two disconnected observations. Merge near-duplicate themes, archive one that's run its course, or Share with nuclei to push a theme down to nuclei that don't have it yet — plus room for your own cluster-level synthesis reflections tying a pattern together. Cluster Meeting Notes sits above it — a separate, general log for inter-institutional meetings that aren't tied to a specific theme."),
+          b('People', "The full, searchable roster for the cluster. Also where duplicate profiles get cleaned up: an amber banner flags likely duplicates automatically ('Review & merge'), or select exactly two people yourself and choose which profile to keep — everything else moves onto it."),
+          b('Activity Type Reports', "Four tables — Children's Classes, Junior Youth Groups, Study Circles, and Devotionals — showing who's teaching, animating, tutoring, or hosting, and how many participants, for each activity of that type."),
         ],
       },
     ],
@@ -236,11 +247,12 @@ const GUIDE_SECTIONS: GuideSection[] = [
     title: 'Roles & permissions',
     icon: ShieldCheckIcon,
     accent: 'slate',
+    visibleTo: seesRolesAndPermissions,
     subsections: [
       {
         bullets: [
           plain('Five roles sit beneath full Admin access: Cluster Coordinator, Nucleus Coordinator, Activity Lead, Regional (View-Only), and LSA Member — each scoped to exactly the cluster, nucleus, or activity they were assigned to.'),
-          b('Creating a user', "Pick a role, then a scope (only as many levels as that role actually needs), a name and email, and how they'll sign in — an invitation email, or a temporary password you share yourself."),
+          b('Creating a user', "From Manage Users: pick a role, then a scope (only as many levels as that role actually needs), a name and email, and how they'll sign in — an invitation email, or a temporary password you share yourself."),
           b('Direct actions vs. requests', "Some actions go through immediately; others — deleting a person, or a whole user account — go into a request queue for someone with broader access to approve, even for a Cluster Coordinator."),
           b('Approving a request', "Only marks the request approved — it doesn't perform the action by itself. A reviewer still has to go make the actual change afterward."),
         ],
@@ -252,10 +264,11 @@ const GUIDE_SECTIONS: GuideSection[] = [
     title: 'LSA households',
     icon: HomeIcon,
     accent: 'stone',
+    visibleTo: seesLsaHouseholds,
     subsections: [
       {
         bullets: [
-          plain("A separate, privacy-walled layer — visible only to LSA members (and Super Admins, for upkeep), never to an ordinary Admin. Reach it from the Households toggle next to the usual community view."),
+          plain("A separate, privacy-walled layer — visible only to LSA members and Super Admins, never to an ordinary Admin. Reach it from the Households toggle next to the usual community view."),
           b('Adding households', "One at a time on the map, or bulk-import a spreadsheet (CSV or Excel). The tool guesses which column is which, previews a few rows, and geocodes addresses automatically — anything it can't place is still added, ready to hand-pin."),
           b('Linking members', "Each household member can be linked to their existing community-building profile (the tool proactively suggests likely matches), moved to a different household, or kept as an LSA-only entry with no link at all."),
         ],
@@ -307,9 +320,6 @@ const ACCENT_CLASSES: Record<string, { bg: string; text: string; dot: string }> 
   amber: { bg: 'bg-amber-50/50', text: 'text-amber-600', dot: 'bg-amber-400' },
   purple: { bg: 'bg-purple-50/50', text: 'text-purple-600', dot: 'bg-purple-400' },
   rose: { bg: 'bg-rose-50/50', text: 'text-rose-600', dot: 'bg-rose-400' },
-  cyan: { bg: 'bg-cyan-50/50', text: 'text-cyan-600', dot: 'bg-cyan-400' },
-  indigo: { bg: 'bg-indigo-50/50', text: 'text-indigo-600', dot: 'bg-indigo-400' },
-  sky: { bg: 'bg-sky-50/50', text: 'text-sky-600', dot: 'bg-sky-400' },
   slate: { bg: 'bg-slate-50/50', text: 'text-slate-600', dot: 'bg-slate-400' },
   stone: { bg: 'bg-stone-50/50', text: 'text-stone-600', dot: 'bg-stone-400' },
   gray: { bg: 'bg-gray-50/50', text: 'text-gray-600', dot: 'bg-gray-400' },
@@ -374,11 +384,29 @@ export function UserGuide() {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [openIds, setOpenIds] = useState<Set<string>>(new Set());
+  const [callerCtx, setCallerCtx] = useState<CallerContext | null>(null);
+  const [ctxLoading, setCtxLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    getCallerContext().then(ctx => {
+      if (!cancelled) {
+        setCallerCtx(ctx);
+        setCtxLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const sectionsForCaller = useMemo(
+    () => GUIDE_SECTIONS.filter(s => !s.visibleTo || (callerCtx && s.visibleTo(callerCtx))),
+    [callerCtx]
+  );
 
   const q = query.trim().toLowerCase();
   const filtered = useMemo(
-    () => GUIDE_SECTIONS.map(s => matchesQuery(s, q)).filter((s): s is GuideSection => s !== null),
-    [q]
+    () => sectionsForCaller.map(s => matchesQuery(s, q)).filter((s): s is GuideSection => s !== null),
+    [sectionsForCaller, q]
   );
 
   const isOpen = (id: string) => (q.length > 0 ? true : openIds.has(id));
@@ -390,7 +418,7 @@ export function UserGuide() {
       return next;
     });
   };
-  const expandAll = () => setOpenIds(new Set(GUIDE_SECTIONS.map(s => s.id)));
+  const expandAll = () => setOpenIds(new Set(sectionsForCaller.map(s => s.id)));
   const collapseAll = () => setOpenIds(new Set());
 
   return (
@@ -413,105 +441,69 @@ export function UserGuide() {
             <div className="w-12 h-12 bg-blue-600 text-white rounded-xl flex items-center justify-center shadow-md">
               <BookOpenIcon className="w-6 h-6" />
             </div>
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900 tracking-tight">User Guide</h1>
-              <p className="text-sm font-medium text-gray-500 mt-1">
-                How to use the Nucleus Reporting Tool (NRT)
-              </p>
-            </div>
+            <h1 className="text-3xl font-bold text-gray-900 tracking-tight">User Guide</h1>
           </div>
         </div>
       </header>
 
       <div className="max-w-4xl mx-auto p-8 space-y-6">
-        {/* Intro */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-8">
-          <p className="text-gray-600 leading-relaxed text-lg">
-            The Nucleus Reporting Tool is a web-based coordination platform for
-            community nuclei and cluster agencies — a visual, map-based way to
-            track community activities, individual development, and growth
-            patterns across every level, from a single activity up to the
-            region.
-          </p>
-        </div>
+        <p className="text-xs text-gray-500 italic">
+          This guide describes the desktop version of the app. The mobile
+          version has most of the same functionality — just laid out a
+          little differently.
+        </p>
 
-        {/* Quick Start */}
-        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl shadow-md overflow-hidden text-white">
-          <div className="border-b border-white/10 px-6 py-4 flex items-center gap-3">
-            <ZapIcon className="w-5 h-5 text-blue-200" />
-            <h2 className="text-lg font-bold text-white">Quick Start</h2>
+        {ctxLoading ? (
+          <div className="flex justify-center py-16">
+            <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
           </div>
-          <div className="p-6">
-            <ol className="space-y-2 text-sm text-blue-50 list-decimal list-inside">
-              <li>Pick your cluster from the map or sidebar.</li>
-              <li>Open any nucleus to see its dashboard and activities.</li>
-              <li>Try placing someone in the concentric circles, then click Save Engagement Levels.</li>
-              <li>Open an activity and write a quick Activity Notebook entry.</li>
-              <li>Check Reports for a growth summary of what you just did.</li>
-            </ol>
-          </div>
-        </div>
-
-        {/* Filter + expand/collapse */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-          <div className="relative flex-1">
-            <SearchIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder="Search this guide — e.g. 'attendance', 'timeline', 'roles'…"
-              className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-200"
-            />
-          </div>
-          {!q && (
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <button
-                onClick={expandAll}
-                className="px-3 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg"
-              >
-                Expand all
-              </button>
-              <button
-                onClick={collapseAll}
-                className="px-3 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg"
-              >
-                Collapse all
-              </button>
+        ) : (
+          <>
+            {/* Filter + expand/collapse */}
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <div className="relative flex-1">
+                <SearchIcon className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="Search this guide — e.g. 'attendance', 'timeline', 'roles'…"
+                  className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-200"
+                />
+              </div>
+              {!q && (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={expandAll}
+                    className="px-3 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg"
+                  >
+                    Expand all
+                  </button>
+                  <button
+                    onClick={collapseAll}
+                    className="px-3 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg"
+                  >
+                    Collapse all
+                  </button>
+                </div>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Sections */}
-        {filtered.length === 0 && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-8 text-center text-gray-500">
-            No matches for "{query}" — try a different word, or clear the search to browse everything.
-          </div>
+            {/* Sections */}
+            {filtered.length === 0 && (
+              <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 p-8 text-center text-gray-500">
+                No matches for "{query}" — try a different word, or clear the search to browse everything.
+              </div>
+            )}
+            {filtered.map(section => (
+              <GuideSectionCard
+                key={section.id}
+                section={section}
+                open={isOpen(section.id)}
+                onToggle={() => toggle(section.id)}
+              />
+            ))}
+          </>
         )}
-        {filtered.map(section => (
-          <GuideSectionCard
-            key={section.id}
-            section={section}
-            open={isOpen(section.id)}
-            onToggle={() => toggle(section.id)}
-          />
-        ))}
-
-        {/* Mobile note */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200/80 overflow-hidden">
-          <div className="bg-slate-50/50 border-b border-gray-100 px-6 py-4 flex items-center gap-3">
-            <SmartphoneIcon className="w-5 h-5 text-slate-600" />
-            <h2 className="text-lg font-bold text-gray-900">On mobile</h2>
-          </div>
-          <div className="p-6">
-            <p className="text-gray-600 text-sm leading-relaxed">
-              Everything above works on a phone too — it isn't a trimmed-down
-              view. The map, timeline, network, and reports each get a
-              touch-friendly layout, concentric circles switch to tap-to-place
-              instead of drag-and-drop, and the timeline runs top-to-bottom
-              instead of side-to-side.
-            </p>
-          </div>
-        </div>
       </div>
     </div>
   );
