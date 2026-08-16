@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { LogOutIcon, UserIcon, CameraIcon, KeyRoundIcon } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { LogOutIcon, UserIcon, CameraIcon, KeyRoundIcon, BookOpenIcon } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import {
   getCallerContext,
@@ -28,6 +29,7 @@ export interface AccountMenuProps {
 }
 
 export function AccountMenu({ inline = false, buttonClassName }: AccountMenuProps = {}) {
+  const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const [open, setOpen] = useState(false);
   const [ctx, setCtx] = useState<CallerContext | null>(null);
@@ -175,6 +177,18 @@ export function AccountMenu({ inline = false, buttonClassName }: AccountMenuProp
               </span>
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              navigate('/guide');
+            }}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 mb-2 bg-white hover:bg-gray-50 border border-gray-200 text-gray-700 font-medium rounded-xl text-sm transition-colors"
+          >
+            <BookOpenIcon className="w-4 h-4" />
+            User Guide
+          </button>
 
           <button
             type="button"
