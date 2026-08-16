@@ -214,6 +214,7 @@ function AppRoutes() {
         <ForcedChangePasswordGate />
         <Routes>
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/guide" element={<UserGuide />} />
           <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
           <Route path="/individual/:id" element={<IndividualProfile />} />
           <Route path="*" element={<Navigate to={alTarget} replace />} />
