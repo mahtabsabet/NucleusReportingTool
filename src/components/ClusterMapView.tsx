@@ -23,7 +23,6 @@ import {
   TrendingUpIcon,
   MapIcon,
   CalendarIcon,
-  HelpCircleIcon,
   NetworkIcon,
   UserPlusIcon,
   ArrowLeftIcon,
@@ -349,14 +348,6 @@ export function ClusterMapView() {
                 <LayersIcon
                   className={`w-4 h-4 sm:w-5 sm:h-5 ${showBoundaries ? 'text-indigo-600' : 'text-gray-500'}`} />
                 <span className="hidden sm:inline">Boundaries</span>
-              </button>
-
-              <button
-                onClick={() => navigate('/guide')}
-                className="flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
-                title="User Guide">
-                <HelpCircleIcon className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
-                <span className="hidden sm:inline">Guide</span>
               </button>
             </>
           )}
