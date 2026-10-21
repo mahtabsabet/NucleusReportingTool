@@ -43,7 +43,13 @@ export type ActivitySchedulingMode =
 
 export interface Activity {
   id: string;
-  nucleusId: string;
+  // null for a standalone activity — one that lives in a cluster but
+  // isn't (yet) part of a nucleus. See clusterId / location.
+  nucleusId: string | null;
+  clusterId?: string;
+  // Map position of a standalone activity. Nucleus activities are
+  // shown at their nucleus's marker and normally leave this unset.
+  location?: { lat: number; lng: number };
   name: string;
   type:
   'children-class' |

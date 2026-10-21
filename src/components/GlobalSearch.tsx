@@ -9,6 +9,7 @@ import {
   XIcon,
 } from 'lucide-react';
 import { globalSearch } from '../lib/db/search';
+import { activityPath } from '../lib/activityPath';
 import type {
   GlobalSearchResults,
   SearchActivityResult,
@@ -17,7 +18,7 @@ import type {
 type FlatItem =
   | { kind: 'person'; id: string; name: string; disambiguators: string[] }
   | { kind: 'nucleus'; id: string; name: string }
-  | { kind: 'activity'; id: string; name: string; nucleusId: string; nucleusName: string | null };
+  | { kind: 'activity'; id: string; name: string; nucleusId: string | null; nucleusName: string | null };
 
 const EMPTY: GlobalSearchResults = { people: [], nuclei: [], activities: [] };
 
@@ -141,7 +142,7 @@ export function GlobalSearch({
   function navigateTo(item: FlatItem) {
     if (item.kind === 'person') navigate(`/individual/${item.id}`);
     else if (item.kind === 'nucleus') navigate(`/nucleus/${item.id}`);
-    else if (item.kind === 'activity') navigate(`/nucleus/${item.nucleusId}/activity/${item.id}`);
+    else if (item.kind === 'activity') navigate(activityPath(item));
   }
 
   function handleSelect(item: FlatItem) {

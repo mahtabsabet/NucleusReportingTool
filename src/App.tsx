@@ -85,10 +85,14 @@ function useActivityLeadOnlyTarget(): { ready: boolean; target: string | null } 
         .eq('id', activityId)
         .maybeSingle();
       if (cancelled) return;
-      const nucleusId = (data as any)?.nucleus_id;
-      if (!nucleusId) { setState({ ready: true, target: null }); return; }
+      if (!data) { setState({ ready: true, target: null }); return; }
+      const nucleusId = (data as any).nucleus_id;
 
-      setState({ ready: true, target: `/nucleus/${nucleusId}/activity/${activityId}` });
+      // Standalone activities (no nucleus) live at /activity/:id.
+      setState({
+        ready: true,
+        target: nucleusId ? `/nucleus/${nucleusId}/activity/${activityId}` : `/activity/${activityId}`,
+      });
     })();
     return () => { cancelled = true; };
   }, [user]);
@@ -216,6 +220,7 @@ function AppRoutes() {
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/guide" element={<UserGuide />} />
           <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
+          <Route path="/activity/:activityId" element={<ActivityDetail />} />
           <Route path="/individual/:id" element={<IndividualProfile />} />
           <Route path="*" element={<Navigate to={alTarget} replace />} />
         </Routes>
@@ -247,6 +252,7 @@ function AppRoutes() {
           <Route path="/nucleus/:id/milestone" element={<MilestonePage />} />
           <Route path="/nucleus/:id/milestone-three" element={<MilestoneThreeRedirect />} />
           <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
+          <Route path="/activity/:activityId" element={<ActivityDetail />} />
           <Route path="/individual/:id" element={<IndividualProfile />} />
           <Route path="*" element={<Navigate to={lsaTarget} replace />} />
         </Routes>
@@ -305,6 +311,7 @@ function AppRoutes() {
       <Route path="/nucleus/:id/milestone" element={<MilestonePage />} />
       <Route path="/nucleus/:id/milestone-three" element={<MilestoneThreeRedirect />} />
       <Route path="/nucleus/:nucleusId/activity/:activityId" element={<ActivityDetail />} />
+      <Route path="/activity/:activityId" element={<ActivityDetail />} />
       <Route path="/individual/:id" element={<IndividualProfile />} />
       <Route path="/report/:type" element={<ActivityTypeReport />} />
       <Route path="/cluster-profile" element={<ClusterProfile />} />

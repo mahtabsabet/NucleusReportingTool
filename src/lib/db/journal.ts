@@ -538,7 +538,8 @@ export async function listEntriesByTheme(
 }
 
 export async function createActivityEntry(
-  nucleusId: string,
+  // null for a standalone activity; set when it joins a nucleus.
+  nucleusId: string | null,
   activityId: string,
   entry: NewActivityEntry,
 ): Promise<JournalEntry> {

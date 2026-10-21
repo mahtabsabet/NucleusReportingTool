@@ -177,12 +177,14 @@ Tracks a Person's progress through an individual Ruhi book unit. A person can ma
 ---
 
 ### Activity
-A standing, recurring activity within a nucleus (e.g., "Children's Class - Taradale"). Each individual occurrence is a Session.
+A standing, recurring activity, usually within a nucleus (e.g., "Children's Class - Taradale"). Each individual occurrence is a Session.
 
 | Field | Type | Notes |
 |---|---|---|
 | id | uuid | |
-| nucleus_id | uuid → Nucleus | |
+| nucleus_id | uuid → Nucleus | nullable — null for a **standalone** activity (see below) |
+| cluster_id | uuid → Cluster | always set; kept equal to the nucleus's cluster by a trigger when `nucleus_id` is set |
+| lat / lng | float | nullable — map position of a standalone activity |
 | name | text | |
 | type | enum | `children_class`, `junior_youth`, `study_circle`, `devotional`, `fireside`, `other` |
 | schedule_day_of_week | int | nullable, 0=Sunday … 6=Saturday |
@@ -194,6 +196,8 @@ A standing, recurring activity within a nucleus (e.g., "Children's Class - Tarad
 | is_active | boolean | allows archiving without deleting |
 | notes | text | |
 | deleted_at | timestamp | nullable — soft delete |
+
+> **Standalone activities.** An activity can exist in a cluster without a nucleus — e.g. a devotional that begins before a nucleus forms around it. It is placed on the cluster map (shown as a small dot rather than a nucleus pin) and is visible to the cluster's coordinators, LSA members, regional viewers, admins and its own activity lead; nucleus collaborators see it once it joins their nucleus. Participants added to a standalone activity are not enrolled in any nucleus. A cluster coordinator can later move it into a nucleus in the same cluster, or create a new nucleus at its location, via `attach_activity_to_nucleus()` — which atomically sets `nucleus_id`, re-points its notebook entries and timeline row, and enrolls its roster in the nucleus with no engagement level ("unassigned"). Learning-theme tagging in the activity notebook is only available once the activity belongs to a nucleus, since themes are nucleus-scoped. See migration `20261021_standalone_activities.sql`.
 
 > **Schedule design:** The structured fields (`schedule_day_of_week`, `schedule_time`, `schedule_interval_weeks`) allow the app to compute upcoming session dates and eventually send push notifications or email reminders. `schedule_notes` is for display when the structured fields don't cover an irregular pattern. Both can be populated — structured fields drive logic, notes drive display.
 

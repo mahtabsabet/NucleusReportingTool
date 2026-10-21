@@ -45,6 +45,7 @@ import {
 import { PersonNameCombobox } from './PersonNameCombobox';
 import { GlobalSearch } from './GlobalSearch';
 import { ActivityNotebook } from './ActivityNotebook';
+import { StandaloneActivityPanel } from './StandaloneActivityPanel';
 import { RecencyDot, AttendanceStrip, AttendanceLegend } from './AttendanceIndicator';
 import {
   getActivityAttendance,
@@ -140,13 +141,20 @@ const ROLE_DISPLAY: Record<string, string> = {
 };
 
 export function ActivityDetail() {
-  const { nucleusId, activityId } = useParams<{ nucleusId: string; activityId: string }>();
+  // Standalone activities (no nucleus) are served at /activity/:activityId.
+  const { nucleusId: routeNucleusId, activityId } = useParams<{ nucleusId?: string; activityId: string }>();
   const navigate = useNavigate();
   // Confirms before leaving when there are unsaved edits (see isDirty below).
   const guardedNavigate = useGuardedNavigate();
 
   const [activity, setActivity] = useState<Activity | null>(null);
   const [nucleusName, setNucleusName] = useState('');
+  // The activity's own nucleus wins over the URL once loaded, so a
+  // stale link to an activity that has since moved still works.
+  const nucleusId: string | null = activity ? activity.nucleusId : (routeNucleusId ?? null);
+  const backPath = nucleusId
+    ? `/nucleus/${nucleusId}`
+    : activity?.clusterId ? `/?cluster=${activity.clusterId}` : '/';
   const [personNames, setPersonNames] = useState<Record<string, string>>({});
   const [participants, setParticipants] = useState<Record<string, string[]>>({});
   // Participation lifecycle + review timestamps, keyed by person id.
@@ -346,6 +354,19 @@ export function ActivityDetail() {
     activityDeletePermission(activityId).then(setDeletePermission);
   }, [activityId]);
 
+  // Keep the URL in step with where the activity actually lives —
+  // e.g. an old /activity/:id link after it joined a nucleus.
+  useEffect(() => {
+    if (!activity) return;
+    if ((routeNucleusId ?? null) === activity.nucleusId) return;
+    navigate(
+      activity.nucleusId
+        ? `/nucleus/${activity.nucleusId}/activity/${activity.id}`
+        : `/activity/${activity.id}`,
+      { replace: true },
+    );
+  }, [activity, routeNucleusId, navigate]);
+
   // Schedule summary memo — must live ABOVE the `if (loading)` /
   // `if (!activity)` early returns below or React will flag a
   // hook-count change between the loading render (which doesn't
@@ -399,10 +420,10 @@ export function ActivityDetail() {
         <div className="text-center">
           <p className="text-gray-500 mb-4">Activity not found</p>
           <button
-            onClick={() => guardedNavigate(`/nucleus/${nucleusId}`)}
+            onClick={() => guardedNavigate(backPath)}
             className="text-blue-600 hover:underline"
           >
-            Back to nucleus
+            {routeNucleusId ? 'Back to nucleus' : 'Back to map'}
           </button>
         </div>
       </div>
@@ -415,15 +436,15 @@ export function ActivityDetail() {
   ) => {
     const { personId, name } = await addPersonToActivity({
       name: params.name,
-      nucleusId: nucleusId!,
+      nucleusId,
       activityId: activityId!,
       role,
       existingPersonId: params.existingPersonId,
       ageGroup: params.ageGroup,
       minorOverride: params.minorOverride,
     });
-    if (!params.existingPersonId) {
-      markPersonUnplaced(nucleusId!, personId);
+    if (!params.existingPersonId && nucleusId) {
+      markPersonUnplaced(nucleusId, personId);
     }
     setParticipants(prev => {
       const allIds = Object.values(prev).flat();
@@ -442,7 +463,7 @@ export function ActivityDetail() {
     setDeleteError(null);
     try {
       await deleteActivity(activityId!);
-      navigate(`/nucleus/${nucleusId}`);
+      navigate(backPath);
     } catch (err) {
       console.error('Failed to delete activity:', err);
       setDeleteError('Failed to delete activity. Please try again.');
@@ -705,11 +726,11 @@ export function ActivityDetail() {
               <div /> /* spacer keeps GlobalSearch right-aligned */
             ) : (
               <button
-                onClick={() => guardedNavigate(`/nucleus/${nucleusId}`)}
+                onClick={() => guardedNavigate(backPath)}
                 className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-600 hover:text-blue-800 transition-colors"
               >
                 <ChevronLeftIcon className="w-4 h-4" />
-                Back to {nucleusName}
+                {nucleusId ? `Back to ${nucleusName}` : 'Back to map'}
               </button>
             )}
             <div className="flex-1 max-w-sm">
@@ -811,7 +832,8 @@ export function ActivityDetail() {
                       targetId: activityId!,
                       action: 'delete',
                       note: requestNote.trim() || undefined,
-                      nucleusId: nucleusId!,
+                      nucleusId: nucleusId ?? undefined,
+                      clusterId: activity.clusterId,
                     });
                     setRequestSent(true);
                     setShowRequest(false);
@@ -937,6 +959,22 @@ export function ActivityDetail() {
       )}
 
       <div className="max-w-6xl mx-auto p-4 sm:p-8">
+        {!activity.nucleusId && !regionalOnly && (
+          <StandaloneActivityPanel
+            activity={activity}
+            onAttached={async () => {
+              // Both activity routes render this same component instance,
+              // so a URL change alone doesn't reload it. Refresh the
+              // activity; the URL-sync effect then moves to the nucleus
+              // route (and the panel disappears).
+              const fresh = await fetchActivityDetail(activity.id);
+              if (fresh) {
+                setActivity(fresh.activity);
+                setNucleusName(fresh.nucleusName);
+              }
+            }}
+          />
+        )}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* ─── Main column: participants + notebook ──────────────────────
               The "meat" of an activity is who's in it and what's being
@@ -1235,7 +1273,7 @@ export function ActivityDetail() {
             {!regionalOnly && (
               <div className="flex flex-wrap items-center gap-3">
                 <button
-                  onClick={() => guardedNavigate(`/nucleus/${nucleusId}`)}
+                  onClick={() => guardedNavigate(backPath)}
                   className="px-6 py-2.5 border border-gray-300 text-gray-700 font-semibold rounded-xl hover:bg-gray-50 transition-colors"
                 >
                   Cancel
