@@ -81,7 +81,7 @@ function makeOccurrence(activity: Activity, date: Date): TimelineEvent {
     name: activity.name,
     startDate: date,
     startTime: activity.time,
-    nucleusId: activity.nucleusId,
+    nucleusId: activity.nucleusId ?? undefined,
     activityId: activity.id,
     attendees: [],
   };

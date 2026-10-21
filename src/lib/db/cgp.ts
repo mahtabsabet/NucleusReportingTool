@@ -108,34 +108,39 @@ export async function fetchClusterGrowthProfile(clusterId: string): Promise<Clus
   }
 
   // 4. Active core activities in the cluster, with their active rosters.
-  const { data: nucleiRows, error: nucleiErr } = await supabase
-    .from('nuclei')
-    .select('id')
-    .eq('cluster_id', clusterId)
+  //    Selected by the activity's own cluster so standalone activities
+  //    (no nucleus) count too; falls back to the cluster's nuclei on a
+  //    database that predates activities.cluster_id.
+  const activityQuery = () => supabase
+    .from('activities')
+    .select('id, type, activity_participants(person_id, status, deleted_at)')
+    .eq('lifecycle_state', 'active')
     .is('deleted_at', null);
-  if (nucleiErr) throw nucleiErr;
-  const nucleusIds = ((nucleiRows ?? []) as any[]).map(n => n.id);
 
-  let activities: CgpActivity[] = [];
-  if (nucleusIds.length) {
-    const { data: actRows, error: actErr } = await supabase
-      .from('activities')
-      .select('id, type, activity_participants(person_id, status, deleted_at)')
-      .in('nucleus_id', nucleusIds)
-      .eq('lifecycle_state', 'active')
+  let { data: actRows, error: actErr } = await activityQuery().eq('cluster_id' as any, clusterId);
+  if (actErr && (actErr.code === '42703' || /column .* does not exist/i.test(actErr.message ?? ''))) {
+    const { data: nucleiRows, error: nucleiErr } = await supabase
+      .from('nuclei')
+      .select('id')
+      .eq('cluster_id', clusterId)
       .is('deleted_at', null);
-    if (actErr) throw actErr;
-
-    activities = ((actRows ?? []) as any[])
-      .filter(a => CORE_ACTIVITY_TYPES.includes(a.type))
-      .map(a => ({
-        type: a.type as ActivityType,
-        activeParticipantIds: ((a.activity_participants ?? []) as any[])
-          // status defaults to 'active'; tolerate older rows without it.
-          .filter(p => !p.deleted_at && (p.status ?? 'active') === 'active')
-          .map(p => p.person_id as string),
-      }));
+    if (nucleiErr) throw nucleiErr;
+    const nucleusIds = ((nucleiRows ?? []) as any[]).map(n => n.id);
+    ({ data: actRows, error: actErr } = nucleusIds.length
+      ? await activityQuery().in('nucleus_id', nucleusIds)
+      : { data: [], error: null });
   }
+  if (actErr) throw actErr;
+
+  const activities: CgpActivity[] = ((actRows ?? []) as any[])
+    .filter(a => CORE_ACTIVITY_TYPES.includes(a.type))
+    .map(a => ({
+      type: a.type as ActivityType,
+      activeParticipantIds: ((a.activity_participants ?? []) as any[])
+        // status defaults to 'active'; tolerate older rows without it.
+        .filter(p => !p.deleted_at && (p.status ?? 'active') === 'active')
+        .map(p => p.person_id as string),
+    }));
 
   return computeClusterGrowthProfile({
     clusterPersonIds,

@@ -5,6 +5,7 @@ import { fetchActivitiesByType, fetchClusterName, type ActivityReportRow } from 
 import type { Activity } from '../types';
 import { GlobalSearch } from './GlobalSearch';
 import { useIsMobile } from '../lib/useIsMobile';
+import { activityPath } from '../lib/activityPath';
 
 const TYPE_LABELS: Record<string, string> = {
   'children-class': "Children's Classes",
@@ -170,7 +171,7 @@ export function ActivityTypeReport() {
                         <td className="py-4 px-6 text-right">
                           <button
                             onClick={() =>
-                              navigate(`/nucleus/${row.nucleusId}/activity/${row.id}`)
+                              navigate(activityPath(row))
                             }
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-700 font-semibold rounded-lg hover:bg-blue-600 hover:text-white transition-all duration-200 shadow-sm"
                           >

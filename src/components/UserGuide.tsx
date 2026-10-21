@@ -220,6 +220,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
         bullets: [
           plain("Every nucleus in the cluster (or every cluster in the organization, before one is selected), plotted as pins. The sidebar lists each cluster with its nucleus count; select one to zoom and filter, or choose 'All Clusters' for the full picture."),
           b('New Nucleus', 'Places a new nucleus directly on the map.'),
+          b('New Activity', "Places an activity that isn't part of a nucleus yet — say, a devotional that started before anyone had a nucleus around it. It shows on the map as a small coloured dot instead of a pin. From the activity's page, a coordinator can later add it to an existing nucleus or create a new nucleus at its location; its participants are then enrolled in that nucleus as unassigned."),
         ],
       },
       {

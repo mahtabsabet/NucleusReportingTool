@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useUnsavedChanges, useGuardedNavigate } from '../lib/unsavedChanges';
+import { activityPath } from '../lib/activityPath';
 import {
   ChevronLeftIcon,
   ClockIcon,
@@ -1028,7 +1029,7 @@ export function IndividualProfile() {
                       </div>
                       <button
                         onClick={() =>
-                          guardedNavigate(`/nucleus/${activity.nucleusId}/activity/${activity.activityId}`)
+                          guardedNavigate(activityPath({ id: activity.activityId, nucleusId: activity.nucleusId }))
                         }
                         className="text-blue-600 hover:text-blue-800 font-semibold text-sm bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
                       >
