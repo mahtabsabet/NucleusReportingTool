@@ -17,7 +17,7 @@ export function StandaloneActivityPanel({
   onAttached,
 }: {
   activity: Activity;
-  onAttached: (nucleusId: string) => void;
+  onAttached: (nucleusId: string) => void | Promise<void>;
 }) {
   const clusterId = activity.clusterId ?? null;
   const [canManage, setCanManage] = useState(false);
@@ -40,9 +40,10 @@ export function StandaloneActivityPanel({
     setBusy(true);
     setError(null);
     try {
-      onAttached(await fn());
+      await onAttached(await fn());
     } catch (err: any) {
       setError(err?.message ?? 'Something went wrong. Please try again.');
+    } finally {
       setBusy(false);
     }
   };

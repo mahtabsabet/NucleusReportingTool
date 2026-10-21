@@ -962,7 +962,17 @@ export function ActivityDetail() {
         {!activity.nucleusId && !regionalOnly && (
           <StandaloneActivityPanel
             activity={activity}
-            onAttached={nid => navigate(`/nucleus/${nid}/activity/${activity.id}`, { replace: true })}
+            onAttached={async () => {
+              // Both activity routes render this same component instance,
+              // so a URL change alone doesn't reload it. Refresh the
+              // activity; the URL-sync effect then moves to the nucleus
+              // route (and the panel disappears).
+              const fresh = await fetchActivityDetail(activity.id);
+              if (fresh) {
+                setActivity(fresh.activity);
+                setNucleusName(fresh.nucleusName);
+              }
+            }}
           />
         )}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
