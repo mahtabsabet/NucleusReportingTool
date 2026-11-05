@@ -13,7 +13,7 @@ import {
 // Neighbourhood overlay shared by the community map and the household
 // map. Off by default; when on it draws thin, translucent outlines with
 // names (from zoom 12 in), and a neighbourhood's manual milestone as a
-// progressively deeper tint — capped well short of hiding the basemap.
+// light colour fill (one colour per milestone) that never hides the basemap.
 
 // @types/leaflet and @types/geojson aren't installed in this project,
 // so keep the shapes we touch loosely typed.
@@ -21,8 +21,11 @@ type Feature = { properties: NeighbourhoodProps };
 type FeatureCollection = { type: 'FeatureCollection'; features: Feature[] };
 type LatLng = { lat: number; lng: number };
 
-const TINT = '#0f766e';
-const MILESTONE_FILL: Record<0 | NeighbourhoodMilestone, number> = { 0: 0, 1: 0.14, 2: 0.26, 3: 0.38 };
+const TINT = '#0f766e';  // outlines and the "no milestone" state
+// One distinct hue per milestone (shades of a single colour were too
+// hard to tell apart), all at the same light fill so streets stay legible.
+const MILESTONE_COLOR: Record<NeighbourhoodMilestone, string> = { 1: '#f59e0b', 2: '#10b981', 3: '#6366f1' };
+const MILESTONE_FILL_OPACITY = 0.32;
 const LABEL_MIN_ZOOM = 12;
 const STORAGE_KEY = 'map.neighbourhoodOverlay';
 
@@ -120,11 +123,11 @@ export function NeighbourhoodLayer({
     const m = milestones.get(code) ?? 0;
     const isSelected = selected?.code === code;
     return {
-      color: TINT,
+      color: m ? MILESTONE_COLOR[m] : TINT,
       weight: isSelected ? 2.5 : 1.2,
-      opacity: isSelected ? 0.9 : 0.55,
-      fillColor: TINT,
-      fillOpacity: MILESTONE_FILL[m],
+      opacity: isSelected ? 0.9 : m ? 0.75 : 0.55,
+      fillColor: m ? MILESTONE_COLOR[m] : TINT,
+      fillOpacity: m ? MILESTONE_FILL_OPACITY : 0,
     };
   };
   // Restyle in place when milestones or the selection change.
@@ -197,8 +200,9 @@ export function NeighbourhoodLayer({
                       key={m ?? 'none'}
                       onClick={() => choose(m)}
                       disabled={saving}
+                      style={current === m && m != null ? { backgroundColor: MILESTONE_COLOR[m] } : undefined}
                       className={`flex-1 px-2 py-1.5 text-xs font-semibold border-r last:border-r-0 border-gray-200 transition-colors disabled:opacity-60 ${
-                        current === m ? 'bg-teal-700 text-white' : 'bg-white text-gray-700 hover:bg-teal-50'
+                        current === m ? (m == null ? 'bg-gray-700 text-white' : 'text-white') : 'bg-white text-gray-700 hover:bg-gray-50'
                       }`}>
                       {m == null ? 'None' : `M${m}`}
                     </button>
@@ -223,7 +227,7 @@ export function NeighbourhoodLayer({
             <span key={m} className="flex items-center gap-1.5">
               <span
                 className="w-3.5 h-3.5 rounded-sm border"
-                style={{ backgroundColor: TINT, opacity: 0.25 + MILESTONE_FILL[m] * 1.6, borderColor: TINT }} />
+                style={{ backgroundColor: MILESTONE_COLOR[m], opacity: 0.75, borderColor: MILESTONE_COLOR[m] }} />
               M{m}
             </span>
           ))}
