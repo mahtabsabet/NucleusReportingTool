@@ -42,7 +42,7 @@ import { getCallerContext, canCreateUsers } from '../lib/db/users';
 import { canAccessLsaLayer, canCreateAnyNucleus, canSetNeighbourhoodMilestones, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
 import { NeighbourhoodLayer, NeighbourhoodToggle, useNeighbourhoodOverlay } from './NeighbourhoodLayer';
-import { NEIGHBOURHOOD_CLUSTER_NAME } from '../lib/db/neighbourhoods';
+import { neighbourhoodClusterId as findNeighbourhoodCluster } from '../lib/db/neighbourhoods';
 import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -200,8 +200,8 @@ export function ClusterMapView() {
     : nuclei;
   const filteredStandalone = standaloneActivities.filter(a =>
     (!selectedCluster || a.clusterId === selectedCluster));
-  // The neighbourhood overlay exists for Calgary only (for now).
-  const neighbourhoodClusterId = clusters.find(c => c.name === NEIGHBOURHOOD_CLUSTER_NAME)?.id ?? null;
+  // The neighbourhood overlay covers Calgary only (for now).
+  const neighbourhoodClusterId = findNeighbourhoodCluster(clusters);
   const selectedClusterName = selectedCluster
     ? clusters.find((c) => c.id === selectedCluster)?.name ?? null
     : null;

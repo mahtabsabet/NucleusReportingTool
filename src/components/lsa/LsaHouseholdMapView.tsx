@@ -53,7 +53,7 @@ import {
   type CallerContext,
 } from '../../lib/permissions';
 import { NeighbourhoodLayer, NeighbourhoodToggle, useNeighbourhoodOverlay } from '../NeighbourhoodLayer';
-import { NEIGHBOURHOOD_CLUSTER_NAME } from '../../lib/db/neighbourhoods';
+import { neighbourhoodClusterId as findNeighbourhoodCluster } from '../../lib/db/neighbourhoods';
 import { householdMarkerIcon, householdMarkerArchivedIcon, householdMarkerEmptyIcon } from './HouseholdMarkerIcon';
 import { MobileBottomSheet, type SheetState } from './MobileBottomSheet';
 import { useIsMobile } from '../../lib/useIsMobile';
@@ -236,8 +236,8 @@ export function LsaHouseholdMapView() {
     () => jurisdictions.find(j => j.clusterId === selectedClusterId) ?? null,
     [jurisdictions, selectedClusterId],
   );
-  // The neighbourhood overlay exists for Calgary only (for now).
-  const neighbourhoodClusterId = clusters.find(c => c.name === NEIGHBOURHOOD_CLUSTER_NAME)?.id ?? null;
+  // The neighbourhood overlay covers Calgary only (for now).
+  const neighbourhoodClusterId = findNeighbourhoodCluster(clusters);
   const activeCluster = useMemo(
     () => clusters.find(c => c.id === selectedClusterId) ?? null,
     [clusters, selectedClusterId],
