@@ -39,8 +39,10 @@ import { createActivity, fetchStandaloneActivities } from '../lib/db/nucleus';
 import type { StandaloneActivityRow } from '../lib/db/nucleus';
 import type { Activity } from '../types';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
-import { canAccessLsaLayer, canCreateAnyNucleus, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
+import { canAccessLsaLayer, canCreateAnyNucleus, canSetNeighbourhoodMilestones, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
+import { NeighbourhoodLayer, NeighbourhoodToggle, useNeighbourhoodOverlay } from './NeighbourhoodLayer';
+import { NEIGHBOURHOOD_CLUSTER_NAME } from '../lib/db/neighbourhoods';
 import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
@@ -127,6 +129,7 @@ export function ClusterMapView() {
   const [showNetwork, setShowNetwork] = useState(false);
   const [showBoundaries, setShowBoundaries] = useState(false);
   const [boundariesData, setBoundariesData] = useState<any | null>(null);
+  const [showNeighbourhoods, setShowNeighbourhoods] = useNeighbourhoodOverlay();
   const [canCreate, setCanCreate] = useState(false);
   const [canCreateAnyCluster, setCanCreateAnyCluster] = useState(false);
   const [canManageUsers, setCanManageUsers] = useState(false);
@@ -197,6 +200,8 @@ export function ClusterMapView() {
     : nuclei;
   const filteredStandalone = standaloneActivities.filter(a =>
     (!selectedCluster || a.clusterId === selectedCluster));
+  // The neighbourhood overlay exists for Calgary only (for now).
+  const neighbourhoodClusterId = clusters.find(c => c.name === NEIGHBOURHOOD_CLUSTER_NAME)?.id ?? null;
   const selectedClusterName = selectedCluster
     ? clusters.find((c) => c.id === selectedCluster)?.name ?? null
     : null;
@@ -406,11 +411,18 @@ export function ClusterMapView() {
               <button
                 onClick={() => setShowBoundaries(!showBoundaries)}
                 title="Toggle cluster boundaries"
+                aria-label="Boundaries"
                 className={`flex items-center gap-1.5 sm:gap-2 px-2.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 border ${showBoundaries ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
                 <LayersIcon
                   className={`w-4 h-4 sm:w-5 sm:h-5 ${showBoundaries ? 'text-indigo-600' : 'text-gray-500'}`} />
-                <span className="hidden sm:inline">Boundaries</span>
+                <span className="hidden 2xl:inline">Boundaries</span>
               </button>
+
+              {neighbourhoodClusterId && (
+                <NeighbourhoodToggle
+                  on={showNeighbourhoods}
+                  onToggle={() => setShowNeighbourhoods(!showNeighbourhoods)} />
+              )}
             </>
           )}
 
@@ -1000,6 +1012,13 @@ export function ClusterMapView() {
                   const name = feature?.properties?.name;
                   if (name) layer.bindTooltip(name, { sticky: true });
                 }} />
+              }
+
+                {showNeighbourhoods && neighbourhoodClusterId &&
+              <NeighbourhoodLayer
+                clusterId={neighbourhoodClusterId}
+                canEdit={!!callerCtx && canSetNeighbourhoodMilestones(callerCtx, neighbourhoodClusterId)}
+                interactive={!isPlacing} />
               }
 
                 {/* Existing Nuclei Markers */}

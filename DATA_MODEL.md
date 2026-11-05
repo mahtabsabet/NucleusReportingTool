@@ -402,3 +402,19 @@ Duplicates are surfaced two ways on the People page: a proactive "possible dupli
 ## Still To Decide
 
 1. **Notifications:** When we add push notifications / email reminders for upcoming sessions, we'll need a `NotificationPreference` table per user. Not needed for v1 but the structured schedule fields on Activity are already in place for it. See also `FUTURE_FEATURES.md`.
+
+---
+
+### NeighbourhoodMilestone
+A manual milestone (1–3) for a neighbourhood on the map's neighbourhood overlay. Neighbourhood shapes are a static file (`public/data/calgary-communities.geojson`, Calgary only — see `scripts/neighbourhoods/README.md`); this table only records the milestone a cluster has set for one of them. No row means no milestone.
+
+| Field | Type | Notes |
+|---|---|---|
+| cluster_id | uuid → Cluster | part of primary key |
+| neighbourhood_code | text | City of Calgary community code (feature `id` in the GeoJSON); part of primary key |
+| milestone | smallint | 1, 2 or 3 |
+| updated_by | uuid → User | |
+| updated_at | timestamp | |
+
+Readable by anyone with access to the cluster (plus admins and regional viewers); set by the cluster's coordinators and admins. Milestones are not derived from nucleus or activity data — that may come later. See migration `20261105_neighbourhood_milestones.sql`.
+

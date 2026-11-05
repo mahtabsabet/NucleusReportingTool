@@ -48,9 +48,12 @@ import { geocodeAddressForCluster, geocodeAddressBatchForCluster } from '../../l
 import { getCallerContext } from '../../lib/db/users';
 import {
   canAccessLsaLayer,
+  canSetNeighbourhoodMilestones,
   lsaAccessibleClusterIds,
   type CallerContext,
 } from '../../lib/permissions';
+import { NeighbourhoodLayer, NeighbourhoodToggle, useNeighbourhoodOverlay } from '../NeighbourhoodLayer';
+import { NEIGHBOURHOOD_CLUSTER_NAME } from '../../lib/db/neighbourhoods';
 import { householdMarkerIcon, householdMarkerArchivedIcon, householdMarkerEmptyIcon } from './HouseholdMarkerIcon';
 import { MobileBottomSheet, type SheetState } from './MobileBottomSheet';
 import { useIsMobile } from '../../lib/useIsMobile';
@@ -89,6 +92,7 @@ export function LsaHouseholdMapView() {
 
   const [callerCtx, setCallerCtx] = useState<CallerContext | null>(null);
   const [clusters, setClusters] = useState<ClusterRow[]>([]);
+  const [showNeighbourhoods, setShowNeighbourhoods] = useNeighbourhoodOverlay();
   const [jurisdictions, setJurisdictions] = useState<LsaJurisdiction[]>([]);
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [households, setHouseholds] = useState<Household[]>([]);
@@ -232,6 +236,8 @@ export function LsaHouseholdMapView() {
     () => jurisdictions.find(j => j.clusterId === selectedClusterId) ?? null,
     [jurisdictions, selectedClusterId],
   );
+  // The neighbourhood overlay exists for Calgary only (for now).
+  const neighbourhoodClusterId = clusters.find(c => c.name === NEIGHBOURHOOD_CLUSTER_NAME)?.id ?? null;
   const activeCluster = useMemo(
     () => clusters.find(c => c.id === selectedClusterId) ?? null,
     [clusters, selectedClusterId],
@@ -541,6 +547,13 @@ export function LsaHouseholdMapView() {
             </button>
           </div>
 
+          {neighbourhoodClusterId && (
+            <NeighbourhoodToggle
+              tone="amber"
+              on={showNeighbourhoods}
+              onToggle={() => setShowNeighbourhoods(!showNeighbourhoods)} />
+          )}
+
           {clusters.length > 1 && (
             <select
               value={selectedClusterId ?? ''}
@@ -663,6 +676,12 @@ export function LsaHouseholdMapView() {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
               maxZoom={19}
             />
+            {showNeighbourhoods && neighbourhoodClusterId && (
+              <NeighbourhoodLayer
+                clusterId={neighbourhoodClusterId}
+                canEdit={!!callerCtx && canSetNeighbourhoodMilestones(callerCtx, neighbourhoodClusterId)}
+                interactive={!placing} />
+            )}
             {households.map(h => {
               if (h.lat == null || h.lng == null) return null;
               const isEmpty = (memberCounts.get(h.id) ?? 0) === 0;
