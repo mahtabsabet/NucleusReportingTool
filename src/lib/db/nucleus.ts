@@ -8,6 +8,7 @@ import type { PersonProfile, CourseRow, CompletionStatus } from './clusterProfil
 import { actionPermission, canDirectly } from '../permissions';
 import { getCallerContext } from './users';
 import { fetchCapacityNamesByPerson } from './capacities';
+import { createNucleus } from './clusters';
 import { isMinorForAgeGroup } from '../persons/disambiguators';
 import type { AgeGroup, ActivityParticipantStatusEnum } from '../database.types';
 
@@ -32,6 +33,12 @@ const ACTIVITY_BASE_COLUMNS =
   'lifecycle_state, scheduling_mode, start_date, end_date, ' +
   'completed_at, is_active, notes, current_course_id';
 
+// Columns added by 20261021_standalone_activities.sql. Queries try
+// these first and fall back to ACTIVITY_PRE_STANDALONE_COLUMNS (which
+// reads the cluster through the nucleus) on an un-migrated database.
+const ACTIVITY_COLUMNS = `${ACTIVITY_BASE_COLUMNS}, cluster_id, lat, lng`;
+const ACTIVITY_PRE_STANDALONE_COLUMNS = `${ACTIVITY_BASE_COLUMNS}, nuclei(cluster_id)`;
+
 // Pre-20260512-migration column set. Used as a fallback for read
 // queries so a deployment running the new code against an un-
 // migrated database still renders the nucleus dashboard — the
@@ -53,6 +60,43 @@ function isMissingColumnError(err: any): boolean {
   return /column .* does not exist/i.test(msg);
 }
 
+async function withActivityColumns<R extends { error: any }>(
+  run: (cols: string) => PromiseLike<R>,
+): Promise<R> {
+  const result = await run(ACTIVITY_COLUMNS);
+  if (result.error && isMissingColumnError(result.error)) {
+    return run(ACTIVITY_PRE_STANDALONE_COLUMNS);
+  }
+  return result;
+}
+
+// The activity's name and scope, with the cluster read from the
+// activity itself (or via its nucleus on an un-migrated database).
+// Returned with snake_case keys so call sites read like the row.
+async function fetchActivityScope(
+  activityId: string,
+): Promise<{ name: string; nucleus_id: string | null; cluster_id: string | null } | null> {
+  let { data, error } = await supabase
+    .from('activities')
+    .select('name, nucleus_id, cluster_id')
+    .eq('id', activityId)
+    .single();
+  if (error && isMissingColumnError(error)) {
+    ({ data, error } = await supabase
+      .from('activities')
+      .select('name, nucleus_id, nuclei(cluster_id)')
+      .eq('id', activityId)
+      .single() as any);
+  }
+  if (error || !data) return null;
+  const a = data as any;
+  return {
+    name: a.name,
+    nucleus_id: a.nucleus_id ?? null,
+    cluster_id: a.cluster_id ?? a.nuclei?.cluster_id ?? null,
+  };
+}
+
 function mapActivityRow(a: any, participants: Record<string, string[]>): Activity {
   // Tolerate older DBs that haven't run the lifecycle migration yet —
   // is_active still tells us "this is an active activity" in that case.
@@ -67,7 +111,11 @@ function mapActivityRow(a: any, participants: Record<string, string[]>): Activit
     : (typeof a.schedule_day_of_week === 'number' ? [a.schedule_day_of_week] : []);
   return {
     id: a.id,
-    nucleusId: a.nucleus_id,
+    nucleusId: a.nucleus_id ?? null,
+    clusterId: a.cluster_id ?? a.nuclei?.cluster_id ?? undefined,
+    location: typeof a.lat === 'number' && typeof a.lng === 'number'
+      ? { lat: a.lat, lng: a.lng }
+      : undefined,
     name: a.name,
     type: (DB_TO_APP_TYPE[a.type] ?? 'other') as Activity['type'],
     participants,
@@ -149,7 +197,7 @@ export async function fetchActivitiesForNucleus(
     return q;
   };
 
-  let { data, error } = await run(ACTIVITY_BASE_COLUMNS);
+  let { data, error } = await withActivityColumns(run);
   if (error && isMissingColumnError(error)) {
     // Migration not yet applied — retry with the columns that
     // existed before 20260512. mapActivityRow tolerates the
@@ -171,7 +219,11 @@ export async function fetchActivitiesForNucleus(
 }
 
 export interface CreateActivityParams {
-  nucleusId: string;
+  // Omit nucleusId to create a standalone activity; clusterId and
+  // location are then required.
+  nucleusId?: string | null;
+  clusterId?: string;
+  location?: { lat: number; lng: number };
   name: string;
   type: Activity['type'];
   // Optional initial scheduling info. When provided, the activity is
@@ -191,8 +243,15 @@ export interface CreateActivityParams {
 export async function createActivity(params: CreateActivityParams): Promise<Activity> {
   const lifecycle = params.lifecycle ?? 'active';
   const schedulingMode = params.schedulingMode ?? 'sporadic_ongoing';
+  if (!params.nucleusId && !params.clusterId) {
+    throw new Error('A standalone activity needs a cluster');
+  }
   const insertRow: Record<string, any> = {
-    nucleus_id: params.nucleusId,
+    nucleus_id: params.nucleusId ?? null,
+    // For nucleus activities the DB trigger derives cluster_id from
+    // the nucleus; we only send it for standalone ones.
+    ...(params.nucleusId ? {} : { cluster_id: params.clusterId }),
+    ...(params.location ? { lat: params.location.lat, lng: params.location.lng } : {}),
     name: params.name,
     type: APP_TO_DB_TYPE[params.type] as any,
     is_active: lifecycle === 'active' || lifecycle === 'planned',
@@ -207,22 +266,17 @@ export async function createActivity(params: CreateActivityParams): Promise<Acti
     start_date: params.startDate ? formatLocalDate(params.startDate) : null,
     end_date: params.endDate ? formatLocalDate(params.endDate) : null,
   };
-  const { data, error } = await supabase
-    .from('activities')
-    .insert(insertRow)
-    .select(ACTIVITY_BASE_COLUMNS)
-    .single();
+  const { data, error } = await withActivityColumns(cols =>
+    supabase.from('activities').insert(insertRow).select(cols).single(),
+  );
   if (error) throw error;
 
-  const { data: nucleus } = await supabase
-    .from('nuclei')
-    .select('cluster_id')
-    .eq('id', params.nucleusId)
-    .single();
+  const clusterId: string | null =
+    (data as any).cluster_id ?? (data as any).nuclei?.cluster_id ?? params.clusterId ?? null;
   const { data: { user } } = await supabase.auth.getUser();
   await supabase.from('event_log').insert({
     type: 'activity_created',
-    cluster_id: (nucleus as any)?.cluster_id ?? null,
+    cluster_id: clusterId,
     nucleus_id: (data as any).nucleus_id,
     activity_id: (data as any).id,
     user_id: user?.id ?? null,
@@ -230,9 +284,107 @@ export async function createActivity(params: CreateActivityParams): Promise<Acti
     details: { activityName: (data as any).name, activityType: (data as any).type },
   });
 
-  await syncActivityTimelineEntry(mapActivityRow(data, {}), { clusterId: (nucleus as any)?.cluster_id ?? null });
+  await syncActivityTimelineEntry(mapActivityRow(data, {}), { clusterId });
 
   return mapActivityRow(data, {});
+}
+
+export interface StandaloneActivityRow {
+  id: string;
+  clusterId: string;
+  name: string;
+  type: Activity['type'];
+  lifecycle: ActivityLifecycle;
+  schedule?: string;
+  location: { lat: number; lng: number } | null;
+  participantCount: number;
+}
+
+// Activities that live in a cluster without a nucleus, for the map.
+// Completed / cancelled ones are left off — the map shows what's
+// happening now. Returns [] on a database that predates standalone
+// activities (no cluster_id column).
+export async function fetchStandaloneActivities(
+  clusterId?: string | null,
+): Promise<StandaloneActivityRow[]> {
+  let q = supabase
+    .from('activities')
+    .select('id, cluster_id, name, type, lifecycle_state, schedule_notes, lat, lng, activity_participants(person_id, deleted_at)')
+    .is('nucleus_id', null)
+    .is('deleted_at', null)
+    .in('lifecycle_state', ['active', 'planned'])
+    .order('name');
+  if (clusterId) q = q.eq('cluster_id', clusterId);
+  const { data, error } = await q;
+  if (error) {
+    if (isMissingColumnError(error)) return [];
+    throw error;
+  }
+  return ((data ?? []) as any[]).map(a => ({
+    id: a.id,
+    clusterId: a.cluster_id,
+    name: a.name,
+    type: (DB_TO_APP_TYPE[a.type] ?? 'other') as Activity['type'],
+    lifecycle: a.lifecycle_state as ActivityLifecycle,
+    schedule: a.schedule_notes ?? undefined,
+    location: typeof a.lat === 'number' && typeof a.lng === 'number'
+      ? { lat: a.lat, lng: a.lng }
+      : null,
+    participantCount: ((a.activity_participants ?? []) as any[]).filter(p => !p.deleted_at).length,
+  }));
+}
+
+// Standalone activities are cluster-level: creating one, attaching
+// it to a nucleus, or growing a nucleus around it are all cluster
+// coordinator (and admin) actions.
+export async function canManageStandaloneActivities(clusterId: string): Promise<boolean> {
+  const ctx = await getCallerContext();
+  if (!ctx) return false;
+  return canDirectly(ctx, 'create_activity', { clusterId });
+}
+
+// Move a standalone activity into a nucleus in the same cluster. The
+// SQL function does it atomically: re-points the activity, its
+// notebook entries and timeline row, and enrolls the roster in the
+// nucleus as unassigned. See 20261021_standalone_activities.sql.
+export async function attachActivityToNucleus(activityId: string, nucleusId: string): Promise<void> {
+  const { error } = await supabase.rpc('attach_activity_to_nucleus' as any, {
+    p_activity: activityId,
+    p_nucleus: nucleusId,
+  } as any);
+  if (error) throw error;
+}
+
+// Create a new nucleus at a standalone activity's location and move
+// the activity into it. Returns the new nucleus id.
+export async function createNucleusFromActivity(
+  activityId: string,
+  name: string,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('activities')
+    .select('cluster_id, lat, lng, nucleus_id')
+    .eq('id', activityId)
+    .single();
+  if (error) throw error;
+  const a = data as any;
+  if (a.nucleus_id) throw new Error('Activity is already part of a nucleus');
+  if (typeof a.lat !== 'number' || typeof a.lng !== 'number') {
+    throw new Error('Activity has no map location to place the nucleus at');
+  }
+
+  const nucleus = await createNucleus({ clusterId: a.cluster_id, name, lat: a.lat, lng: a.lng });
+  try {
+    await attachActivityToNucleus(activityId, nucleus.id);
+  } catch (err) {
+    // Don't leave an empty nucleus behind if the move was refused.
+    await supabase
+      .from('nuclei')
+      .update({ deleted_at: new Date().toISOString() } as any)
+      .eq('id', nucleus.id);
+    throw err;
+  }
+  return nucleus.id;
 }
 
 export async function updateNucleusNotes(nucleusId: string, notes: string): Promise<void> {
@@ -367,7 +519,10 @@ export async function fetchActivityDetail(activityId: string): Promise<ActivityD
 
   // Two independent back-compat fallbacks: the participation status
   // columns, then the activity lifecycle columns.
-  let { data, error } = await run(ACTIVITY_BASE_COLUMNS, NEW_PART);
+  let { data, error } = await run(ACTIVITY_COLUMNS, NEW_PART);
+  if (error && isMissingColumnError(error)) {
+    ({ data, error } = await run(ACTIVITY_BASE_COLUMNS, NEW_PART));
+  }
   if (error && isMissingColumnError(error)) {
     ({ data, error } = await run(ACTIVITY_BASE_COLUMNS, OLD_PART));
   }
@@ -450,7 +605,9 @@ export async function fetchActivityDetail(activityId: string): Promise<ActivityD
 
 export async function addPersonToActivity(params: {
   name: string;
-  nucleusId: string;
+  // null for a standalone activity: the person joins the roster but
+  // isn't enrolled in any nucleus until the activity is attached.
+  nucleusId: string | null;
   activityId: string;
   role: string;
   existingPersonId?: string;
@@ -489,31 +646,34 @@ export async function addPersonToActivity(params: {
     personName = (inserted as any).name;
   }
 
-  const { data: existingEnrollment } = await supabase
-    .from('nucleus_enrollments')
-    .select('person_id, deleted_at')
-    .eq('person_id', personId)
-    .eq('nucleus_id', params.nucleusId)
-    .maybeSingle();
-  const isNewToNucleus = !existingEnrollment || (existingEnrollment as any).deleted_at !== null;
+  let isNewToNucleus = false;
+  if (params.nucleusId) {
+    const { data: existingEnrollment } = await supabase
+      .from('nucleus_enrollments')
+      .select('person_id, deleted_at')
+      .eq('person_id', personId)
+      .eq('nucleus_id', params.nucleusId)
+      .maybeSingle();
+    isNewToNucleus = !existingEnrollment || (existingEnrollment as any).deleted_at !== null;
 
-  await supabase
-    .from('nucleus_enrollments')
-    .upsert(
-      {
-        person_id: personId,
-        nucleus_id: params.nucleusId,
-        deleted_at: null,
-        // Only stamp engagement_level on a fresh (or reactivated) row —
-        // an existing active enrollment's status must not be touched
-        // just because the person joined another activity in the same
-        // nucleus. Explicitly nulling it (rather than relying on the
-        // DB column default) keeps a person new to THIS nucleus out of
-        // whatever circle they may already occupy in a different one.
-        ...(isNewToNucleus ? { engagement_level: null } : {}),
-      },
-      { onConflict: 'person_id,nucleus_id' }
-    );
+    await supabase
+      .from('nucleus_enrollments')
+      .upsert(
+        {
+          person_id: personId,
+          nucleus_id: params.nucleusId,
+          deleted_at: null,
+          // Only stamp engagement_level on a fresh (or reactivated) row —
+          // an existing active enrollment's status must not be touched
+          // just because the person joined another activity in the same
+          // nucleus. Explicitly nulling it (rather than relying on the
+          // DB column default) keeps a person new to THIS nucleus out of
+          // whatever circle they may already occupy in a different one.
+          ...(isNewToNucleus ? { engagement_level: null } : {}),
+        },
+        { onConflict: 'person_id,nucleus_id' }
+      );
+  }
 
   const { data: existingParticipant } = await supabase
     .from('activity_participants')
@@ -532,12 +692,7 @@ export async function addPersonToActivity(params: {
     );
 
   if (isNewToNucleus || isNewParticipant) {
-    const { data: nucleus } = await supabase
-      .from('nuclei')
-      .select('cluster_id')
-      .eq('id', params.nucleusId)
-      .single();
-    const clusterId = (nucleus as any)?.cluster_id ?? null;
+    const clusterId = (await fetchActivityScope(params.activityId))?.cluster_id ?? null;
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id ?? null;
 
@@ -548,7 +703,7 @@ export async function addPersonToActivity(params: {
     if (clusterId) {
       await supabase
         .from('persons')
-        .update({ cluster_id: clusterId })
+        .update({ cluster_id: clusterId } as any)
         .eq('id', personId)
         .is('cluster_id', null);
     }
@@ -596,11 +751,7 @@ export async function removeActivityParticipant(
     .is('deleted_at', null);
   if (error) throw error;
 
-  const { data: activity } = await supabase
-    .from('activities')
-    .select('nucleus_id, nuclei(cluster_id)')
-    .eq('id', activityId)
-    .single();
+  const activity = await fetchActivityScope(activityId);
   const { data: person } = await supabase
     .from('persons')
     .select('name')
@@ -611,7 +762,7 @@ export async function removeActivityParticipant(
 
   await supabase.from('event_log').insert({
     type: 'participant_removed',
-    cluster_id: (activity as any)?.nuclei?.cluster_id ?? null,
+    cluster_id: (activity as any)?.cluster_id ?? null,
     nucleus_id: (activity as any)?.nucleus_id ?? null,
     activity_id: activityId,
     person_id: personId,
@@ -645,11 +796,7 @@ export async function setParticipantStatus(
     .is('deleted_at', null);
   if (error) throw error;
 
-  const { data: activity } = await supabase
-    .from('activities')
-    .select('nucleus_id, nuclei(cluster_id)')
-    .eq('id', activityId)
-    .single();
+  const activity = await fetchActivityScope(activityId);
   const { data: person } = await supabase
     .from('persons')
     .select('name')
@@ -659,7 +806,7 @@ export async function setParticipantStatus(
 
   await supabase.from('event_log').insert({
     type: status === 'inactive' ? 'participant_marked_inactive' : 'participant_reactivated',
-    cluster_id: (activity as any)?.nuclei?.cluster_id ?? null,
+    cluster_id: (activity as any)?.cluster_id ?? null,
     nucleus_id: (activity as any)?.nucleus_id ?? null,
     activity_id: activityId,
     person_id: personId,
@@ -689,14 +836,10 @@ export async function markParticipantReviewed(
 export async function activityDeletePermission(activityId: string): Promise<'direct' | 'request' | 'none'> {
   const ctx = await getCallerContext();
   if (!ctx) return 'none';
-  const { data: activity } = await supabase
-    .from('activities')
-    .select('nucleus_id, nuclei(cluster_id)')
-    .eq('id', activityId)
-    .single();
+  const activity = await fetchActivityScope(activityId);
   if (!activity) return 'none';
   return actionPermission(ctx, 'delete_activity', {
-    clusterId: (activity as any).nuclei?.cluster_id,
+    clusterId: (activity as any).cluster_id,
     nucleusId: (activity as any).nucleus_id,
     activityId,
   });
@@ -716,11 +859,7 @@ export async function deleteActivity(activityId: string): Promise<void> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
 
-  const { data: activity } = await supabase
-    .from('activities')
-    .select('name, nucleus_id, nuclei(cluster_id)')
-    .eq('id', activityId)
-    .single();
+  const activity = await fetchActivityScope(activityId);
   if (!activity) throw new Error('Activity not found');
 
   const now = new Date().toISOString();
@@ -745,7 +884,7 @@ export async function deleteActivity(activityId: string): Promise<void> {
     type: 'activity_deleted',
     activity_id: activityId,
     nucleus_id: (activity as any).nucleus_id,
-    cluster_id: (activity as any).nuclei?.cluster_id,
+    cluster_id: (activity as any).cluster_id,
     user_id: user.id,
     description: `Deleted activity "${(activity as any).name}"`,
     details: { activityName: (activity as any).name },
@@ -782,18 +921,13 @@ export async function updateActivityDetails(
   if (params.endDate !== undefined) update.end_date = params.endDate ? formatLocalDate(params.endDate) : null;
   if (Object.keys(update).length === 0) return;
 
-  const { data, error } = await supabase
-    .from('activities')
-    .update(update)
-    .eq('id', activityId)
-    .select(`${ACTIVITY_BASE_COLUMNS}, nuclei(cluster_id)`)
-    .single();
+  const { data, error } = await withActivityColumns(cols =>
+    supabase.from('activities').update(update).eq('id', activityId).select(cols).single(),
+  );
   if (error) throw error;
 
-  await syncActivityTimelineEntry(
-    mapActivityRow(data, {}),
-    { clusterId: ((data as any).nuclei as any)?.cluster_id ?? null },
-  );
+  const updated = mapActivityRow(data, {});
+  await syncActivityTimelineEntry(updated, { clusterId: updated.clusterId ?? null });
 }
 
 // Transition the activity's lifecycle. The activity row is
@@ -819,18 +953,13 @@ export async function setActivityLifecycle(
         : null,
   };
 
-  const { data, error } = await supabase
-    .from('activities')
-    .update(update)
-    .eq('id', activityId)
-    .select(`${ACTIVITY_BASE_COLUMNS}, nuclei(cluster_id)`)
-    .single();
+  const { data, error } = await withActivityColumns(cols =>
+    supabase.from('activities').update(update).eq('id', activityId).select(cols).single(),
+  );
   if (error) throw error;
 
-  await syncActivityTimelineEntry(
-    mapActivityRow(data, {}),
-    { clusterId: ((data as any).nuclei as any)?.cluster_id ?? null },
-  );
+  const updated = mapActivityRow(data, {});
+  await syncActivityTimelineEntry(updated, { clusterId: updated.clusterId ?? null });
 }
 
 // Mirror short-duration activities into a single timeline_events row

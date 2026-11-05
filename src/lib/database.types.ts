@@ -13,7 +13,7 @@ export type ActivityLifecycleEnum = 'planned' | 'active' | 'completed' | 'cancel
 export type ActivitySchedulingModeEnum = 'structured_recurring' | 'sporadic_ongoing' | 'short_duration';
 export type ActivityParticipantStatusEnum = 'active' | 'inactive';
 export type ActivityOccurrenceStatusEnum = 'did_not_occur' | 'dismissed';
-export type EventLogType = 'activity_created' | 'participant_added' | 'participant_removed' | 'circle_movement' | 'course_completed' | 'course_started' | 'person_created' | 'person_deleted' | 'nucleus_created' | 'nucleus_deleted' | 'activity_deleted' | 'session_logged' | 'profile_updated' | 'permission_request_submitted' | 'permission_request_resolved' | 'user_role_changed' | 'user_deleted' | 'participant_marked_inactive' | 'participant_reactivated';
+export type EventLogType = 'activity_created' | 'participant_added' | 'participant_removed' | 'circle_movement' | 'course_completed' | 'course_started' | 'person_created' | 'person_deleted' | 'nucleus_created' | 'nucleus_deleted' | 'activity_deleted' | 'session_logged' | 'profile_updated' | 'permission_request_submitted' | 'permission_request_resolved' | 'user_role_changed' | 'user_deleted' | 'participant_marked_inactive' | 'participant_reactivated' | 'activity_attached_to_nucleus';
 
 export type PermissionRequestStatus = 'pending' | 'approved' | 'rejected' | 'cancelled';
 
@@ -212,7 +212,10 @@ export interface Database {
       activities: {
         Row: {
           id: string;
-          nucleus_id: string;
+          nucleus_id: string | null;
+          cluster_id: string;
+          lat: number | null;
+          lng: number | null;
           name: string;
           type: ActivityType;
           schedule_day_of_week: number | null;
@@ -231,7 +234,9 @@ export interface Database {
           notes: string | null;
           deleted_at: string | null;
         };
-        Insert: Omit<Database['public']['Tables']['activities']['Row'], 'id'> & { id?: string };
+        // cluster_id is filled from the nucleus by a trigger when omitted.
+        Insert: Omit<Database['public']['Tables']['activities']['Row'], 'id' | 'cluster_id' | 'lat' | 'lng'>
+          & { id?: string; cluster_id?: string; lat?: number | null; lng?: number | null };
         Update: Partial<Database['public']['Tables']['activities']['Insert']>;
       };
       activity_participants: {

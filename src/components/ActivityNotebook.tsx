@@ -38,7 +38,10 @@ interface RosterPerson {
 
 interface ActivityNotebookProps {
   activityId: string;
-  nucleusId: string;
+  // null for a standalone activity. Learning themes belong to a
+  // nucleus, so theme tagging is hidden until the activity joins one;
+  // entries and attendance work either way.
+  nucleusId: string | null;
   readOnly: boolean;
   // The activity's standing participant roster (deduped across
   // roles). Drives the attendance checkboxes in the composer.
@@ -118,7 +121,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster, onEn
     try {
       const [e, t] = await Promise.all([
         listEntriesForActivity(activityId),
-        listThemesForNucleus(nucleusId),
+        nucleusId ? listThemesForNucleus(nucleusId) : Promise.resolve([] as LearningTheme[]),
       ]);
       setEntries(e);
       setThemes(t);
@@ -158,12 +161,13 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster, onEn
           <EntryComposer
             mode="create"
             themes={visibleThemes}
+            themesEnabled={!!nucleusId}
             roster={roster}
             onCancel={() => setComposerOpen(false)}
             onSubmit={async (entry, newThemes) => {
               const created: LearningTheme[] = [];
-              for (const nt of newThemes) {
-                created.push(await proposeTheme(nucleusId, { name: nt.name, color: nt.color }));
+              for (const nt of nucleusId ? newThemes : []) {
+                created.push(await proposeTheme(nucleusId!, { name: nt.name, color: nt.color }));
               }
               const allThemeIds = [...entry.themeIds, ...created.map(t => t.id)];
               await createActivityEntry(nucleusId, activityId, { ...entry, themeIds: allThemeIds });
@@ -189,6 +193,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster, onEn
                     mode="edit"
                     initial={entry}
                     themes={visibleThemes}
+                    themesEnabled={!!nucleusId}
                     roster={roster}
                     onCancel={() => setEditingEntryId(null)}
                     onSubmit={async (patch) => {
@@ -201,12 +206,14 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster, onEn
                   <EntryView
                     entry={entry}
                     availableThemes={visibleThemes}
+                    themesEnabled={!!nucleusId}
                     readOnly={readOnly}
                     onStartEdit={() => setEditConfirmFor(entry.id)}
                     onStartDelete={() => setDeleteConfirmFor(entry.id)}
                     onAddTheme={async (themeId) => { await addThemesToEntry(entry.id, [themeId]); await load(); }}
                     onRemoveTheme={async (themeId) => { await removeThemeFromEntry(entry.id, themeId); await load(); }}
                     onProposeTheme={async ({ name, color }) => {
+                      if (!nucleusId) return;
                       const t = await proposeTheme(nucleusId, { name, color });
                       await addThemesToEntry(entry.id, [t.id]);
                       await load();
@@ -270,6 +277,7 @@ export function ActivityNotebook({ activityId, nucleusId, readOnly, roster, onEn
 interface EntryViewProps {
   entry: JournalEntry;
   availableThemes: LearningTheme[];
+  themesEnabled: boolean;
   readOnly: boolean;
   onStartEdit: () => void;
   onStartDelete: () => void;
@@ -279,7 +287,7 @@ interface EntryViewProps {
 }
 
 function EntryView({
-  entry, availableThemes, readOnly,
+  entry, availableThemes, themesEnabled, readOnly,
   onStartEdit, onStartDelete, onAddTheme, onRemoveTheme, onProposeTheme,
 }: EntryViewProps) {
   const taggedIds = useMemo(() => new Set(entry.themes.map(t => t.id)), [entry.themes]);
@@ -361,7 +369,7 @@ function EntryView({
         )}
       </div>
 
-      <div className="mt-4 pt-3 border-t border-amber-900/10">
+      {themesEnabled && <div className="mt-4 pt-3 border-t border-amber-900/10">
         <ThemeTagEditor
           applied={entry.themes}
           available={addable}
@@ -370,7 +378,7 @@ function EntryView({
           onRemove={onRemoveTheme}
           onPropose={onProposeTheme}
         />
-      </div>
+      </div>}
 
       {entry.editedAt && (
         <p className="font-journal italic text-[11px] text-stone-400 mt-2">
@@ -389,6 +397,7 @@ interface ComposerProps {
   mode: 'create' | 'edit';
   initial?: JournalEntry;
   themes: LearningTheme[];
+  themesEnabled: boolean;
   roster: RosterPerson[];
   onCancel: () => void;
   onSubmit: (
@@ -397,7 +406,7 @@ interface ComposerProps {
   ) => Promise<void>;
 }
 
-function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: ComposerProps) {
+function EntryComposer({ mode, initial, themes, themesEnabled, roster, onCancel, onSubmit }: ComposerProps) {
   const [values, setValues] = useState<Record<ComposerKey, string>>({
     whatHappened: initial?.whatHappened ?? '',
     learning: initial?.learning ?? '',
@@ -597,7 +606,7 @@ function EntryComposer({ mode, initial, themes, roster, onCancel, onSubmit }: Co
         )}
       </div>
 
-      {mode === 'create' && (
+      {mode === 'create' && themesEnabled && (
         <div className="mt-5 pt-4 border-t border-amber-900/10">
           <div className="flex items-center gap-2 mb-2.5">
             <span className="text-xs font-semibold uppercase tracking-wider text-stone-500">

@@ -3,6 +3,7 @@ import {
   MapContainer,
   TileLayer,
   Marker,
+  CircleMarker,
   Popup,
   GeoJSON as GeoJSONLayer,
   useMap,
@@ -28,11 +29,15 @@ import {
   ArrowLeftIcon,
   LayersIcon,
   CompassIcon,
-  ChevronDownIcon } from
+  ChevronDownIcon,
+  SparklesIcon } from
 'lucide-react';
 import { useIsMobile } from '../lib/useIsMobile';
 import { fetchClusters, fetchNuclei, createNucleus, canCreateNucleusInCluster } from '../lib/db/clusters';
 import type { ClusterRow, NucleusRow } from '../lib/db/clusters';
+import { createActivity, fetchStandaloneActivities } from '../lib/db/nucleus';
+import type { StandaloneActivityRow } from '../lib/db/nucleus';
+import type { Activity } from '../types';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
 import { canAccessLsaLayer, canCreateAnyNucleus, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
@@ -49,6 +54,26 @@ L.Icon.Default.mergeOptions({
   shadowUrl:
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png'
 });
+// Standalone activities (not in a nucleus) render as small dots,
+// coloured to match the activity-type reports in the sidebar.
+const ACTIVITY_DOT_COLORS: Record<Activity['type'], string> = {
+  'children-class': '#10b981',
+  'junior-youth': '#f59e0b',
+  'study-circle': '#a855f7',
+  devotional: '#f43f5e',
+  other: '#6b7280',
+};
+const ACTIVITY_TYPE_OPTIONS: { value: Activity['type']; label: string }[] = [
+  { value: 'devotional', label: 'Devotional Gathering' },
+  { value: 'children-class', label: "Children's Class" },
+  { value: 'junior-youth', label: 'Junior Youth Group' },
+  { value: 'study-circle', label: 'Study Circle' },
+  { value: 'other', label: 'Other' },
+];
+const ACTIVITY_TYPE_LABEL: Record<Activity['type'], string> = Object.fromEntries(
+  ACTIVITY_TYPE_OPTIONS.map(o => [o.value, o.label]),
+) as Record<Activity['type'], string>;
+
 function MapController({
   center,
   zoom
@@ -90,8 +115,14 @@ export function ClusterMapView() {
   const [mapCenter, setMapCenter] = useState<[number, number]>([52.5, -114.0]);
   const [mapZoom, setMapZoom] = useState(6);
   const [isPlacing, setIsPlacing] = useState(false);
+  // What the placing flow creates: a nucleus, or a standalone activity.
+  const [placingKind, setPlacingKind] = useState<'nucleus' | 'activity'>('nucleus');
   const [newLocation, setNewLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [newName, setNewName] = useState('');
+  const [newActivityType, setNewActivityType] = useState<Activity['type']>('devotional');
+  const [placingError, setPlacingError] = useState<string | null>(null);
+  const [standaloneActivities, setStandaloneActivities] = useState<StandaloneActivityRow[]>([]);
+  const [standaloneListOpen, setStandaloneListOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNetwork, setShowNetwork] = useState(false);
   const [showBoundaries, setShowBoundaries] = useState(false);
@@ -107,6 +138,11 @@ export function ClusterMapView() {
   useEffect(() => {
     const initialClusterId = searchParams.get('cluster');
     const initialView = searchParams.get('view');
+    // Standalone activities are an extra layer; a failure there
+    // shouldn't take the whole map down.
+    fetchStandaloneActivities()
+      .then(setStandaloneActivities)
+      .catch((err) => console.error('Failed to load standalone activities', err));
     Promise.all([fetchClusters(), fetchNuclei(), getCallerContext()])
       .then(([c, n, ctx]) => {
         setClusters(c);
@@ -159,6 +195,8 @@ export function ClusterMapView() {
   const filteredNuclei = selectedCluster
     ? nuclei.filter(n => n.clusterId === selectedCluster)
     : nuclei;
+  const filteredStandalone = standaloneActivities.filter(a =>
+    (!selectedCluster || a.clusterId === selectedCluster));
   const selectedClusterName = selectedCluster
     ? clusters.find((c) => c.id === selectedCluster)?.name ?? null
     : null;
@@ -191,24 +229,48 @@ export function ClusterMapView() {
       setNucleiListOpen(false);
     }
   };
-  const handleStartPlacing = () => {
+  const handleStartPlacing = (kind: 'nucleus' | 'activity') => {
+    setPlacingKind(kind);
     setIsPlacing(true);
     setNewLocation(null);
     setNewName('');
+    setNewActivityType('devotional');
+    setPlacingError(null);
     setSelectedNucleus(null);
   };
-  const handleNewNucleusClick = () => {
+  // Creating a nucleus and creating a standalone activity are both
+  // cluster-level actions with the same rule (cluster coordinators
+  // in their cluster, admins anywhere), so one `canCreate` gates both.
+  const handleNewClick = (kind: 'nucleus' | 'activity') => {
     if (!canCreate) {
       setShowSelectClusterMessage(true);
       window.setTimeout(() => setShowSelectClusterMessage(false), 4000);
       return;
     }
-    handleStartPlacing();
+    handleStartPlacing(kind);
   };
   const handleCancelPlacing = () => {
     setIsPlacing(false);
     setNewLocation(null);
     setNewName('');
+    setPlacingError(null);
+  };
+  const handleCreateActivity = async () => {
+    if (!newLocation || !newName.trim() || !selectedCluster) return;
+    setPlacingError(null);
+    try {
+      const activity = await createActivity({
+        clusterId: selectedCluster,
+        location: newLocation,
+        name: newName.trim(),
+        type: newActivityType,
+      });
+      // Straight to the activity so its schedule and roster can be filled in.
+      navigate(`/activity/${activity.id}`);
+    } catch (err: any) {
+      console.error('Failed to create activity', err);
+      setPlacingError(err?.message ?? 'Failed to create activity');
+    }
   };
   const handleCreateNucleus = async () => {
     if (!newLocation || !newName.trim() || !selectedCluster) return;
@@ -354,13 +416,24 @@ export function ClusterMapView() {
 
           {!isPlacing && canCreateAnyCluster &&
           <button
-            onClick={handleNewNucleusClick}
+            onClick={() => handleNewClick('nucleus')}
             aria-disabled={!canCreate}
             title={!canCreate ? 'Select a cluster first to add a nucleus' : ''}
             className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 bg-blue-600 text-white font-semibold rounded-xl transition-all duration-200 text-xs sm:text-sm flex-shrink-0 ${canCreate ? 'hover:bg-blue-700 hover:shadow-md hover:-translate-y-0.5' : 'opacity-50 cursor-not-allowed'}`}>
 
               <PlusIcon className="w-4 h-4" />
               <span className="hidden sm:inline">New Nucleus</span>
+            </button>
+          }
+          {!isPlacing && canCreateAnyCluster &&
+          <button
+            onClick={() => handleNewClick('activity')}
+            aria-disabled={!canCreate}
+            title={!canCreate ? 'Select a cluster first to add an activity' : 'Add an activity that is not part of a nucleus'}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-2 sm:py-2.5 bg-white text-blue-700 border border-blue-200 font-semibold rounded-xl transition-all duration-200 text-xs sm:text-sm flex-shrink-0 ${canCreate ? 'hover:bg-blue-50 hover:shadow-md hover:-translate-y-0.5' : 'opacity-50 cursor-not-allowed'}`}>
+
+              <SparklesIcon className="w-4 h-4" />
+              <span className="hidden sm:inline">New Activity</span>
             </button>
           }
         </div>
@@ -728,6 +801,53 @@ export function ClusterMapView() {
               </p>
             )}
           </div>
+
+          {filteredStandalone.length > 0 && (
+            <div className="px-6 pb-6">
+              <h2 className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3">
+                Activities outside a nucleus
+              </h2>
+              <button
+                onClick={() => setStandaloneListOpen((v) => !v)}
+                disabled={isPlacing}
+                aria-expanded={standaloneListOpen}
+                className={`w-full flex items-center justify-between px-4 py-2.5 rounded-xl transition-all duration-200 text-left border bg-white text-gray-700 border-gray-200 hover:bg-gray-50 ${isPlacing ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <div className="flex items-center gap-3 min-w-0">
+                  <SparklesIcon className="w-5 h-5 flex-shrink-0 text-gray-400" />
+                  <span className="font-semibold truncate">Standalone activities</span>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-500">
+                    {filteredStandalone.length}
+                  </span>
+                  <ChevronDownIcon className={`w-4 h-4 text-gray-400 transition-transform ${standaloneListOpen ? 'rotate-180' : ''}`} />
+                </div>
+              </button>
+              {standaloneListOpen && (
+                <div className="space-y-1 mt-2 max-h-72 overflow-y-auto pr-1">
+                  {filteredStandalone.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={() => {
+                        if (a.location) {
+                          setMapCenter([a.location.lat, a.location.lng]);
+                          setMapZoom(14);
+                        } else {
+                          navigate(`/activity/${a.id}`);
+                        }
+                      }}
+                      disabled={isPlacing}
+                      className="w-full flex items-center gap-3 px-4 py-2.5 rounded-xl text-left hover:bg-gray-50 text-gray-700">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: ACTIVITY_DOT_COLORS[a.type] }} />
+                      <span className="font-medium text-sm truncate">{a.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </aside>}
 
         <main className="flex-1 relative flex flex-col min-w-0">
@@ -744,10 +864,10 @@ export function ClusterMapView() {
                   <h3 className="font-bold text-amber-900 text-sm sm:text-base">Please select a cluster</h3>
                   <p className="text-xs sm:text-sm font-medium text-amber-800 mt-0.5">
                     <span className="sm:hidden">
-                      Go back to the home screen to choose a cluster, then return here to create a nucleus.
+                      Go back to the home screen to choose a cluster, then return here to create a nucleus or activity.
                     </span>
                     <span className="hidden sm:inline">
-                      Pick a cluster from the sidebar to create a nucleus in it.
+                      Pick a cluster from the sidebar to create a nucleus or activity in it.
                     </span>
                   </p>
                 </div>
@@ -768,10 +888,14 @@ export function ClusterMapView() {
                   <MapPinIcon className="w-5 h-5 text-blue-600" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-gray-900">Place New Nucleus</h3>
+                  <h3 className="font-bold text-gray-900">
+                    {placingKind === 'activity' ? 'Place New Activity' : 'Place New Nucleus'}
+                  </h3>
                   <p className="text-sm font-medium text-gray-500">
                     {!newLocation ?
                   'Click anywhere on the map to set location' :
+                  placingKind === 'activity' ?
+                  'Not part of a nucleus — you can add it to one later' :
                   'Enter a name and save'}
                   </p>
                 </div>
@@ -783,9 +907,23 @@ export function ClusterMapView() {
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="Enter nucleus name..."
+                placeholder={placingKind === 'activity' ? 'Enter activity name...' : 'Enter nucleus name...'}
                 className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-medium shadow-sm"
                 autoFocus />
+                  {placingKind === 'activity' &&
+              <select
+                value={newActivityType}
+                onChange={(e) => setNewActivityType(e.target.value as Activity['type'])}
+                aria-label="Activity type"
+                className="w-full px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm font-medium shadow-sm bg-white">
+                      {ACTIVITY_TYPE_OPTIONS.map((o) =>
+                <option key={o.value} value={o.value}>{o.label}</option>
+                )}
+                    </select>
+              }
+                  {placingError &&
+              <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{placingError}</p>
+              }
               
                   <div className="flex gap-3">
                     <button
@@ -795,12 +933,12 @@ export function ClusterMapView() {
                       Cancel
                     </button>
                     <button
-                  onClick={handleCreateNucleus}
+                  onClick={placingKind === 'activity' ? handleCreateActivity : handleCreateNucleus}
                   disabled={!newName.trim()}
                   className="flex-1 px-4 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-semibold transition-all shadow-sm hover:shadow-md flex items-center justify-center gap-2">
                   
                       <CheckIcon className="w-4 h-4" />
-                      Create Nucleus
+                      {placingKind === 'activity' ? 'Create Activity' : 'Create Nucleus'}
                     </button>
                   </div>
                 </div>
@@ -928,12 +1066,57 @@ export function ClusterMapView() {
                   </Marker>
               )}
 
-                {/* Temporary Marker for New Nucleus */}
-                {isPlacing && newLocation &&
+                {/* Standalone activities — small dots, not pins */}
+                {filteredStandalone.filter((a) => a.location).map((a) =>
+              <CircleMarker
+                key={a.id}
+                center={[a.location!.lat, a.location!.lng]}
+                radius={7}
+                pathOptions={{
+                  color: '#ffffff',
+                  weight: 2,
+                  fillColor: ACTIVITY_DOT_COLORS[a.type],
+                  fillOpacity: a.lifecycle === 'planned' ? 0.5 : 0.95
+                }}>
+
+                    {!isPlacing &&
+                <Popup>
+                        <div className="p-1 min-w-[220px]">
+                          <p className="text-xs font-bold uppercase tracking-wider mb-1" style={{ color: ACTIVITY_DOT_COLORS[a.type] }}>
+                            {ACTIVITY_TYPE_LABEL[a.type]}
+                          </p>
+                          <h3 className="text-lg font-bold text-gray-900 tracking-tight">{a.name}</h3>
+                          <p className="text-xs text-gray-500 mt-0.5 mb-3">
+                            Not in a nucleus
+                            {a.lifecycle === 'planned' ? ' · Planned' : ''}
+                            {` · ${a.participantCount} participant${a.participantCount === 1 ? '' : 's'}`}
+                          </p>
+                          {a.schedule &&
+                    <p className="text-sm text-gray-600 mb-3">{a.schedule}</p>
+                    }
+                          <button
+                      onClick={() => navigate(`/activity/${a.id}`)}
+                      className="w-full px-4 py-2 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-all shadow-sm">
+                            Open Activity
+                          </button>
+                        </div>
+                      </Popup>
+                }
+                  </CircleMarker>
+              )}
+
+                {/* Temporary Marker for New Nucleus / Activity */}
+                {isPlacing && newLocation && placingKind === 'nucleus' &&
               <Marker
                 position={[newLocation.lat, newLocation.lng]}
                 opacity={0.7} />
 
+              }
+                {isPlacing && newLocation && placingKind === 'activity' &&
+              <CircleMarker
+                center={[newLocation.lat, newLocation.lng]}
+                radius={7}
+                pathOptions={{ color: '#ffffff', weight: 2, fillColor: ACTIVITY_DOT_COLORS[newActivityType], fillOpacity: 0.7 }} />
               }
               </MapContainer>
             }

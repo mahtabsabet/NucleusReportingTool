@@ -20,7 +20,7 @@ const DB_TO_APP_TYPE: Record<string, Activity['type']> = {
 
 export interface ActivityReportRow {
   id: string;
-  nucleusId: string;
+  nucleusId: string | null;
   nucleusName: string;
   name: string;
   type: Activity['type'];
@@ -33,18 +33,7 @@ export async function fetchActivitiesByType(
   appType: Activity['type'],
   clusterId?: string | null
 ): Promise<ActivityReportRow[]> {
-  let nucleusIds: string[] | null = null;
-  if (clusterId) {
-    const { data: nuclei } = await supabase
-      .from('nuclei')
-      .select('id')
-      .eq('cluster_id', clusterId)
-      .is('deleted_at', null);
-    nucleusIds = ((nuclei ?? []) as any[]).map((n: any) => n.id);
-    if (nucleusIds.length === 0) return [];
-  }
-
-  let query = supabase
+  const baseQuery = () => supabase
     .from('activities')
     .select('id, nucleus_id, name, type, current_course_id, nuclei(name), activity_participants(person_id, role, deleted_at)')
     .eq('type', APP_TO_DB_TYPE[appType] as any)
@@ -52,9 +41,22 @@ export async function fetchActivitiesByType(
     .eq('is_active', true)
     .order('name');
 
-  if (nucleusIds) query = query.in('nucleus_id', nucleusIds);
-
-  const { data, error } = await query;
+  // Filter by the activity's own cluster so standalone activities (no
+  // nucleus) are included. Databases that predate activities.cluster_id
+  // fall back to filtering through the cluster's nuclei.
+  let { data, error } = clusterId
+    ? await baseQuery().eq('cluster_id' as any, clusterId)
+    : await baseQuery();
+  if (error && clusterId && (error.code === '42703' || /column .* does not exist/i.test(error.message ?? ''))) {
+    const { data: nuclei } = await supabase
+      .from('nuclei')
+      .select('id')
+      .eq('cluster_id', clusterId)
+      .is('deleted_at', null);
+    const nucleusIds = ((nuclei ?? []) as any[]).map((n: any) => n.id);
+    if (nucleusIds.length === 0) return [];
+    ({ data, error } = await baseQuery().in('nucleus_id', nucleusIds));
+  }
   if (error) throw error;
 
   const allPersonIds = new Set<string>();
@@ -96,7 +98,7 @@ export async function fetchActivitiesByType(
     return {
       id: a.id,
       nucleusId: a.nucleus_id,
-      nucleusName: (a.nuclei as any)?.name ?? a.nucleus_id,
+      nucleusName: a.nucleus_id ? ((a.nuclei as any)?.name ?? a.nucleus_id) : 'Not in a nucleus',
       name: a.name,
       type: (DB_TO_APP_TYPE[a.type] ?? 'other') as Activity['type'],
       currentBook: a.current_course_id ? courseNameMap[a.current_course_id] : undefined,

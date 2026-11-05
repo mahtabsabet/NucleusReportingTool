@@ -16,7 +16,7 @@ export interface SearchNucleusResult {
 export interface SearchActivityResult {
   id: string;
   name: string;
-  nucleusId: string;
+  nucleusId: string | null;
   nucleusName: string | null;
 }
 
