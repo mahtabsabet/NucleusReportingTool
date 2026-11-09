@@ -229,6 +229,7 @@ export const GUIDE_SECTIONS: GuideSection[] = [
           b('Progress', "Groups nuclei by milestone stage and draws a line between any two that share a person — a quick way to see how nuclei connect, not just where they are."),
           b('Timeline', "Opens the cluster-wide timeline. It works the same as a nucleus timeline (see the Nucleus section) — it just shows every nucleus in the cluster at once, or 'All Clusters.' Cycle boundaries can only be adjusted from here, not from a nucleus timeline."),
           b('Boundaries', "Overlays the real geographic cluster boundaries underneath the pins."),
+          b('Neighbourhoods', "Calgary only. Overlays neighbourhood boundaries and names (names appear as you zoom in). The same overlay can be switched on from the Households map. Click a neighbourhood to see its milestone; cluster coordinators can set it to Milestone 1, 2 or 3, which shades the neighbourhood in that milestone's colour (amber, green or indigo). Milestones are set by hand — they aren't calculated from the nuclei or activities in the neighbourhood."),
         ],
       },
       {
