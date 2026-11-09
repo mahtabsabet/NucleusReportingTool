@@ -126,6 +126,12 @@ export function isClusterCoordinator(ctx: CallerContext): boolean {
 export function isLsaMember(ctx: CallerContext): boolean {
   return lsaMemberClusterIds(ctx).length > 0;
 }
+// Neighbourhood milestones on the map overlay: the cluster's
+// coordinators and admins set them; everyone else just sees them.
+export function canSetNeighbourhoodMilestones(ctx: CallerContext, clusterId: string | null): boolean {
+  if (ctx.isAdmin || ctx.isSuperAdmin) return true;
+  return !!clusterId && coordinatorClusterIds(ctx).includes(clusterId);
+}
 // Super Admins retain LSA-layer access for system maintenance.
 export function canAccessLsaLayer(ctx: CallerContext): boolean {
   return ctx.isSuperAdmin || isLsaMember(ctx);
