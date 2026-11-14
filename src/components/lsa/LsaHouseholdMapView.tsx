@@ -52,7 +52,7 @@ import {
   lsaAccessibleClusterIds,
   type CallerContext,
 } from '../../lib/permissions';
-import { NeighbourhoodLayer, NeighbourhoodToggle, useNeighbourhoodOverlay } from '../NeighbourhoodLayer';
+import { BasemapToggle, NeighbourhoodLayer, NeighbourhoodToggle, useBasemapHidden, useNeighbourhoodOverlay } from '../NeighbourhoodLayer';
 import { neighbourhoodClusterId as findNeighbourhoodCluster } from '../../lib/db/neighbourhoods';
 import { householdMarkerIcon, householdMarkerArchivedIcon, householdMarkerEmptyIcon } from './HouseholdMarkerIcon';
 import { MobileBottomSheet, type SheetState } from './MobileBottomSheet';
@@ -93,6 +93,8 @@ export function LsaHouseholdMapView() {
   const [callerCtx, setCallerCtx] = useState<CallerContext | null>(null);
   const [clusters, setClusters] = useState<ClusterRow[]>([]);
   const [showNeighbourhoods, setShowNeighbourhoods] = useNeighbourhoodOverlay();
+  const [basemapPref, setBasemapPref] = useBasemapHidden();
+  const basemapHidden = showNeighbourhoods && basemapPref;
   const [jurisdictions, setJurisdictions] = useState<LsaJurisdiction[]>([]);
   const [selectedClusterId, setSelectedClusterId] = useState<string | null>(null);
   const [households, setHouseholds] = useState<Household[]>([]);
@@ -671,16 +673,22 @@ export function LsaHouseholdMapView() {
                 map uses. Reads as "place / geography" at a glance
                 without competing with the engagement-bucket colouring
                 on the community side. */}
-            <TileLayer
-              url="https://cartodb-basemaps-a.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
-              maxZoom={19}
-            />
+            {!basemapHidden && (
+              <TileLayer
+                url="https://cartodb-basemaps-a.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
+                maxZoom={19}
+              />
+            )}
             {showNeighbourhoods && neighbourhoodClusterId && (
               <NeighbourhoodLayer
                 clusterId={neighbourhoodClusterId}
                 canEdit={!!callerCtx && canSetNeighbourhoodMilestones(callerCtx, neighbourhoodClusterId)}
-                interactive={!placing} />
+                interactive={!placing}
+                basemapHidden={basemapHidden} />
+            )}
+            {showNeighbourhoods && neighbourhoodClusterId && (
+              <BasemapToggle hidden={basemapHidden} onToggle={() => setBasemapPref(!basemapHidden)} />
             )}
             {households.map(h => {
               if (h.lat == null || h.lng == null) return null;

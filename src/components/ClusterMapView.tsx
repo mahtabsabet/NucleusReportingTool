@@ -41,7 +41,7 @@ import type { Activity } from '../types';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
 import { canAccessLsaLayer, canCreateAnyNucleus, canSetNeighbourhoodMilestones, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
-import { NeighbourhoodLayer, NeighbourhoodToggle, useNeighbourhoodOverlay } from './NeighbourhoodLayer';
+import { BasemapToggle, NeighbourhoodLayer, NeighbourhoodToggle, useBasemapHidden, useNeighbourhoodOverlay } from './NeighbourhoodLayer';
 import { neighbourhoodClusterId as findNeighbourhoodCluster } from '../lib/db/neighbourhoods';
 import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
@@ -130,6 +130,8 @@ export function ClusterMapView() {
   const [showBoundaries, setShowBoundaries] = useState(false);
   const [boundariesData, setBoundariesData] = useState<any | null>(null);
   const [showNeighbourhoods, setShowNeighbourhoods] = useNeighbourhoodOverlay();
+  const [basemapPref, setBasemapPref] = useBasemapHidden();
+  const basemapHidden = showNeighbourhoods && basemapPref;
   const [canCreate, setCanCreate] = useState(false);
   const [canCreateAnyCluster, setCanCreateAnyCluster] = useState(false);
   const [canManageUsers, setCanManageUsers] = useState(false);
@@ -991,9 +993,11 @@ export function ClusterMapView() {
                 } />
               
 
+                {!basemapHidden &&
                 <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                }
 
 
                 {showBoundaries && boundariesData &&
@@ -1018,7 +1022,11 @@ export function ClusterMapView() {
               <NeighbourhoodLayer
                 clusterId={neighbourhoodClusterId}
                 canEdit={!!callerCtx && canSetNeighbourhoodMilestones(callerCtx, neighbourhoodClusterId)}
-                interactive={!isPlacing} />
+                interactive={!isPlacing}
+                basemapHidden={basemapHidden} />
+              }
+                {showNeighbourhoods && neighbourhoodClusterId &&
+              <BasemapToggle hidden={basemapHidden} onToggle={() => setBasemapPref(!basemapHidden)} />
               }
 
                 {/* Existing Nuclei Markers */}

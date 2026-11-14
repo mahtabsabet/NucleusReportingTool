@@ -58,6 +58,8 @@
 }
 .leaflet-tooltip.neighbourhood-label::before { display: none; }
 .neighbourhood-labels-hidden .leaflet-tooltip.neighbourhood-label { display: none; }
+/* Street map switched off under the neighbourhood overlay. */
+.leaflet-container.basemap-hidden { background: #fff; }
 body {
   font-family: 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;

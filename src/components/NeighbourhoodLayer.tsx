@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { GeoJSON, Pane, Popup, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { MapIcon } from 'lucide-react';
+import { EyeIcon, EyeOffIcon, MapIcon } from 'lucide-react';
 import {
   NEIGHBOURHOODS_URL,
   fetchNeighbourhoodMilestones,
@@ -35,6 +35,7 @@ const MILESTONE_LABEL: Record<NeighbourhoodMilestone, string> = {
 const MILESTONES = [0, 1, 2, 3] as const;
 const LABEL_MIN_ZOOM = 12;
 const STORAGE_KEY = 'map.neighbourhoodOverlay';
+const BASEMAP_HIDDEN_KEY = 'map.basemapHidden';
 
 let shapesPromise: Promise<FeatureCollection> | null = null;
 function loadShapes(): Promise<FeatureCollection> {
@@ -46,17 +47,55 @@ function loadShapes(): Promise<FeatureCollection> {
   return shapesPromise;
 }
 
-// On/off state, remembered per browser so it carries between the
+// A boolean remembered per browser, so it carries between the
 // community and household views.
-export function useNeighbourhoodOverlay(): [boolean, (on: boolean) => void] {
+function useStoredFlag(key: string): [boolean, (on: boolean) => void] {
   const [on, setOn] = useState(() => {
-    try { return localStorage.getItem(STORAGE_KEY) === '1'; } catch { return false; }
+    try { return localStorage.getItem(key) === '1'; } catch { return false; }
   });
   const update = (next: boolean) => {
     setOn(next);
-    try { localStorage.setItem(STORAGE_KEY, next ? '1' : '0'); } catch { /* storage unavailable */ }
+    try { localStorage.setItem(key, next ? '1' : '0'); } catch { /* storage unavailable */ }
   };
   return [on, update];
+}
+
+export function useNeighbourhoodOverlay(): [boolean, (on: boolean) => void] {
+  return useStoredFlag(STORAGE_KEY);
+}
+
+// Whether the street map underneath is hidden, leaving only the
+// neighbourhood outlines and milestone shading. Only applies while the
+// overlay is on (callers check both).
+export function useBasemapHidden(): [boolean, (hidden: boolean) => void] {
+  return useStoredFlag(BASEMAP_HIDDEN_KEY);
+}
+
+// Floating "Hide map / Show map" button, top-right of the map. Render
+// inside MapContainer while the neighbourhood overlay is on.
+export function BasemapToggle({ hidden, onToggle }: { hidden: boolean; onToggle: () => void }) {
+  const map = useMap();
+  const ref = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (ref.current) L.DomEvent.disableClickPropagation(ref.current);
+  }, []);
+  // White canvas instead of Leaflet's grey while the tiles are off.
+  useEffect(() => {
+    const el = map.getContainer();
+    el.classList.toggle('basemap-hidden', hidden);
+    return () => el.classList.remove('basemap-hidden');
+  }, [map, hidden]);
+  return (
+    <button
+      ref={ref}
+      onClick={onToggle}
+      aria-pressed={hidden}
+      title={hidden ? 'Show the street map again' : 'Hide the street map, leaving only neighbourhoods'}
+      className="absolute top-3 right-3 z-[1000] flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white/95 border border-gray-200 shadow-sm text-gray-700 hover:bg-gray-50">
+      {hidden ? <EyeIcon className="w-3.5 h-3.5" /> : <EyeOffIcon className="w-3.5 h-3.5" />}
+      {hidden ? 'Show map' : 'Hide map'}
+    </button>
+  );
 }
 
 export function NeighbourhoodToggle({
@@ -84,12 +123,15 @@ export function NeighbourhoodToggle({
 interface Selected { code: string; name: string; latlng: LatLng }
 
 export function NeighbourhoodLayer({
-  clusterId, canEdit, interactive = true,
+  clusterId, canEdit, interactive = true, basemapHidden = false,
 }: {
   clusterId: string;
   canEdit: boolean;
   // false while the map is in a click-to-place mode, so clicks reach the map.
   interactive?: boolean;
+  // With no street map underneath, plain outlines can be a little
+  // stronger and still stay quiet.
+  basemapHidden?: boolean;
 }) {
   const map = useMap();
   const [shapes, setShapes] = useState<FeatureCollection | null>(null);
@@ -132,7 +174,7 @@ export function NeighbourhoodLayer({
     return {
       color: m != null ? MILESTONE_COLOR[m] : TINT,
       weight: isSelected ? 2.5 : m != null ? 1.2 : 1,
-      opacity: isSelected ? 0.9 : m != null ? 0.75 : 0.3,
+      opacity: isSelected ? 0.9 : m != null ? 0.75 : basemapHidden ? 0.45 : 0.3,
       fillColor: m != null ? MILESTONE_COLOR[m] : TINT,
       fillOpacity: m != null ? MILESTONE_FILL_OPACITY[m] : 0,
     };
@@ -141,7 +183,7 @@ export function NeighbourhoodLayer({
   useEffect(() => {
     layerRef.current?.setStyle(styleFor);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [milestones, selected]);
+  }, [milestones, selected, basemapHidden]);
 
   const onEachFeature = (feature: Feature, layer: any) => {
     const p = feature.properties;
