@@ -36,6 +36,7 @@ const MILESTONES = [0, 1, 2, 3] as const;
 const LABEL_MIN_ZOOM = 12;
 const STORAGE_KEY = 'map.neighbourhoodOverlay';
 const BASEMAP_HIDDEN_KEY = 'map.basemapHidden';
+const MARKERS_HIDDEN_KEY = 'map.markersHidden';
 
 let shapesPromise: Promise<FeatureCollection> | null = null;
 function loadShapes(): Promise<FeatureCollection> {
@@ -71,30 +72,51 @@ export function useBasemapHidden(): [boolean, (hidden: boolean) => void] {
   return useStoredFlag(BASEMAP_HIDDEN_KEY);
 }
 
-// Floating "Hide map / Show map" button, top-right of the map. Render
-// inside MapContainer while the neighbourhood overlay is on.
-export function BasemapToggle({ hidden, onToggle }: { hidden: boolean; onToggle: () => void }) {
+// Whether the community map's nucleus pins and activity dots are hidden
+// under the overlay. Same rule: only while the overlay is on.
+export function useMarkersHidden(): [boolean, (hidden: boolean) => void] {
+  return useStoredFlag(MARKERS_HIDDEN_KEY);
+}
+
+// Floating view controls, top-right of the map: hide the street map
+// (and, where the caller passes it, the map's own markers) to leave just
+// the neighbourhoods. Render inside MapContainer while the overlay is on.
+export function NeighbourhoodViewControls({
+  basemapHidden, onToggleBasemap, markersHidden, onToggleMarkers,
+}: {
+  basemapHidden: boolean;
+  onToggleBasemap: () => void;
+  markersHidden?: boolean;
+  onToggleMarkers?: () => void;
+}) {
   const map = useMap();
-  const ref = useRef<HTMLButtonElement | null>(null);
+  const ref = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (ref.current) L.DomEvent.disableClickPropagation(ref.current);
   }, []);
   // White canvas instead of Leaflet's grey while the tiles are off.
   useEffect(() => {
     const el = map.getContainer();
-    el.classList.toggle('basemap-hidden', hidden);
+    el.classList.toggle('basemap-hidden', basemapHidden);
     return () => el.classList.remove('basemap-hidden');
-  }, [map, hidden]);
-  return (
+  }, [map, basemapHidden]);
+  const button = (hidden: boolean, onClick: () => void, what: string, title: string) => (
     <button
-      ref={ref}
-      onClick={onToggle}
+      onClick={onClick}
       aria-pressed={hidden}
-      title={hidden ? 'Show the street map again' : 'Hide the street map, leaving only neighbourhoods'}
-      className="absolute top-3 right-3 z-[1000] flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white/95 border border-gray-200 shadow-sm text-gray-700 hover:bg-gray-50">
+      title={title}
+      className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-white/95 border border-gray-200 shadow-sm text-gray-700 hover:bg-gray-50">
       {hidden ? <EyeIcon className="w-3.5 h-3.5" /> : <EyeOffIcon className="w-3.5 h-3.5" />}
-      {hidden ? 'Show map' : 'Hide map'}
+      {hidden ? `Show ${what}` : `Hide ${what}`}
     </button>
+  );
+  return (
+    <div ref={ref} className="absolute top-3 right-3 z-[1000] flex flex-col items-stretch gap-1.5">
+      {button(basemapHidden, onToggleBasemap, 'map',
+        basemapHidden ? 'Show the street map again' : 'Hide the street map, leaving only neighbourhoods')}
+      {onToggleMarkers && button(!!markersHidden, onToggleMarkers, 'markers',
+        markersHidden ? 'Show nucleus and activity markers again' : 'Hide nucleus and activity markers')}
+    </div>
   );
 }
 
