@@ -21,11 +21,18 @@ type Feature = { properties: NeighbourhoodProps };
 type FeatureCollection = { type: 'FeatureCollection'; features: Feature[] };
 type LatLng = { lat: number; lng: number };
 
-const TINT = '#0f766e';  // outlines and the "no milestone" state
+const TINT = '#0f766e';  // faint outlines for neighbourhoods with no milestone
 // One distinct hue per milestone (shades of a single colour were too
-// hard to tell apart), all at the same light fill so streets stay legible.
-const MILESTONE_COLOR: Record<NeighbourhoodMilestone, string> = { 1: '#f59e0b', 2: '#10b981', 3: '#6366f1' };
-const MILESTONE_FILL_OPACITY = 0.32;
+// hard to tell apart), all light enough that streets stay legible.
+// M0 ("focus") is a lighter fill: being worked in, not yet at M1.
+const MILESTONE_COLOR: Record<NeighbourhoodMilestone, string> = {
+  0: '#ec4899', 1: '#f59e0b', 2: '#10b981', 3: '#6366f1',
+};
+const MILESTONE_FILL_OPACITY: Record<NeighbourhoodMilestone, number> = { 0: 0.2, 1: 0.32, 2: 0.32, 3: 0.32 };
+const MILESTONE_LABEL: Record<NeighbourhoodMilestone, string> = {
+  0: 'Focus', 1: 'Milestone 1', 2: 'Milestone 2', 3: 'Milestone 3',
+};
+const MILESTONES = [0, 1, 2, 3] as const;
 const LABEL_MIN_ZOOM = 12;
 const STORAGE_KEY = 'map.neighbourhoodOverlay';
 
@@ -120,14 +127,14 @@ export function NeighbourhoodLayer({
 
   const styleFor = (feature?: Feature): Record<string, unknown> => {
     const code = feature?.properties?.id ?? '';
-    const m = milestones.get(code) ?? 0;
+    const m = milestones.get(code);
     const isSelected = selected?.code === code;
     return {
-      color: m ? MILESTONE_COLOR[m] : TINT,
-      weight: isSelected ? 2.5 : 1.2,
-      opacity: isSelected ? 0.9 : m ? 0.75 : 0.55,
-      fillColor: m ? MILESTONE_COLOR[m] : TINT,
-      fillOpacity: m ? MILESTONE_FILL_OPACITY : 0,
+      color: m != null ? MILESTONE_COLOR[m] : TINT,
+      weight: isSelected ? 2.5 : m != null ? 1.2 : 1,
+      opacity: isSelected ? 0.9 : m != null ? 0.75 : 0.3,
+      fillColor: m != null ? MILESTONE_COLOR[m] : TINT,
+      fillOpacity: m != null ? MILESTONE_FILL_OPACITY[m] : 0,
     };
   };
   // Restyle in place when milestones or the selection change.
@@ -195,7 +202,7 @@ export function NeighbourhoodLayer({
               <>
                 <p className="text-xs text-gray-500 mb-1.5">Milestone</p>
                 <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                  {([null, 1, 2, 3] as const).map(m => (
+                  {([null, ...MILESTONES] as const).map(m => (
                     <button
                       key={m ?? 'none'}
                       onClick={() => choose(m)}
@@ -211,7 +218,7 @@ export function NeighbourhoodLayer({
               </>
             ) : (
               <p className="text-sm text-gray-600">
-                {current ? `Milestone ${current}` : 'No milestone set'}
+                {current != null ? MILESTONE_LABEL[current] : 'Not a focus neighbourhood'}
               </p>
             )}
             {error && <p className="text-xs text-red-700 mt-2">{error}</p>}
@@ -223,12 +230,12 @@ export function NeighbourhoodLayer({
         className="absolute bottom-6 left-3 z-[1000] bg-white/90 backdrop-blur rounded-xl border border-gray-200 shadow-sm px-3 py-2 text-xs text-gray-700">
         <p className="font-semibold text-gray-900 mb-1">Neighbourhood milestones</p>
         <div className="flex items-center gap-3">
-          {([1, 2, 3] as const).map(m => (
+          {MILESTONES.map(m => (
             <span key={m} className="flex items-center gap-1.5">
               <span
                 className="w-3.5 h-3.5 rounded-sm border"
-                style={{ backgroundColor: MILESTONE_COLOR[m], opacity: 0.75, borderColor: MILESTONE_COLOR[m] }} />
-              M{m}
+                style={{ backgroundColor: MILESTONE_COLOR[m], opacity: m === 0 ? 0.55 : 0.75, borderColor: MILESTONE_COLOR[m] }} />
+              {m === 0 ? 'M0 Focus' : `M${m}`}
             </span>
           ))}
         </div>
