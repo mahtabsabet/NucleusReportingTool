@@ -9,6 +9,7 @@ import {
   type NeighbourhoodMilestone,
   type NeighbourhoodProps,
 } from '../lib/db/neighbourhoods';
+import { MILESTONE_COLOR, MILESTONES } from '../lib/milestoneColors';
 
 // Neighbourhood overlay shared by the community map and the household
 // map. Off by default; when on it draws thin, translucent outlines with
@@ -25,14 +26,10 @@ const TINT = '#0f766e';  // faint outlines for neighbourhoods with no milestone
 // One distinct hue per milestone (shades of a single colour were too
 // hard to tell apart), all light enough that streets stay legible.
 // M0 ("focus") is a lighter fill: being worked in, not yet at M1.
-const MILESTONE_COLOR: Record<NeighbourhoodMilestone, string> = {
-  0: '#ec4899', 1: '#f59e0b', 2: '#10b981', 3: '#6366f1',
-};
 const MILESTONE_FILL_OPACITY: Record<NeighbourhoodMilestone, number> = { 0: 0.2, 1: 0.32, 2: 0.32, 3: 0.32 };
 const MILESTONE_LABEL: Record<NeighbourhoodMilestone, string> = {
   0: 'Focus', 1: 'Milestone 1', 2: 'Milestone 2', 3: 'Milestone 3',
 };
-const MILESTONES = [0, 1, 2, 3] as const;
 const LABEL_MIN_ZOOM = 12;
 const STORAGE_KEY = 'map.neighbourhoodOverlay';
 const BASEMAP_HIDDEN_KEY = 'map.basemapHidden';
@@ -292,7 +289,7 @@ export function NeighbourhoodLayer({
       <div
         ref={legendRef}
         className="absolute bottom-6 left-3 z-[1000] bg-white/90 backdrop-blur rounded-xl border border-gray-200 shadow-sm px-3 py-2 text-xs text-gray-700">
-        <p className="font-semibold text-gray-900 mb-1">Neighbourhood milestones</p>
+        <p className="font-semibold text-gray-900 mb-1">Milestones</p>
         <div className="flex items-center gap-3">
           {MILESTONES.map(m => (
             <span key={m} className="flex items-center gap-1.5">
