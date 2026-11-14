@@ -41,7 +41,7 @@ import type { Activity } from '../types';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
 import { canAccessLsaLayer, canCreateAnyNucleus, canSetNeighbourhoodMilestones, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
-import { BasemapToggle, NeighbourhoodLayer, NeighbourhoodToggle, useBasemapHidden, useNeighbourhoodOverlay } from './NeighbourhoodLayer';
+import { NeighbourhoodLayer, NeighbourhoodToggle, NeighbourhoodViewControls, useBasemapHidden, useMarkersHidden, useNeighbourhoodOverlay } from './NeighbourhoodLayer';
 import { neighbourhoodClusterId as findNeighbourhoodCluster } from '../lib/db/neighbourhoods';
 import { GlobalSearch } from './GlobalSearch';
 import 'leaflet/dist/leaflet.css';
@@ -132,6 +132,8 @@ export function ClusterMapView() {
   const [showNeighbourhoods, setShowNeighbourhoods] = useNeighbourhoodOverlay();
   const [basemapPref, setBasemapPref] = useBasemapHidden();
   const basemapHidden = showNeighbourhoods && basemapPref;
+  const [markersPref, setMarkersPref] = useMarkersHidden();
+  const markersHidden = showNeighbourhoods && markersPref;
   const [canCreate, setCanCreate] = useState(false);
   const [canCreateAnyCluster, setCanCreateAnyCluster] = useState(false);
   const [canManageUsers, setCanManageUsers] = useState(false);
@@ -1026,11 +1028,15 @@ export function ClusterMapView() {
                 basemapHidden={basemapHidden} />
               }
                 {showNeighbourhoods && neighbourhoodClusterId &&
-              <BasemapToggle hidden={basemapHidden} onToggle={() => setBasemapPref(!basemapHidden)} />
+              <NeighbourhoodViewControls
+                basemapHidden={basemapHidden}
+                onToggleBasemap={() => setBasemapPref(!basemapHidden)}
+                markersHidden={markersHidden}
+                onToggleMarkers={() => setMarkersPref(!markersHidden)} />
               }
 
                 {/* Existing Nuclei Markers */}
-                {filteredNuclei.map((nucleus) =>
+                {!markersHidden && filteredNuclei.map((nucleus) =>
               <Marker
                 key={nucleus.id}
                 position={[nucleus.location.lat, nucleus.location.lng]}
@@ -1094,7 +1100,7 @@ export function ClusterMapView() {
               )}
 
                 {/* Standalone activities — small dots, not pins */}
-                {filteredStandalone.filter((a) => a.location).map((a) =>
+                {!markersHidden && filteredStandalone.filter((a) => a.location).map((a) =>
               <CircleMarker
                 key={a.id}
                 center={[a.location!.lat, a.location!.lng]}

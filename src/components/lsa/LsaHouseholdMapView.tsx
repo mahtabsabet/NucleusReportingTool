@@ -52,7 +52,7 @@ import {
   lsaAccessibleClusterIds,
   type CallerContext,
 } from '../../lib/permissions';
-import { BasemapToggle, NeighbourhoodLayer, NeighbourhoodToggle, useBasemapHidden, useNeighbourhoodOverlay } from '../NeighbourhoodLayer';
+import { NeighbourhoodLayer, NeighbourhoodViewControls, NeighbourhoodToggle, useBasemapHidden, useNeighbourhoodOverlay } from '../NeighbourhoodLayer';
 import { neighbourhoodClusterId as findNeighbourhoodCluster } from '../../lib/db/neighbourhoods';
 import { householdMarkerIcon, householdMarkerArchivedIcon, householdMarkerEmptyIcon } from './HouseholdMarkerIcon';
 import { MobileBottomSheet, type SheetState } from './MobileBottomSheet';
@@ -688,7 +688,7 @@ export function LsaHouseholdMapView() {
                 basemapHidden={basemapHidden} />
             )}
             {showNeighbourhoods && neighbourhoodClusterId && (
-              <BasemapToggle hidden={basemapHidden} onToggle={() => setBasemapPref(!basemapHidden)} />
+              <NeighbourhoodViewControls basemapHidden={basemapHidden} onToggleBasemap={() => setBasemapPref(!basemapHidden)} />
             )}
             {households.map(h => {
               if (h.lat == null || h.lng == null) return null;
