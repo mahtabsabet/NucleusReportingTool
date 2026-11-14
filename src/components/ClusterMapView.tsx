@@ -39,11 +39,14 @@ import { createActivity, fetchStandaloneActivities } from '../lib/db/nucleus';
 import type { StandaloneActivityRow } from '../lib/db/nucleus';
 import type { Activity } from '../types';
 import { getCallerContext, canCreateUsers } from '../lib/db/users';
-import { canAccessLsaLayer, canCreateAnyNucleus, canSetNeighbourhoodMilestones, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
+import { actionPermission, canAccessLsaLayer, canCreateAnyNucleus, canSetNeighbourhoodMilestones, isClusterCoordinator, isLsaMember, lsaAccessibleClusterIds, type CallerContext } from '../lib/permissions';
 import { NetworkView } from './NetworkView';
 import { NeighbourhoodLayer, NeighbourhoodToggle, NeighbourhoodViewControls, useBasemapHidden, useMarkersHidden, useNeighbourhoodOverlay } from './NeighbourhoodLayer';
 import { neighbourhoodClusterId as findNeighbourhoodCluster } from '../lib/db/neighbourhoods';
 import { GlobalSearch } from './GlobalSearch';
+import { nucleusPinIcon } from './NucleusPinIcon';
+import { fetchMilestoneStagesForNuclei, saveNucleusMilestoneStage } from '../lib/db/milestoneThree';
+import { MILESTONE_COLOR, MILESTONES, type MilestoneLevel } from '../lib/milestoneColors';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 // Fix default marker icon
@@ -124,6 +127,11 @@ export function ClusterMapView() {
   const [newActivityType, setNewActivityType] = useState<Activity['type']>('devotional');
   const [placingError, setPlacingError] = useState<string | null>(null);
   const [standaloneActivities, setStandaloneActivities] = useState<StandaloneActivityRow[]>([]);
+  // Milestone stage per nucleus (0–3, set on each nucleus's Milestone
+  // page or from its pin), used to colour the pins.
+  const [nucleusStages, setNucleusStages] = useState<Map<string, MilestoneLevel>>(new Map());
+  const [stageSaving, setStageSaving] = useState(false);
+  const [stageError, setStageError] = useState<string | null>(null);
   const [standaloneListOpen, setStandaloneListOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showNetwork, setShowNetwork] = useState(false);
@@ -198,6 +206,38 @@ export function ClusterMapView() {
       .then(setBoundariesData)
       .catch((err) => console.error('Failed to load cluster boundaries', err));
   }, [showBoundaries, boundariesData]);
+
+  // Load stages whenever the set of nuclei changes. A failure just leaves
+  // the pins at M0 rather than taking the map down.
+  const nucleusIdKey = nuclei.map(n => n.id).join(',');
+  useEffect(() => {
+    if (!nuclei.length) return;
+    fetchMilestoneStagesForNuclei(nuclei.map(n => n.id))
+      .then(m => setNucleusStages(m as Map<string, MilestoneLevel>))
+      .catch(err => console.error('Failed to load nucleus milestone stages', err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nucleusIdKey]);
+
+  // Same gate as the nucleus's Milestone page (CC / NC / admins).
+  const canEditStage = (nucleus: NucleusRow) => !!callerCtx
+    && actionPermission(callerCtx, 'edit_concentric_circles', { clusterId: nucleus.clusterId, nucleusId: nucleus.id }) === 'direct';
+
+  const handleStageChange = async (nucleusId: string, stage: MilestoneLevel) => {
+    const prev = nucleusStages.get(nucleusId) ?? 0;
+    if (prev === stage) return;
+    setStageSaving(true);
+    setStageError(null);
+    setNucleusStages(m => new Map(m).set(nucleusId, stage));
+    try {
+      await saveNucleusMilestoneStage(nucleusId, stage);
+    } catch (err: any) {
+      console.error('Failed to save nucleus milestone stage', err);
+      setNucleusStages(m => new Map(m).set(nucleusId, prev));
+      setStageError(err?.message ?? 'Could not save. Please try again.');
+    } finally {
+      setStageSaving(false);
+    }
+  };
 
   const filteredNuclei = selectedCluster
     ? nuclei.filter(n => n.clusterId === selectedCluster)
@@ -1040,8 +1080,9 @@ export function ClusterMapView() {
               <Marker
                 key={nucleus.id}
                 position={[nucleus.location.lat, nucleus.location.lng]}
+                icon={nucleusPinIcon(nucleusStages.get(nucleus.id) ?? 0)}
                 eventHandlers={{
-                  click: () => handleNucleusClick(nucleus.id)
+                  click: () => { setStageError(null); handleNucleusClick(nucleus.id); }
                 }}>
                 
                     {!isPlacing &&
@@ -1086,6 +1127,31 @@ export function ClusterMapView() {
                                 </span>
                               </div>
                             </div>
+                          </div>
+                          <div className="mb-4">
+                            <p className="text-xs font-semibold text-gray-500 mb-1.5">Milestone</p>
+                            {canEditStage(nucleus) ? (
+                              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+                                {MILESTONES.map((m) => {
+                                  const active = (nucleusStages.get(nucleus.id) ?? 0) === m;
+                                  return (
+                                    <button
+                                      key={m}
+                                      onClick={() => handleStageChange(nucleus.id, m)}
+                                      disabled={stageSaving}
+                                      style={active ? { backgroundColor: MILESTONE_COLOR[m] } : undefined}
+                                      className={`flex-1 px-2 py-1.5 text-xs font-semibold border-r last:border-r-0 border-gray-200 transition-colors disabled:opacity-60 ${active ? 'text-white' : 'bg-white text-gray-700 hover:bg-gray-50'}`}>
+                                      M{m}
+                                    </button>);
+                                })}
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: MILESTONE_COLOR[nucleusStages.get(nucleus.id) ?? 0] }} />
+                                Milestone {nucleusStages.get(nucleus.id) ?? 0}
+                              </span>
+                            )}
+                            {stageError && <p className="text-xs text-red-700 mt-1.5">{stageError}</p>}
                           </div>
                           <button
                       onClick={() => navigate(`/nucleus/${nucleus.id}`)}
