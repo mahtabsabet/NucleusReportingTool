@@ -1,6 +1,8 @@
 import { supabase } from '../supabase';
 
-export type NeighbourhoodMilestone = 1 | 2 | 3;
+// 0 = "focus": a neighbourhood the cluster is working in that hasn't
+// reached Milestone 1 yet. No row at all = not a focus neighbourhood.
+export type NeighbourhoodMilestone = 0 | 1 | 2 | 3;
 
 // The neighbourhood overlay covers Calgary only for now: its shapes are
 // a static file traced from the CREB 2025 community map and placed using

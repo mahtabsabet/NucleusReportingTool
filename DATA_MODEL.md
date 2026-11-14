@@ -406,13 +406,13 @@ Duplicates are surfaced two ways on the People page: a proactive "possible dupli
 ---
 
 ### NeighbourhoodMilestone
-A manual milestone (1–3) for a neighbourhood on the map's neighbourhood overlay. Neighbourhood shapes are a static file (`public/data/calgary-communities.geojson`, Calgary only — see `scripts/neighbourhoods/README.md`); this table only records the milestone a cluster has set for one of them. No row means no milestone.
+A manual milestone (0–3) for a neighbourhood on the map's neighbourhood overlay. Neighbourhood shapes are a static file (`public/data/calgary-communities.geojson`, Calgary only — see `scripts/neighbourhoods/README.md`); this table only records the milestone a cluster has set for one of them. No row means no milestone.
 
 | Field | Type | Notes |
 |---|---|---|
 | cluster_id | uuid → Cluster | part of primary key |
 | neighbourhood_code | text | City of Calgary community code (feature `id` in the GeoJSON); part of primary key |
-| milestone | smallint | 1, 2 or 3 |
+| milestone | smallint | 0 (focus — being worked in, not yet Milestone 1), 1, 2 or 3 |
 | updated_by | uuid → User | |
 | updated_at | timestamp | |
 
