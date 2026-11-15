@@ -668,15 +668,13 @@ export function LsaHouseholdMapView() {
             zoomControl={true}>
             <MapController center={mapCenter} zoom={mapZoom} />
             <MapClickCapture enabled={!!placing} onPick={handleMapClick} />
-            {/* Carto Voyager — vibrant pastel palette, full colour, but
-                visually distinct from the raw OSM tiles the community
-                map uses. Reads as "place / geography" at a glance
-                without competing with the engagement-bucket colouring
-                on the community side. */}
+            {/* Same OpenStreetMap tiles as the community map. (The old
+                CARTO Voyager endpoint now answers every tile with a
+                "no API key" image.) */}
             {!basemapHidden && (
               <TileLayer
-                url="https://cartodb-basemaps-a.global.ssl.fastly.net/rastertiles/voyager/{z}/{x}/{y}.png"
-                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 maxZoom={19}
               />
             )}
